@@ -1,0 +1,18 @@
+# Rust build output and local app data
+/target/
+/fake-data/
+**/fake-data/
+*.db
+*.db-shm
+*.db-wal
+
+# JavaScript dependencies and generated output
+/node_modules/
+/ui/node_modules/
+/ui/dist/
+
+# Local tooling
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

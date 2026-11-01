@@ -1,0 +1,8 @@
+{
+  "cold_launch_to_home_ms": 400,
+  "open_cached_item_ms": 50,
+  "switch_tab_ms": 16,
+  "search_p95_ms": 30,
+  "diff_scroll_fps": 60,
+  "optimistic_action_network_wait_ms": 0
+}

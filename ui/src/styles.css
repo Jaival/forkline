@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* Dark mode: explicit data-theme wins; otherwise follow Windows. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: light;
+  --fl-bg: #ffffff;
+  --fl-panel: #f6f8fa;
+  --fl-raised: #eef1f4;
+  --fl-fg: #1f2328;
+  --fl-muted: #59636e;
+  --fl-border: #d1d9e0;
+  --fl-accent: #0969da;
+  --fl-open: #1a7f37;
+  --fl-closed: #cf222e;
+  --fl-merged: #8250df;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --fl-bg: #0d1117;
+    --fl-panel: #151b23;
+    --fl-raised: #212830;
+    --fl-fg: #e6edf3;
+    --fl-muted: #9198a1;
+    --fl-border: #3d444d;
+    --fl-accent: #4493f8;
+    --fl-open: #3fb950;
+    --fl-closed: #f85149;
+    --fl-merged: #ab7df8;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fl-bg: #0d1117;
+  --fl-panel: #151b23;
+  --fl-raised: #212830;
+  --fl-fg: #e6edf3;
+  --fl-muted: #9198a1;
+  --fl-border: #3d444d;
+  --fl-accent: #4493f8;
+  --fl-open: #3fb950;
+  --fl-closed: #f85149;
+  --fl-merged: #ab7df8;
+}
+
+@theme inline {
+  --color-bg: var(--fl-bg);
+  --color-panel: var(--fl-panel);
+  --color-raised: var(--fl-raised);
+  --color-fg: var(--fl-fg);
+  --color-muted: var(--fl-muted);
+  --color-border: var(--fl-border);
+  --color-accent: var(--fl-accent);
+  --color-open: var(--fl-open);
+  --color-closed: var(--fl-closed);
+  --color-merged: var(--fl-merged);
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--fl-bg);
+  color: var(--fl-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}

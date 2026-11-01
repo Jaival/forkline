@@ -1,0 +1,16 @@
+[package]
+name = "fl-db"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+fl-types.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
