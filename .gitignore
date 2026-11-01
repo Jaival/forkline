@@ -2,6 +2,7 @@
 /target/
 /fake-data/
 **/fake-data/
+/bench/report*.json
 *.db
 *.db-shm
 *.db-wal

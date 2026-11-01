@@ -96,6 +96,7 @@ pub fn export_bindings(builder: &Builder<tauri::Wry>) {
 }
 
 pub fn run() {
+    let process_started_ms = bench::epoch_ms();
     let args = match Args::parse(std::env::args().skip(1)) {
         Ok(a) => a,
         Err(e) => {
@@ -120,7 +121,7 @@ pub fn run() {
             db: Arc::new(db),
             data_dir,
         })
-        .manage(bench::BenchState::new(args.bench_out))
+        .manage(bench::BenchState::new(args.bench_out, process_started_ms))
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

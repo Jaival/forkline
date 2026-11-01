@@ -29,9 +29,11 @@ pub fn epoch_ms() -> f64 {
 }
 
 impl BenchState {
-    pub fn new(out: Option<PathBuf>) -> Self {
+    pub fn new(out: Option<PathBuf>, process_started_ms: f64) -> Self {
         let mut report = BenchReport::default();
-        report.marks.insert("process_main".into(), epoch_ms());
+        report
+            .marks
+            .insert("process_main".into(), process_started_ms);
         Self {
             out,
             report: Mutex::new(report),
