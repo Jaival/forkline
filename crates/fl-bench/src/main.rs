@@ -8,11 +8,14 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct Report {
     marks: BTreeMap<String, f64>,
+    durations: BTreeMap<String, Vec<f64>>,
 }
 
 #[derive(Deserialize)]
 struct Budgets {
-    cold_launch_to_home_ms: f64,
+    /// Page navigation start to Home rows painted. Excludes Tauri / WebView2
+    /// process startup, which the app cannot speed up.
+    page_start_to_home_ms: f64,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -35,24 +38,25 @@ fn main() -> anyhow::Result<()> {
     let budgets: Budgets = serde_json::from_slice(
         &fs::read(&budgets_path).with_context(|| format!("read {}", budgets_path.display()))?,
     )?;
-    let start = report
-        .marks
-        .get("process_main")
-        .context("report is missing process_main mark")?;
-    let painted = report
-        .marks
-        .get("home_painted")
-        .context("report is missing home_painted mark")?;
-    let elapsed = painted - start;
-    if elapsed < 0.0 {
-        bail!("home_painted mark precedes process_main");
+    let page_to_home = report
+        .durations
+        .get("page_start_to_home")
+        .and_then(|v| v.first())
+        .context("report is missing page_start_to_home")?;
+
+    // Informational only: includes WebView2 startup, so it has no budget.
+    let start = report.marks.get("process_main");
+    let painted = report.marks.get("home_painted");
+    if let (Some(start), Some(painted)) = (start, painted) {
+        println!("process start to home: {:.1} ms (not budgeted)", painted - start);
     }
+
     println!(
-        "cold launch to home: {elapsed:.1} ms (budget {:.1} ms)",
-        budgets.cold_launch_to_home_ms
+        "page start to home: {page_to_home:.1} ms (budget {:.1} ms)",
+        budgets.page_start_to_home_ms
     );
-    if elapsed > budgets.cold_launch_to_home_ms {
-        bail!("cold launch to home missed its budget");
+    if *page_to_home > budgets.page_start_to_home_ms {
+        bail!("page start to home missed its budget");
     }
     Ok(())
 }

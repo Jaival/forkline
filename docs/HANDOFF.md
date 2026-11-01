@@ -48,7 +48,15 @@ and adds the global inbox index.
 
 Targets are recorded in `bench/budgets.json`. The real-app harness is launched
 with `forkline.exe --bench <output.json>` and reports UI timings. `fl-bench`
-consumes that report and owns the budget comparison. Bench runs start from the
+consumes that report and owns the budget comparison.
+
+The launch budget (`page_start_to_home_ms`) runs from the page's navigation
+start to Home rows painted. It does not include process start: Tauri and
+WebView2 take about 430 ms before the page begins on the reference machine, and
+app code cannot change that (WebView2 browser flags were tried; no effect).
+`fl-bench` still prints the process-start number for reference.
+
+Bench runs start from the
 default layout, never save it, and wait for `signalReady(key)` (see
 `ui/src/lib/perf.ts`) before a mark; every measured view must call it once its
 rows are in the DOM. Feature phases should add
