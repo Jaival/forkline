@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fl_db::Db;
-use specta_typescript::Typescript;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
 /// Shared state for every command.
@@ -23,7 +22,7 @@ pub struct Args {
     pub data_dir: Option<PathBuf>,
     /// `--bench <out.json>`: run the scripted UI scenario, write timings, exit.
     pub bench_out: Option<PathBuf>,
-    /// `--export-bindings`: write `ui/src/bindings.ts` and exit.
+    /// `--export-bindings`: write `ui/src/bindings.ts` and exit (debug builds only).
     pub export_bindings: bool,
 }
 
@@ -82,15 +81,16 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         .events(collect_events![events::DataChangedEvent])
 }
 
-pub fn bindings_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ui/src/bindings.ts")
-}
-
+/// Bindings are a dev artifact: release builds never reach this code, so the
+/// TypeScript exporter is dropped from the shipped binary.
+#[cfg(debug_assertions)]
 pub fn export_bindings(builder: &Builder<tauri::Wry>) {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ui/src/bindings.ts");
     builder
         .export(
-            Typescript::default().header("// @ts-nocheck\n/* eslint-disable */"),
-            bindings_path(),
+            specta_typescript::Typescript::default()
+                .header("// @ts-nocheck\n/* eslint-disable */"),
+            path,
         )
         .expect("failed to export TypeScript bindings");
 }
@@ -105,18 +105,25 @@ pub fn run() {
         }
     };
     let builder = specta_builder();
-    if args.export_bindings {
-        export_bindings(&builder);
-        return;
-    }
     #[cfg(debug_assertions)]
-    export_bindings(&builder);
+    {
+        export_bindings(&builder);
+        if args.export_bindings {
+            return;
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    if args.export_bindings {
+        eprintln!("forkline: --export-bindings needs a debug build");
+        std::process::exit(2);
+    }
 
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
     std::fs::create_dir_all(&data_dir).expect("cannot create data directory");
     let db = Db::open(&fl_db::db_path(&data_dir)).expect("cannot open database");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             db: Arc::new(db),
             data_dir,

@@ -1,10 +1,10 @@
 use fl_db::queries::layout;
-use fl_types::CmdResult;
+use fl_types::{CmdError, CmdResult};
 use serde::Serialize;
 use specta::Type;
 use tauri::State;
 
-use super::db_err;
+use super::{read, write};
 use crate::AppState;
 use crate::bench::BenchState;
 
@@ -21,10 +21,8 @@ pub struct Boot {
 #[tauri::command]
 #[specta::specta]
 pub async fn app_boot(state: State<'_, AppState>, bench: State<'_, BenchState>) -> CmdResult<Boot> {
-    let (layout_json, theme_json) = state
-        .db
-        .read(|c| Ok((layout::get(c)?, layout::setting(c, "theme")?)))
-        .map_err(db_err)?;
+    let (layout_json, theme_json) =
+        read(&state, |c| Ok((layout::get(c)?, layout::setting(c, "theme")?))).await?;
     Ok(Boot {
         layout_json,
         theme_json,
@@ -35,13 +33,13 @@ pub async fn app_boot(state: State<'_, AppState>, bench: State<'_, BenchState>) 
 #[tauri::command]
 #[specta::specta]
 pub async fn layout_save(state: State<'_, AppState>, json: String) -> CmdResult<()> {
-    state.db.write(|c| layout::save(c, &json)).map_err(db_err)
+    write(&state, move |c| layout::save(c, &json)).await
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn setting_get(state: State<'_, AppState>, key: String) -> CmdResult<Option<String>> {
-    state.db.read(|c| layout::setting(c, &key)).map_err(db_err)
+    read(&state, move |c| layout::setting(c, &key)).await
 }
 
 #[tauri::command]
@@ -52,9 +50,6 @@ pub async fn setting_set(
     value_json: String,
 ) -> CmdResult<()> {
     serde_json::from_str::<serde_json::Value>(&value_json)
-        .map_err(|e| fl_types::CmdError::Other(format!("setting value is not JSON: {e}")))?;
-    state
-        .db
-        .write(|c| layout::set_setting(c, &key, &value_json))
-        .map_err(db_err)
+        .map_err(|e| CmdError::Other(format!("setting value is not JSON: {e}")))?;
+    write(&state, move |c| layout::set_setting(c, &key, &value_json)).await
 }

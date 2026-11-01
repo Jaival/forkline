@@ -7,8 +7,6 @@ publish.workspace = true
 [dependencies]
 fl-db.workspace = true
 anyhow.workspace = true
-rand.workspace = true
-rand_chacha.workspace = true
 serde_json.workspace = true
 
 [lints]

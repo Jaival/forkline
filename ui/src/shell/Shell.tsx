@@ -1,4 +1,5 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { commands } from "../bindings";
 import { type Layout, reduceLayout } from "../lib/layout";
 import { applyTheme, type ThemePref } from "../lib/theme";
@@ -8,27 +9,49 @@ import { useKeymap } from "./keymap";
 import { PaneView } from "./PaneView";
 import { Sidebar } from "./Sidebar";
 
-export function Shell({ initialLayout, initialTheme }: { initialLayout: Layout; initialTheme: ThemePref }) {
+const saveLayout = (l: Layout): Promise<void> =>
+  commands.layoutSave(JSON.stringify(l)).then(() => undefined, console.error);
+
+export function Shell({
+  initialLayout,
+  initialTheme,
+  persistLayout,
+}: {
+  initialLayout: Layout;
+  initialTheme: ThemePref;
+  /** False in bench mode, so a bench run never overwrites the saved layout. */
+  persistLayout: boolean;
+}) {
   const [layout, dispatch] = useReducer(reduceLayout, initialLayout);
   const [theme, setTheme] = useState(initialTheme);
+  const latest = useRef(layout);
 
   useEffect(() => {
     driver.dispatch = dispatch;
     driver.layout = layout;
+    latest.current = layout;
   }, [dispatch, layout]);
 
   // Save tabs + panes shortly after each change.
   useEffect(() => {
-    const t = setTimeout(() => void commands.layoutSave(JSON.stringify(layout)), 300);
+    if (!persistLayout) return;
+    const t = setTimeout(() => void saveLayout(layout), 300);
     return () => clearTimeout(t);
-  }, [layout]);
+  }, [layout, persistLayout]);
+
+  // Flush the last change on close; the window closes once the save resolves.
+  useEffect(() => {
+    if (!persistLayout) return;
+    const unlisten = getCurrentWindow().onCloseRequested(() => saveLayout(latest.current));
+    return () => void unlisten.then((f) => f());
+  }, [persistLayout]);
 
   useKeymap(layout, dispatch);
 
   const changeTheme = (pref: ThemePref) => {
     setTheme(pref);
     applyTheme(pref);
-    void commands.settingSet("theme", JSON.stringify(pref));
+    commands.settingSet("theme", JSON.stringify(pref)).catch(console.error);
   };
 
   return (

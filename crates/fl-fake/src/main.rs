@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     let db = Db::open(&db_path(&data_dir)).context("open fake database")?;
     db.write(|conn| {
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM search_fts", [])?;
+        // Cascades to issues and search_docs; the search_docs trigger clears search_fts.
         tx.execute("DELETE FROM repos", [])?;
         tx.execute("INSERT OR IGNORE INTO users(id,login,name) VALUES (1,'octocat','Mona')", [])?;
         for repo_id in 1..=REPO_COUNT {
@@ -38,11 +38,12 @@ fn main() -> anyhow::Result<()> {
                 tx.execute(
                     "INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,body_md,author_id,created_at,updated_at,last_viewed_at)
                      VALUES (?1,?2,?3,?4,?5,'open',?6,?7,1,?8,?9,?10)",
-                    (id, format!("I_{id}"), repo_id, number, is_pr, title.clone(), body.clone(), updated_at - 86_400, updated_at, if id % 5 == 0 { updated_at } else { 0 }),
+                    (id, format!("I_{id}"), repo_id, number, is_pr, title.clone(), body.clone(), updated_at - 86_400, updated_at, (id % 5 == 0).then_some(updated_at)),
                 )?;
+                tx.execute("INSERT INTO search_docs(issue_id) VALUES (?1)", [id])?;
                 tx.execute(
-                    "INSERT INTO search_fts(title,body,issue_id,kind) VALUES (?1,?2,?3,'issue')",
-                    (title, body, id),
+                    "INSERT INTO search_fts(rowid,title,body) VALUES (last_insert_rowid(),?1,?2)",
+                    (title, body),
                 )?;
                 if is_pr == 1 {
                     tx.execute(

@@ -4,13 +4,13 @@ use fl_db::queries::repo;
 use fl_types::{CmdResult, RepoId, RepoSummary};
 use tauri::State;
 
-use super::{db_err, not_implemented};
+use super::{not_implemented, read};
 use crate::AppState;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn repos_pinned(state: State<'_, AppState>) -> CmdResult<Vec<RepoSummary>> {
-    state.db.read(repo::pinned).map_err(db_err)
+    read(&state, repo::pinned).await
 }
 
 #[tauri::command]

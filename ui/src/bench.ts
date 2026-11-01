@@ -1,10 +1,14 @@
 import { commands } from "./bindings";
+import { afterPaint, waitReady } from "./lib/perf";
 
-/** Minimal real-app bench handshake; feature scenarios can append marks. */
+/**
+ * Real-app bench scenario. `home_painted` is recorded once the Home feed's
+ * rows are in the DOM and the frame has painted, not just the empty shell.
+ */
 export async function runBench(): Promise<void> {
   const started = performance.now();
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await waitReady("home");
+  await afterPaint();
   await commands.benchMark("home_painted", null);
   await commands.benchMark("home_first_paint", performance.now() - started);
   await commands.benchFinish();
