@@ -4,13 +4,13 @@ use fl_db::queries::sync;
 use fl_types::{CmdResult, SyncStatus};
 use tauri::State;
 
-use super::{db_err, not_implemented};
+use super::{not_implemented, read};
 use crate::AppState;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_status(state: State<'_, AppState>) -> CmdResult<SyncStatus> {
-    state.db.read(sync::status).map_err(db_err)
+    read(&state, sync::status).await
 }
 
 #[tauri::command]

@@ -6,7 +6,7 @@ import type { ThemePref } from "../lib/theme";
 const NEXT_THEME: Record<ThemePref, ThemePref> = { system: "light", light: "dark", dark: "system" };
 
 function ago(secs: number): string {
-  if (secs < 60) return `${secs} s ago`;
+  if (secs < 60) return "just now";
   if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
   return `${Math.floor(secs / 3600)} h ago`;
 }
@@ -15,7 +15,8 @@ export function Footer({ theme, onTheme }: { theme: ThemePref; onTheme: (t: Them
   const status = useQuery({ queryKey: ["sync"], queryFn: commands.syncStatus });
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
-    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    // The label has minute resolution, so a 15 s tick is enough.
+    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
     return () => clearInterval(t);
   }, []);
 

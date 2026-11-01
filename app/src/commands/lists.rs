@@ -4,13 +4,13 @@ use fl_db::queries::lists;
 use fl_types::{CmdResult, IssueRow, Page, PageReq};
 use tauri::State;
 
-use super::{db_err, not_implemented};
+use super::{not_implemented, read};
 use crate::AppState;
 
 #[tauri::command]
 #[specta::specta]
 pub async fn home_feed(state: State<'_, AppState>, page: PageReq) -> CmdResult<Page<IssueRow>> {
-    state.db.read(|c| lists::home_feed(c, page)).map_err(db_err)
+    read(&state, move |c| lists::home_feed(c, page)).await
 }
 
 #[tauri::command]

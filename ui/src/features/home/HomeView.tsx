@@ -1,12 +1,19 @@
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { commands } from "../../bindings";
 import type { ViewRef } from "../../lib/layout";
+import { signalReady } from "../../lib/perf";
 
 export function HomeView({ onNavigate }: { onNavigate: (view: ViewRef) => void }) {
   const feed = useQuery({
     queryKey: ["issues", "home", 0],
     queryFn: () => commands.homeFeed({ offset: 0, limit: 50 }),
   });
+
+  // Rows are committed to the DOM once this effect runs.
+  useEffect(() => {
+    if (feed.isSuccess) signalReady("home");
+  }, [feed.isSuccess]);
 
   return (
     <div className="h-full overflow-auto p-6">

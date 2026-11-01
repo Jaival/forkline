@@ -24,9 +24,7 @@ specta-typescript = "0.0.13"
 tauri = { version = "2.12", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-rand = "0.9"
-rand_chacha = "0.9"
+tauri-plugin-opener = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

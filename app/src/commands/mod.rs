@@ -1,8 +1,9 @@
 //! Tauri commands, one file per feature. Each file is owned by one Phase 1
 //! agent (see docs/HANDOFF.md). Register new commands in `lib.rs`.
 //!
-//! All DB commands are `async` so they run on the async runtime, not the
-//! main (UI event loop) thread.
+//! All DB commands are `async` and go through `read` / `write`, which run
+//! the SQLite call on the blocking pool so neither the main (UI event loop)
+//! thread nor an async worker waits on the database.
 
 pub mod actions;
 pub mod bench;
@@ -15,10 +16,49 @@ pub mod pr;
 pub mod repo;
 pub mod search;
 
-use fl_types::CmdError;
+use fl_db::rusqlite::{self, Connection};
+use fl_types::{CmdError, CmdResult, DataChanged};
+use tauri::AppHandle;
+use tauri_specta::Event;
 
-pub fn db_err(e: fl_db::rusqlite::Error) -> CmdError {
+use crate::AppState;
+use crate::events::DataChangedEvent;
+
+pub fn db_err(e: rusqlite::Error) -> CmdError {
     CmdError::Db(e.to_string())
+}
+
+/// Run `f` on a reader connection, off the async runtime.
+pub async fn read<T: Send + 'static>(
+    state: &AppState,
+    f: impl FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.read(f))
+        .await
+        .map_err(|e| CmdError::Other(format!("database task failed: {e}")))?
+        .map_err(db_err)
+}
+
+/// Run `f` on the writer connection, off the async runtime.
+pub async fn write<T: Send + 'static>(
+    state: &AppState,
+    f: impl FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.write(f))
+        .await
+        .map_err(|e| CmdError::Other(format!("database task failed: {e}")))?
+        .map_err(db_err)
+}
+
+/// Tell the UI to invalidate queries under `scopes` after a write.
+pub fn emit_changed(app: &AppHandle, scopes: &[&str]) -> CmdResult<()> {
+    DataChangedEvent(DataChanged {
+        scopes: scopes.iter().map(|s| (*s).to_owned()).collect(),
+    })
+    .emit(app)
+    .map_err(|e| CmdError::Other(format!("emit data-changed: {e}")))
 }
 
 pub fn now_secs() -> i64 {

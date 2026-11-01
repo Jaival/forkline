@@ -3,7 +3,10 @@
 use rusqlite::Connection;
 
 /// Index = version - 1. Append only; never edit a shipped migration.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_search_docs_inbox.sql"),
+];
 
 pub const LATEST: i64 = MIGRATIONS.len() as i64;
 

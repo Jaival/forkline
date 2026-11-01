@@ -16,7 +16,7 @@ use rusqlite::Row;
 /// Columns for `issue_row`. Join aliases: `i` = issues, `r` = repos, `u` = users.
 pub const ISSUE_ROW_COLS: &str = "i.id, i.repo_id, r.owner || '/' || r.name, i.number, i.is_pr, i.state, \
      i.title, COALESCE(u.login, 'ghost'), i.comments_count, i.updated_at, \
-     COALESCE(i.updated_at > i.last_viewed_at, 0)";
+     i.updated_at > COALESCE(i.last_viewed_at, 0)";
 
 pub fn issue_row(r: &Row<'_>) -> rusqlite::Result<IssueRow> {
     let state: String = r.get(5)?;

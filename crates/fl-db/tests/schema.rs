@@ -28,26 +28,60 @@ fn pragmas_are_set() {
     assert_eq!(mode, "wal");
 }
 
-#[test]
-fn fts5_prefix_search_works() {
-    let (_d, db) = fresh();
+/// One repo with one open issue (id 1) that was never viewed.
+fn seed_issue(db: &Db) {
     db.write(|c| {
-        c.execute(
-            "INSERT INTO search_fts (title, body, issue_id, kind) VALUES ('Crème brûlée crash', 'body', 1, 'issue')",
-            [],
+        c.execute_batch(
+            "INSERT INTO repos (id, node_id, owner, name, updated_at) VALUES (1, 'R', 'o', 'r', 0);
+             INSERT INTO issues (id, node_id, repo_id, number, is_pr, state, title, created_at, updated_at)
+               VALUES (1, 'I', 1, 1, 0, 'open', 'Crème brûlée crash', 0, 100);
+             INSERT INTO search_docs (issue_id) VALUES (1);
+             INSERT INTO search_fts (rowid, title, body)
+               VALUES (last_insert_rowid(), 'Crème brûlée crash', 'body');",
         )
     })
     .unwrap();
-    let n: i64 = db
-        .read(|c| {
-            c.query_row(
-                "SELECT count(*) FROM search_fts WHERE search_fts MATCH 'creme AND cr*'",
-                [],
-                |r| r.get(0),
-            )
-        })
+}
+
+fn fts_hits(db: &Db, q: &str) -> i64 {
+    db.read(|c| {
+        c.query_row(
+            "SELECT count(*) FROM search_fts f JOIN search_docs d ON d.id = f.rowid
+             WHERE search_fts MATCH ?1",
+            [q],
+            |r| r.get(0),
+        )
+    })
+    .unwrap()
+}
+
+#[test]
+fn fts5_prefix_search_works() {
+    let (_d, db) = fresh();
+    seed_issue(&db);
+    assert_eq!(fts_hits(&db, "creme AND cr*"), 1);
+}
+
+#[test]
+fn deleting_an_issue_removes_its_search_rows() {
+    let (_d, db) = fresh();
+    seed_issue(&db);
+    db.write(|c| c.execute("DELETE FROM repos WHERE id = 1", []))
         .unwrap();
-    assert_eq!(n, 1);
+    let rows: i64 = db
+        .read(|c| c.query_row("SELECT count(*) FROM search_fts", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[test]
+fn never_viewed_items_are_unread_until_viewed() {
+    let (_d, db) = fresh();
+    seed_issue(&db);
+    let unread = |db: &Db| db.read(|c| queries::issue::get(c, 1)).unwrap().unwrap().row.unread;
+    assert!(unread(&db));
+    db.write(|c| queries::issue::mark_viewed(c, 1, 200)).unwrap();
+    assert!(!unread(&db));
 }
 
 #[test]
@@ -92,7 +126,8 @@ fn empty_queries_succeed() {
 }
 
 /// Every list query must be served by an index: no full `SCAN <table>`
-/// without `USING INDEX`. Add each new list query here.
+/// without `USING INDEX`, and no `USE TEMP B-TREE` sort step. Add each new
+/// list query here.
 #[test]
 fn query_plans_use_indexes() {
     let (_d, db) = fresh();
@@ -106,7 +141,9 @@ fn query_plans_use_indexes() {
         "SELECT id FROM repos WHERE pinned = 1 ORDER BY owner, name".into(),
         "SELECT id FROM issues WHERE repo_id = 1 AND is_pr = 1 AND state = 'open' ORDER BY updated_at DESC".into(),
         "SELECT id FROM comments WHERE issue_id = 1 ORDER BY created_at".into(),
-        "SELECT id FROM notifications WHERE done = 0 ORDER BY done, repo_id, updated_at DESC".into(),
+        "SELECT id FROM notifications WHERE done = 0 ORDER BY updated_at DESC".into(),
+        "SELECT id FROM notifications WHERE done = 0 AND repo_id = 1 ORDER BY updated_at DESC".into(),
+        "SELECT id FROM search_docs WHERE issue_id = 1".into(),
         "SELECT id FROM action_queue WHERE state = 'pending' AND next_attempt_at <= 0".into(),
     ];
     for q in queries {
