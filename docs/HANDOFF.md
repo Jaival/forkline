@@ -112,5 +112,5 @@ Rules added in Phase 1:
    - `reviews` has no `body_md`; local reviews store escaped text in `body_html`.
    - No shared UI handler for `CmdError::Unauthorized` (footer covers sign-in).
    - Diff: no multi-line comments, long lines clip, no `j` / `k` over files.
-   - Search: all terms must match in one doc (title or one comment).
+   - Search: terms match across docs of one issue (one FTS MATCH per term, intersected by issue). Broad queries (> 2000 docs) rank by recency and snippet the first doc matching any term.
    - Repo tab titles show the id; pin toggle is not optimistic.
