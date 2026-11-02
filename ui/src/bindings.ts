@@ -42,7 +42,8 @@ export const commands = {
 	prSetViewed: (prId: number, path: string, viewed: boolean) => __TAURI_INVOKE<null>("pr_set_viewed", { prId, path, viewed }),
 	diffSummary: (prId: number) => __TAURI_INVOKE<DiffSummary>("diff_summary", { prId }),
 	diffFile: (prId: number, path: string) => __TAURI_INVOKE<DiffFile>("diff_file", { prId, path }),
-	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
+	/**  Free text plus operators (`is:pr`, `author:`, `label:`, `repo:`, ...). */
+	search: (query: string, page: PageReq) => __TAURI_INVOKE<Page<SearchHit>>("search", { query, page }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
 	/**  Run a sync pass now. */
 	syncNow: () => __TAURI_INVOKE<null>("sync_now"),
@@ -490,6 +491,17 @@ export type ReviewThreadComment = {
 	body_html: string | null,
 	body_md: string | null,
 	created_at: number,
+};
+
+/**
+ *  One issue / PR that matched. `snippet` is plain text; matched terms are
+ *  wrapped in U+E000 / U+E001 so the UI can highlight without parsing HTML.
+ */
+export type SearchHit = {
+	row: IssueRow,
+	snippet: string,
+	/**  Set when the best match was in a comment. */
+	comment_id: number | null,
 };
 
 /**  Star count on one day (`day` = unix seconds / 86400). */

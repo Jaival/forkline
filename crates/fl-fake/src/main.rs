@@ -44,11 +44,6 @@ fn main() -> anyhow::Result<()> {
                      VALUES (?1,?2,?3,?4,?5,'open',?6,?7,1,?8,?9,?10)",
                     (id, format!("I_{id}"), repo_id, number, is_pr, title.clone(), body.clone(), updated_at - 86_400, updated_at, (id % 5 == 0).then_some(updated_at)),
                 )?;
-                tx.execute("INSERT INTO search_docs(issue_id) VALUES (?1)", [id])?;
-                tx.execute(
-                    "INSERT INTO search_fts(rowid,title,body) VALUES (last_insert_rowid(),?1,?2)",
-                    (title, body),
-                )?;
                 if is_pr == 1 {
                     tx.execute(
                         "INSERT INTO pr_details(issue_id,base_ref,head_ref,base_oid,head_oid,additions,deletions,changed_files)
@@ -62,6 +57,11 @@ fn main() -> anyhow::Result<()> {
         repo::seed(&tx)?;
         lists::seed(&tx)?;
         pr::seed(&tx)?;
+        // Index after all seed modules, so comments they add are searchable too.
+        let ids = tx.prepare("SELECT id FROM issues")?.query_map([], |r| r.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
+        for id in ids {
+            fl_search::index_issue(&tx, id)?;
+        }
         tx.commit()
     })?;
     println!(
