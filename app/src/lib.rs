@@ -16,6 +16,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     /// Internal blobless clones (agent 5); used by `diff_*` (agent 4).
     pub git: Arc<fl_git::GitStore>,
+    /// Sync engine and action queue (agent 1).
+    pub sync: Arc<fl_sync::Engine>,
 }
 
 /// Command-line flags (validated once here).
@@ -78,7 +80,15 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             search::search,
             // sync + actions (agent 1)
             actions::sync_status,
+            actions::sync_now,
             actions::action_enqueue,
+            actions::action_failed_list,
+            actions::action_retry,
+            actions::action_discard,
+            actions::auth_state,
+            actions::auth_start,
+            actions::auth_poll,
+            actions::auth_sign_out,
         ])
         .events(collect_events![events::DataChangedEvent])
 }
@@ -122,12 +132,15 @@ pub fn run() {
 
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
     std::fs::create_dir_all(&data_dir).expect("cannot create data directory");
-    let db = Db::open(&fl_db::db_path(&data_dir)).expect("cannot open database");
+    let db = Arc::new(Db::open(&fl_db::db_path(&data_dir)).expect("cannot open database"));
+    let sync = fl_sync::Engine::new(db.clone(), fl_sync::Config::github());
+    let bench_mode = args.bench_out.is_some();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
-            db: Arc::new(db),
+            db,
+            sync: sync.clone(),
             git: Arc::new(fl_git::GitStore::new(&data_dir)),
             data_dir,
         })
@@ -135,6 +148,15 @@ pub fn run() {
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
+            // Bench runs measure local data only; no network.
+            if !bench_mode {
+                let handle = app.handle().clone();
+                sync.set_emitter(move |scopes| {
+                    let _ = commands::emit_changed(&handle, scopes);
+                });
+                tauri::async_runtime::spawn(sync.clone().run_sync());
+                tauri::async_runtime::spawn(sync.clone().run_actions());
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
