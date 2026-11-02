@@ -4,7 +4,7 @@ import { withGroupHeaders } from "./groups";
 
 const row = (id: string, repo: string): InboxRow => ({
   id, repo, repo_id: 1, subject_type: "Issue", issue_id: 1, is_pr: false,
-  title: "t", reason: "mention", unread: true, updated_at: 0,
+  title: "t", reason: "mention", unread: true, updated_at: 0, pending: false,
 });
 
 it("adds a header per run of repos", () => {

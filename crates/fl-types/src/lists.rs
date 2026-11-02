@@ -44,6 +44,8 @@ pub struct InboxRow {
     pub reason: String,
     pub unread: bool,
     pub updated_at: Timestamp,
+    /// A read / done action for this thread is queued and not yet confirmed.
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

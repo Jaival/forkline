@@ -26,7 +26,9 @@ pub fn inbox_sql(f: &InboxFilter, req: PageReq) -> (String, Vec<Value>) {
     args.push(req.offset.into());
     let sql = format!(
         "SELECT n.id, n.repo_id, r.owner || '/' || r.name, n.subject_type, n.issue_id,
-                n.title, n.reason, n.unread, n.updated_at
+                n.title, n.reason, n.unread, n.updated_at,
+                EXISTS (SELECT 1 FROM pending_fields p WHERE p.table_name = 'notifications'
+                        AND p.row_id = CAST(n.id AS INTEGER))
          FROM notifications n JOIN repos r ON r.id = n.repo_id
          WHERE {where_} ORDER BY {order} LIMIT ? OFFSET ?"
     );
@@ -51,6 +53,7 @@ pub fn list(conn: &Connection, f: &InboxFilter, req: PageReq) -> rusqlite::Resul
                 reason: r.get(6)?,
                 unread: r.get(7)?,
                 updated_at: r.get(8)?,
+                pending: r.get(9)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

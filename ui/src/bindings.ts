@@ -257,6 +257,8 @@ export type InboxRow = {
 	reason: string,
 	unread: boolean,
 	updated_at: number,
+	/**  A read / done action for this thread is queued and not yet confirmed. */
+	pending: boolean,
 };
 
 export type IssueDetail = {

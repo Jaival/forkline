@@ -246,6 +246,24 @@ fn issue_list_filters_and_inbox() {
     assert_eq!(inbox(InboxFilter { unread_only: true, ..Default::default() }), ["d", "a"]);
     assert_eq!(inbox(InboxFilter { grouped: true, ..Default::default() }), ["a", "d", "b"]);
     assert_eq!(inbox(InboxFilter { repo_id: Some(2), ..Default::default() }), ["d", "b"]);
+
+    // A queued read / done shows as pending; GitHub thread ids are numeric text.
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO notifications(id,repo_id,subject_type,title,reason,updated_at)
+               VALUES ('42',1,'Issue','t','mention',9);
+             INSERT INTO action_queue(id,kind,payload_json,target_table,target_id,next_attempt_at,created_at)
+               VALUES (1,'notification_read','{}','notifications',42,0,0);
+             INSERT INTO pending_fields VALUES ('notifications', 42, 'unread', 1, '1');",
+        )
+    })
+    .unwrap();
+    let rows = db
+        .read(|c| queries::inbox::list(c, &InboxFilter::default(), PageReq { offset: 0, limit: 10 }))
+        .unwrap()
+        .items;
+    let pending: Vec<_> = rows.iter().filter(|r| r.pending).map(|r| r.id.as_str()).collect();
+    assert_eq!(pending, ["42"]);
 }
 
 #[test]
