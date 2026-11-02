@@ -3,6 +3,7 @@ import { HomeView } from "../features/home/HomeView";
 import { InboxView } from "../features/inbox/InboxView";
 import { IssueView } from "../features/issue/IssueView";
 import { ListView } from "../features/lists/ListView";
+import { PrView } from "../features/pr/PrView";
 import { Placeholder } from "../features/placeholder/Placeholder";
 import { RepoOverviewView } from "../features/repo/RepoOverviewView";
 import { ReposView } from "../features/repo/ReposView";
@@ -19,8 +20,9 @@ export function ViewHost({ view, onNavigate }: { view: ViewRef; onNavigate: (v: 
     case "reviews":
       return <ListView view={view} onNavigate={onNavigate} />;
     case "issue":
-    case "pr":
       return <IssueView id={view.id} onNavigate={onNavigate} />;
+    case "pr":
+      return <PrView id={view.id} />;
     case "repo":
       return <RepoOverviewView repoId={view.repoId} onNavigate={onNavigate} />;
     case "repos":

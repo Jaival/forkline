@@ -77,7 +77,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             issue::issue_edit_options,
             // pr + diff (agent 4)
             pr::pr_get,
-            diff::diff_get,
+            pr::pr_threads,
+            pr::pr_viewed_paths,
+            pr::pr_set_viewed,
+            diff::diff_summary,
+            diff::diff_file,
             // search (agent 5)
             search::search,
             // sync + actions (agent 1)

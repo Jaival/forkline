@@ -34,8 +34,14 @@ export const commands = {
 	issueThread: (id: number) => __TAURI_INVOKE<IssueThread>("issue_thread", { id }),
 	/**  Labels and users to choose from in the editors. */
 	issueEditOptions: (repoId: number) => __TAURI_INVOKE<EditOptions>("issue_edit_options", { repoId }),
-	prGet: (id: number) => __TAURI_INVOKE<null>("pr_get", { id }),
-	diffGet: (prId: number) => __TAURI_INVOKE<null>("diff_get", { prId }),
+	/**  Read a PR from cache and clear its unread dot. */
+	prGet: (id: number) => __TAURI_INVOKE<PrDetail>("pr_get", { id }),
+	prThreads: (prId: number, page: PageReq) => __TAURI_INVOKE<Page<ReviewThread>>("pr_threads", { prId, page }),
+	/**  Paths marked viewed at the PR's current head. */
+	prViewedPaths: (prId: number) => __TAURI_INVOKE<string[]>("pr_viewed_paths", { prId }),
+	prSetViewed: (prId: number, path: string, viewed: boolean) => __TAURI_INVOKE<null>("pr_set_viewed", { prId, path, viewed }),
+	diffSummary: (prId: number) => __TAURI_INVOKE<DiffSummary>("diff_summary", { prId }),
+	diffFile: (prId: number, path: string) => __TAURI_INVOKE<DiffFile>("diff_file", { prId, path }),
 	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
 	actionEnqueue: (action: Action) => __TAURI_INVOKE<number>("action_enqueue", { action }),
@@ -116,7 +122,51 @@ export type DataChanged = {
 
 export type DataChangedEvent = DataChanged;
 
+/**  Full diff of one file. Binary files have no hunks. */
+export type DiffFile = {
+	summary: DiffFileSummary,
+	hunks: DiffHunk[],
+};
+
+/**  One changed file, without its hunks (file tree / list). */
+export type DiffFileSummary = {
+	path: string,
+	/**  Previous path for renames. */
+	old_path: string | null,
+	status: FileStatus,
+	additions: number,
+	deletions: number,
+	binary: boolean,
+};
+
+export type DiffHunk = {
+	old_start: number,
+	old_lines: number,
+	new_start: number,
+	new_lines: number,
+	/**  Text after the second `@@` (function context), may be empty. */
+	header: string,
+	lines: DiffLine[],
+};
+
+export type DiffLine = {
+	kind: LineKind,
+	/**  Line number in the old file (`None` for added lines). */
+	old_no: number | null,
+	/**  Line number in the new file (`None` for deleted lines). */
+	new_no: number | null,
+	/**  Line text without the trailing newline or the +/- marker. */
+	text: string,
+};
+
 export type DiffSide = "LEFT" | "RIGHT";
+
+/**  List of changed files for a PR. */
+export type DiffSummary = {
+	merge_base_oid: string,
+	head_oid: string,
+	files: DiffFileSummary[],
+};
 
 /**  Inline comment in a review. Lines are file line numbers on `side`. */
 export type DraftReviewComment = {
@@ -133,6 +183,8 @@ export type EditOptions = {
 	labels: Label[],
 	users: User[],
 };
+
+export type FileStatus = "added" | "modified" | "deleted" | "renamed";
 
 export type InboxFilter = {
 	repo_id: number | null,
@@ -221,6 +273,8 @@ export type LanguageShare = {
 	bytes: number,
 };
 
+export type LineKind = "context" | "add" | "del";
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 /**  One page of rows. `next` is the offset of the following page, if any. */
@@ -232,6 +286,77 @@ export type Page<T> = {
 export type PageReq = {
 	offset: number,
 	limit: number,
+};
+
+export type PrCheck = {
+	id: number,
+	name: string,
+	/**  QUEUED | IN_PROGRESS | COMPLETED */
+	status: string,
+	/**  SUCCESS | FAILURE | NEUTRAL | CANCELLED | SKIPPED | TIMED_OUT */
+	conclusion: string | null,
+	url: string | null,
+};
+
+export type PrComment = {
+	/**  Negative = local optimistic comment. */
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
+
+export type PrCommit = {
+	oid: string,
+	headline: string,
+	author: string | null,
+	authored_at: number | null,
+};
+
+/**
+ *  Everything the PR view needs except review threads (see `ReviewThread`).
+ *  Comments are capped at `PAGE_MAX`; `row.comments` is the full count so
+ *  the UI can say "n more on GitHub".
+ */
+export type PrDetail = {
+	row: IssueRow,
+	body_html: string | null,
+	body_md: string | null,
+	labels: Label[],
+	created_at: number,
+	base_ref: string,
+	head_ref: string,
+	base_oid: string,
+	head_oid: string,
+	is_draft: boolean,
+	/**  MERGEABLE | CONFLICTING | UNKNOWN */
+	mergeable: string | null,
+	/**  GitHub mergeStateStatus. */
+	merge_state: string | null,
+	/**  APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED */
+	review_decision: string | null,
+	/**  SUCCESS | FAILURE | PENDING | ERROR */
+	check_state: string | null,
+	additions: number,
+	deletions: number,
+	changed_files: number,
+	review_requests: string[],
+	/**  Fields of this PR with an unconfirmed optimistic change (e.g. `state`). */
+	pending_fields: string[],
+	comments: PrComment[],
+	reviews: PrReview[],
+	checks: PrCheck[],
+	commits: PrCommit[],
+};
+
+export type PrReview = {
+	id: number,
+	author: string,
+	/**  APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED */
+	state: string,
+	body_html: string | null,
+	submitted_at: number | null,
 };
 
 export type ReleaseRow = {
@@ -290,6 +415,32 @@ export type RepoSummary = {
 };
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/**
+ *  One inline review thread. `line` is `None` when the thread is outdated
+ *  and no longer maps to a line of the current diff.
+ */
+export type ReviewThread = {
+	id: number,
+	path: string,
+	side: DiffSide,
+	line: number | null,
+	start_line: number | null,
+	original_line: number | null,
+	is_resolved: boolean,
+	is_outdated: boolean,
+	/**  An unconfirmed resolve / unresolve is queued. */
+	pending: boolean,
+	comments: ReviewThreadComment[],
+};
+
+export type ReviewThreadComment = {
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
 
 /**  Star count on one day (`day` = unix seconds / 86400). */
 export type StarPoint = {
