@@ -55,6 +55,10 @@ export function InboxView({ onNavigate }: { onNavigate: (v: ViewRef) => void }) 
           items={items}
           rowHeight={ROW_HEIGHT}
           getKey={(i) => (i.type === "header" ? `h:${i.repo}` : i.row.id)}
+          canSelect={(i) => i.type !== "header"}
+          onOpen={(i) => {
+            if (i.type !== "header") open(i.row);
+          }}
           onEndReached={() => {
             if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
           }}

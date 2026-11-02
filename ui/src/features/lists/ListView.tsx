@@ -4,7 +4,7 @@ import { commands, type IssueFilter, type IssueState } from "../../bindings";
 import { type ViewRef, viewTitle } from "../../lib/layout";
 import { signalReady } from "../../lib/perf";
 import { VirtualList } from "../../lib/VirtualList";
-import { IssueRowItem, ROW_HEIGHT } from "./IssueRowItem";
+import { IssueRowItem, ROW_HEIGHT, viewFor } from "./IssueRowItem";
 
 type Kind = "pulls" | "issues" | "reviews";
 type Text = { author: string; assignee: string; label: string };
@@ -86,6 +86,7 @@ export function ListView({ view, onNavigate }: { view: ViewRef & { kind: Kind };
           rowHeight={ROW_HEIGHT}
           getKey={(item) => item.id}
           renderRow={(item) => <IssueRowItem item={item} onNavigate={onNavigate} />}
+          onOpen={(item) => onNavigate(viewFor(item))}
           onEndReached={() => {
             if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
           }}

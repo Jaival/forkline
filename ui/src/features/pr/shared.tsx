@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { commands, type Action } from "../../bindings";
-import { renderMarkdown, sanitizeHtml } from "../../lib/html";
+import { renderBody } from "../../lib/html";
 
 /** Commands throw `{ kind, message }` (CmdError); show it as one line. */
 export function errorText(e: unknown): string {
@@ -21,8 +21,8 @@ export function useEnqueue(onSuccess?: () => void) {
 
 /** Rendered GitHub `bodyHTML`, or markdown (local optimistic text) when no HTML exists. */
 export function Body({ html, md }: { html: string | null; md: string | null }) {
-  const out = html ? sanitizeHtml(html) : md ? renderMarkdown(md) : null;
-  if (out === null) return <p className="text-muted">No description.</p>;
+  const out = renderBody(html, md);
+  if (!out) return <p className="text-muted">No description.</p>;
   return (
     <div
       className="break-words [&_a]:text-accent [&_code]:rounded [&_code]:bg-raised [&_code]:px-1 [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-raised [&_pre]:p-2 [&_ul]:list-disc [&_ul]:pl-5"

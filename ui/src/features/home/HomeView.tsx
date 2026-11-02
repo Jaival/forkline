@@ -4,7 +4,7 @@ import { commands } from "../../bindings";
 import type { ViewRef } from "../../lib/layout";
 import { signalReady } from "../../lib/perf";
 import { VirtualList } from "../../lib/VirtualList";
-import { IssueRowItem, ROW_HEIGHT } from "../lists/IssueRowItem";
+import { IssueRowItem, ROW_HEIGHT, viewFor } from "../lists/IssueRowItem";
 
 export function HomeView({ onNavigate }: { onNavigate: (view: ViewRef) => void }) {
   const feed = useQuery({
@@ -30,6 +30,7 @@ export function HomeView({ onNavigate }: { onNavigate: (view: ViewRef) => void }
           rowHeight={ROW_HEIGHT}
           getKey={(item) => item.id}
           renderRow={(item) => <IssueRowItem item={item} onNavigate={onNavigate} />}
+          onOpen={(item) => onNavigate(viewFor(item))}
         />
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useListNav } from "./listNav";
 
 /**
  * Shared virtual list (TanStack Virtual, fixed row height).
@@ -10,6 +11,9 @@ import { useVirtualizer } from "@tanstack/react-virtual";
  * - `onEndReached`: called when the last ~5 rows are visible; use it to fetch
  *   the next page. Safe to call repeatedly (guard with `isFetching`).
  * - `label`: accessible name of the list.
+ * - `onOpen(item)`: enables keyboard navigation (`j` / `k` / Enter, see
+ *   `listNav.ts`); Enter opens the selected row. Enter does nothing on rows
+ *   where `canSelect` returns false, such as group headers.
  */
 export function VirtualList<T>({
   items,
@@ -18,6 +22,8 @@ export function VirtualList<T>({
   getKey,
   onEndReached,
   label,
+  onOpen,
+  canSelect,
 }: {
   items: T[];
   rowHeight: number;
@@ -25,6 +31,8 @@ export function VirtualList<T>({
   getKey: (item: T) => string | number;
   onEndReached?: () => void;
   label: string;
+  onOpen?: (item: T) => void;
+  canSelect?: (item: T) => boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // TanStack Virtual returns unmemoizable functions; this component does not memoize them.
@@ -38,6 +46,14 @@ export function VirtualList<T>({
     // Rows render before the first measurement, e.g. in a hidden tab.
     initialRect: { width: 800, height: 800 },
   });
+  const nav = useListNav({
+    count: items.length,
+    onOpen: (i) => {
+      const item = items[i];
+      if (item !== undefined && onOpen && (canSelect?.(item) ?? true)) onOpen(item);
+    },
+    onSelect: (i) => virtualizer.scrollToIndex(i),
+  });
   const virtualItems = virtualizer.getVirtualItems();
   const last = virtualItems.at(-1)?.index ?? -1;
 
@@ -46,14 +62,21 @@ export function VirtualList<T>({
   }, [last, items.length, onEndReached]);
 
   return (
-    <div ref={scrollRef} role="list" aria-label={label} className="h-full overflow-auto">
+    <div
+      ref={scrollRef}
+      role="list"
+      aria-label={label}
+      className="h-full overflow-auto outline-none"
+      {...(onOpen ? { tabIndex: 0, onKeyDown: nav.onKeyDown, "data-list-nav": true } : {})}
+    >
       <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
         {virtualItems.map((v) => (
           <div
             key={v.key}
             role="listitem"
             data-index={v.index}
-            className="absolute top-0 left-0 w-full"
+            aria-current={v.index === nav.selected || undefined}
+            className={`absolute top-0 left-0 w-full ${v.index === nav.selected ? "bg-raised" : ""}`}
             style={{ height: rowHeight, transform: `translateY(${v.start}px)` }}
           >
             {renderRow(items[v.index]!, v.index)}
