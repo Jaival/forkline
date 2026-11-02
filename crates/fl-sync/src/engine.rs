@@ -227,7 +227,12 @@ impl Engine {
         let mut rt = self.rt();
         match e {
             Error::RateLimited { until } => rt.paused_until = Some(*until),
-            Error::Unauthorized => rt.token_rejected = true,
+            Error::Unauthorized => {
+                rt.token_rejected = true;
+                drop(rt);
+                // The footer re-reads auth state and asks the user to sign in.
+                self.emit(&["sync"]);
+            }
             _ => {}
         }
     }

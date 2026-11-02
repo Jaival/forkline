@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { type Action, commands } from "../../bindings";
+import { noteError } from "../../lib/query";
 import { formatError } from "./errors";
 
 /**
@@ -17,6 +18,7 @@ export function useAction() {
       setError(null);
       return true;
     } catch (e) {
+      noteError(e);
       setError(formatError(e));
       return false;
     } finally {

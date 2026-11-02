@@ -26,6 +26,9 @@ pub enum GitError {
     /// The commits are not local yet and could not be fetched.
     #[error("commits not available: {0}")]
     Missing(String),
+    /// GitHub refused the credentials (or asked for some and got none).
+    #[error("GitHub rejected the git credentials")]
+    Unauthorized,
     #[error("git: {0}")]
     Other(String),
 }
@@ -81,6 +84,10 @@ fn run_git(dir: Option<&Path>, args: &[&str], token: Option<&str>, offline: bool
     let mut msg = String::from_utf8_lossy(&out.stderr).trim().to_owned();
     if let Some(t) = token {
         msg = msg.replace(t, "***");
+    }
+    // With prompts off, a 401 shows up as one of these lines.
+    if ["Authentication failed", "could not read Username", "Invalid username or token"].iter().any(|m| msg.contains(m)) {
+        return Err(GitError::Unauthorized);
     }
     Err(GitError::Other(msg))
 }
@@ -164,8 +171,10 @@ impl GitStore {
                     token,
                     false,
                 );
-                if let (Err(e), true) = (&pulls, missing.iter().any(|o| !has(o))) {
-                    return Err(GitError::Missing(e.to_string()));
+                match (pulls, missing.iter().any(|o| !has(o))) {
+                    (Err(GitError::Unauthorized), true) => return Err(GitError::Unauthorized),
+                    (Err(e), true) => return Err(GitError::Missing(e.to_string())),
+                    _ => {}
                 }
             }
             if let Some(o) = missing.iter().find(|o| !has(o)) {

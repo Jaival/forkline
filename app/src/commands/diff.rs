@@ -20,8 +20,9 @@ async fn with_clone<T: Send + 'static>(
         .await?
         .ok_or(CmdError::NotFound)?;
     let git = state.git.clone();
+    // The engine's token: honours a token GitHub already rejected.
+    let token = state.sync.token();
     tauri::async_runtime::spawn_blocking(move || {
-        let token = fl_sync::auth::token();
         let clone = git.ensure_commits(
             &target.owner,
             &target.name,
@@ -32,7 +33,10 @@ async fn with_clone<T: Send + 'static>(
     })
     .await
     .map_err(|e| CmdError::Other(format!("git task failed: {e}")))?
-    .map_err(|e| CmdError::Other(e.to_string()))
+    .map_err(|e| match e {
+        fl_git::GitError::Unauthorized => CmdError::Unauthorized,
+        e => CmdError::Other(e.to_string()),
+    })
 }
 
 #[tauri::command]

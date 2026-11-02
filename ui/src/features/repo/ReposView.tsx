@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { commands } from "../../bindings";
 import type { ViewRef } from "../../lib/layout";
 import { useListNav } from "../../lib/listNav";
 import { signalReady } from "../../lib/perf";
+import { useSetPinned } from "./useSetPinned";
 
 const ROW_HEIGHT = 56;
 const PAGE = 100;
@@ -26,9 +27,7 @@ export function ReposView({
     getNextPageParam: (last) => last.next ?? undefined,
     placeholderData: (prev) => prev,
   });
-  const setPinned = useMutation({
-    mutationFn: (v: { id: number; pinned: boolean }) => commands.repoSetPinned(v.id, v.pinned),
-  });
+  const setPinned = useSetPinned();
 
   const rows = q.data?.pages.flatMap((p) => p.items) ?? [];
   const scroller = useRef<HTMLDivElement>(null);

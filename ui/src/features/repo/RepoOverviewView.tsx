@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { commands, type RepoOverview } from "../../bindings";
 import type { ViewRef } from "../../lib/layout";
 import { signalReady } from "../../lib/perf";
+import { useSetPinned } from "./useSetPinned";
 import { languageColor, languageShares, sparklinePoints } from "./sparkline";
 
 const CHECK_STYLE: Record<string, string> = {
@@ -28,7 +29,7 @@ function Empty({ children }: { children: string }) {
 }
 
 function Overview({ o, onNavigate }: { o: RepoOverview; onNavigate: (v: ViewRef) => void }) {
-  const setPinned = useMutation({ mutationFn: () => commands.repoSetPinned(o.id, !o.pinned) });
+  const setPinned = useSetPinned();
   const shares = languageShares(o.languages);
   const history = o.star_history.map((p) => p.stars);
 
@@ -43,8 +44,7 @@ function Overview({ o, onNavigate }: { o: RepoOverview; onNavigate: (v: ViewRef)
           <button
             className="ml-auto rounded-md border border-border px-3 py-1 hover:bg-raised"
             aria-pressed={o.pinned}
-            disabled={setPinned.isPending}
-            onClick={() => setPinned.mutate()}
+            onClick={() => setPinned.mutate({ id: o.id, pinned: !o.pinned })}
           >
             {o.pinned ? "Unpin" : "Pin"}
           </button>

@@ -5,9 +5,22 @@ export type DiffRow =
   | { kind: "line"; line: DiffLine }
   | { kind: "thread"; thread: ReviewThread }
   | { kind: "draft"; draft: DraftReviewComment }
-  | { kind: "composer"; side: DiffSide; line: number };
+  | { kind: "composer"; side: DiffSide; line: number; startLine: number | null };
 
-export type Composer = { side: DiffSide; line: number } | null;
+/**
+ * The open comment box. `line` is the last line of the range (the box sits
+ * under it); `startLine` is the first line of a multi-line range, else null.
+ * `anchor` is the line clicked first, so Shift+click can grow either way.
+ */
+export type Composer = { side: DiffSide; line: number; startLine: number | null; anchor: number } | null;
+
+/** Composer after a gutter click. Shift+click on the same side selects a range. */
+export function clickLine(c: Composer, side: DiffSide, line: number, extend: boolean): Composer {
+  if (!extend || !c || c.side !== side) return { side, line, startLine: null, anchor: line };
+  const lo = Math.min(c.anchor, line);
+  const hi = Math.max(c.anchor, line);
+  return { side, line: hi, startLine: lo === hi ? null : lo, anchor: c.anchor };
+}
 
 /** Where a click on a line's gutter would anchor a comment. */
 export function lineAnchor(l: DiffLine): { side: DiffSide; line: number } | null {
@@ -65,7 +78,7 @@ export function buildRows(
           placed.add(t);
         }
         for (const d of draftAt.get(k) ?? []) rows.push({ kind: "draft", draft: d });
-        if (composer && key(composer.side, composer.line) === k) rows.push({ kind: "composer", ...composer });
+        if (composer && key(composer.side, composer.line) === k) rows.push({ kind: "composer", side: composer.side, line: composer.line, startLine: composer.startLine });
       }
     }
   }

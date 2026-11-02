@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   commands,
   type DiffFile,
-  type DiffSide,
   type DiffSummary,
   type DraftReviewComment,
   type ReviewThread,
@@ -12,7 +11,7 @@ import {
 import { signalReady } from "../../lib/perf";
 import { errorText } from "../pr/shared";
 import { DiffLines } from "./DiffLines";
-import { buildRows, flattenTree, type Composer } from "./rows";
+import { buildRows, clickLine, flattenTree, type Composer } from "./rows";
 import { ThreadCard } from "./ThreadCard";
 
 type Source = {
@@ -113,14 +112,28 @@ export function DiffViewer({
   const shown = filter ? files.filter((f) => f.path.toLowerCase().includes(filter.toLowerCase())) : files;
   const meta = files.find((f) => f.path === current);
 
-  const addDraft = (side: DiffSide, line: number, body: string) => {
-    if (current === null) return;
-    onAddDraft({ path: current, side, line, start_line: null, body_md: body });
+  const addDraft = (body: string) => {
+    if (current === null || composer === null) return;
+    onAddDraft({ path: current, side: composer.side, line: composer.line, start_line: composer.startLine, body_md: body });
     setComposer(null);
+  };
+  const select = (p: string) => {
+    setSelected(p);
+    setComposer(null);
+  };
+  // j / k: next / previous file in tree order (collapsed folders included).
+  const order = filter ? shown.map((f) => f.path) : flattenTree(shown.map((f) => f.path), new Set()).filter((e) => e.kind === "file").map((e) => e.path);
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || (e.key !== "j" && e.key !== "k")) return;
+    if (e.target instanceof HTMLElement && e.target.closest("input, textarea, select, [contenteditable]")) return;
+    const i = current === null ? -1 : order.indexOf(current);
+    const next = order[e.key === "j" ? Math.min(i + 1, order.length - 1) : Math.max(i - 1, 0)];
+    if (next !== undefined && next !== current) select(next);
+    e.preventDefault();
   };
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 outline-none" tabIndex={-1} data-list-nav onKeyDown={onKeyDown}>
       <aside className="flex w-72 shrink-0 flex-col border-r border-border">
         <input
           className="m-2 rounded border border-border bg-bg px-2 py-1"
@@ -141,10 +154,7 @@ export function DiffViewer({
             })
           }
           selected={current}
-          onSelect={(p) => {
-            setSelected(p);
-            setComposer(null);
-          }}
+          onSelect={select}
           viewed={viewedSet}
           stats={new Map(files.map((f) => [f.path, f]))}
         />
@@ -182,7 +192,8 @@ export function DiffViewer({
                 <DiffLines
                   key={source.id + current}
                   rows={built.rows}
-                  onOpenComposer={(side, line) => setComposer({ side, line })}
+                  range={composer ? { side: composer.side, from: composer.startLine ?? composer.line, to: composer.line } : null}
+                  onOpenComposer={(side, line, extend) => setComposer((c) => clickLine(c, side, line, extend))}
                   onCloseComposer={() => setComposer(null)}
                   onSaveDraft={addDraft}
                   onRemoveDraft={onRemoveDraft}

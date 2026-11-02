@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { commands } from "../bindings";
 import { SignInDialog } from "../features/auth/SignInDialog";
 import { errorText } from "../features/auth/flow";
+import { noteError, onSignInNeeded } from "../lib/query";
 import type { ThemePref } from "../lib/theme";
 
 const NEXT_THEME: Record<ThemePref, ThemePref> = { system: "light", light: "dark", dark: "system" };
@@ -28,6 +29,8 @@ export function Footer({ theme, onTheme }: { theme: ThemePref; onTheme: (t: Them
   // The dialog opens by itself while signed out, until the user dismisses it.
   const [dismissed, setDismissed] = useState(false);
   const closeSignIn = useCallback(() => setDismissed(true), []);
+  // A command failed with Unauthorized: show the dialog again.
+  useEffect(() => onSignInNeeded(() => setDismissed(false)), []);
   const [actionError, setActionError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -38,12 +41,20 @@ export function Footer({ theme, onTheme }: { theme: ThemePref; onTheme: (t: Them
 
   const run = (p: Promise<unknown>) => {
     setActionError(null);
-    p.catch((e: unknown) => setActionError(errorText(e)));
+    p.catch((e: unknown) => {
+      noteError(e);
+      setActionError(errorText(e));
+    });
   };
 
   const s = status.data;
   const a = auth.data;
   const signedOut = a !== undefined && !a.signed_in;
+  const [wasSignedIn, setWasSignedIn] = useState(false);
+  if (a !== undefined && a.signed_in !== wasSignedIn) {
+    setWasSignedIn(a.signed_in);
+    if (!a.signed_in) setDismissed(false);
+  }
   const synced = s?.last_synced_at ? `Synced ${ago(Math.max(0, now - s.last_synced_at))}` : "Not synced yet";
   return (
     <footer className="relative col-span-2 flex items-center gap-4 border-t border-border bg-panel px-3 text-xs text-muted">

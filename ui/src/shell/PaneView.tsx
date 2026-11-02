@@ -1,6 +1,28 @@
 import type { KeyboardEvent } from "react";
-import { type LayoutAction, type Pane, viewTitle } from "../lib/layout";
+import { useQuery } from "@tanstack/react-query";
+import { commands } from "../bindings";
+import { type LayoutAction, type Pane, type ViewRef, viewTitle } from "../lib/layout";
 import { ViewHost } from "./ViewHost";
+
+/** Tab label. Item tabs read the cached item (same query keys as the views). */
+function TabTitle({ view }: { view: ViewRef }) {
+  const repoId = view.kind === "repo" ? view.repoId : undefined;
+  const itemId = view.kind === "issue" || view.kind === "pr" ? view.id : undefined;
+  const repo = useQuery({
+    queryKey: ["repos", "overview", repoId],
+    queryFn: () => commands.repoOverview(repoId!),
+    enabled: repoId !== undefined,
+  });
+  const item = useQuery({
+    queryKey: ["issues", "detail", itemId],
+    queryFn: () => commands.issueGet(itemId!),
+    enabled: itemId !== undefined,
+  });
+  let text = viewTitle(view);
+  if (repo.data) text = `${repo.data.owner}/${repo.data.name}`;
+  if (item.data) text = `#${item.data.row.number} ${item.data.row.title}`;
+  return <span className="truncate" title={text}>{text}</span>;
+}
 
 const TAB_KEYS: Record<string, (i: number, n: number) => number> = {
   ArrowLeft: (i, n) => (i - 1 + n) % n,
@@ -62,7 +84,7 @@ export function PaneView({
                 active ? "bg-bg text-fg" : "text-muted hover:bg-raised"
               }`}
             >
-              <span className="truncate">{viewTitle(t.view)}</span>
+              <TabTitle view={t.view} />
               <button
                 aria-label="Close tab"
                 tabIndex={-1}

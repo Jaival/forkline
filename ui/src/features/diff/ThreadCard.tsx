@@ -12,6 +12,7 @@ export function ThreadCard({ thread }: { thread: ReviewThread }) {
     <div className="mx-3 my-1 rounded border border-border bg-panel font-sans text-[13px]">
       <div className="flex items-center gap-2 border-b border-border px-3 py-1 text-xs text-muted">
         <span>{thread.is_resolved ? "Resolved" : "Open thread"}</span>
+        {thread.start_line !== null && thread.line !== null ? <span>Lines {thread.start_line}–{thread.line}</span> : null}
         {thread.is_outdated ? <span>Outdated</span> : null}
         {thread.pending ? <span>Waiting to sync…</span> : null}
         <button
@@ -61,7 +62,7 @@ export function DraftCard({ draft, onRemove }: { draft: DraftReviewComment; onRe
   return (
     <div className="mx-3 my-1 rounded border border-dashed border-border bg-panel px-3 py-2 font-sans text-[13px]">
       <div className="mb-1 flex items-center text-xs text-muted">
-        Pending comment (submit it with your review)
+        Pending comment{draft.start_line !== null ? ` on lines ${draft.start_line}–${draft.line}` : ""} (submit it with your review)
         <button className="ml-auto rounded px-2 py-0.5 hover:bg-raised" onClick={onRemove}>
           Remove
         </button>
@@ -71,7 +72,17 @@ export function DraftCard({ draft, onRemove }: { draft: DraftReviewComment; onRe
   );
 }
 
-export function Composer({ onSave, onCancel }: { onSave: (body: string) => void; onCancel: () => void }) {
+export function Composer({
+  startLine,
+  line,
+  onSave,
+  onCancel,
+}: {
+  startLine: number | null;
+  line: number;
+  onSave: (body: string) => void;
+  onCancel: () => void;
+}) {
   const [body, setBody] = useState("");
   return (
     <form
@@ -88,7 +99,10 @@ export function Composer({ onSave, onCancel }: { onSave: (body: string) => void;
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-      <div className="mt-1 flex justify-end gap-2">
+      <div className="mt-1 flex items-center justify-end gap-2">
+        <span className="mr-auto text-xs text-muted">
+          {startLine !== null ? `Lines ${startLine}–${line}` : `Line ${line} · Shift+click a line number to select a range`}
+        </span>
         <button type="button" className="rounded px-3 py-1 hover:bg-raised" onClick={onCancel}>
           Cancel
         </button>

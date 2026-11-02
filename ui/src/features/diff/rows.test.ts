@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DiffFile, DraftReviewComment, ReviewThread } from "../../bindings";
-import { buildRows, flattenTree, lineAnchor } from "./rows";
+import { buildRows, clickLine, flattenTree, lineAnchor } from "./rows";
 import { makeFixtureFile } from "./fixture";
 
 const thread = (over: Partial<ReviewThread>): ReviewThread => ({
@@ -56,7 +56,7 @@ describe("buildRows", () => {
 
   it("adds draft comments and the composer", () => {
     const draft: DraftReviewComment = { path: "a.rs", side: "RIGHT", line: 3, start_line: null, body_md: "x" };
-    const { rows } = buildRows(small, [], [draft], { side: "RIGHT", line: 1 });
+    const { rows } = buildRows(small, [], [draft], { side: "RIGHT", line: 1, startLine: null, anchor: 1 });
     expect(rows.map((r) => r.kind)).toEqual(["hunk", "line", "composer", "line", "line", "line", "draft"]);
   });
 
@@ -87,5 +87,22 @@ describe("flattenTree", () => {
   });
   it("hides children of collapsed dirs", () => {
     expect(flattenTree(paths, new Set(["src"])).map((e) => e.name)).toEqual(["src", "README.md"]);
+  });
+});
+
+describe("clickLine", () => {
+  it("opens a single-line composer on a plain click", () => {
+    expect(clickLine(null, "RIGHT", 5, true)).toEqual({ side: "RIGHT", line: 5, startLine: null, anchor: 5 });
+  });
+
+  it("selects a range with Shift, growing either way from the first click", () => {
+    const c = clickLine(null, "RIGHT", 5, false);
+    expect(clickLine(c, "RIGHT", 9, true)).toEqual({ side: "RIGHT", line: 9, startLine: 5, anchor: 5 });
+    expect(clickLine(clickLine(c, "RIGHT", 9, true), "RIGHT", 2, true)).toEqual({ side: "RIGHT", line: 5, startLine: 2, anchor: 5 });
+  });
+
+  it("starts over on the other side", () => {
+    const c = clickLine(null, "RIGHT", 5, false);
+    expect(clickLine(c, "LEFT", 9, true)).toEqual({ side: "LEFT", line: 9, startLine: null, anchor: 9 });
   });
 });

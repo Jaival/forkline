@@ -96,6 +96,10 @@ Rules added in Phase 1:
 - Local optimistic rows have negative ids. Sync deletes local rows that no
   action owns any more (`confirmed_local` in `fl-sync/src/sync.rs`).
 - `data-changed` scopes: `issues`, `repos`, `inbox`, `pr`, `sync`, `search`.
+- `CmdError::Unauthorized`: `noteError` in `ui/src/lib/query.ts` runs for every
+  query and mutation error (and in `useAction` / the footer). It refetches
+  `sync` and reopens the sign-in dialog. A git 401 maps to it through
+  `GitError::Unauthorized`. The engine emits `sync` when GitHub rejects the token.
 - Git runs with credential helpers disabled and the token only in
   `GIT_CONFIG_*` env vars. Git for Windows is required.
 
@@ -110,7 +114,7 @@ Rules added in Phase 1:
    - Comments, timeline, reviews, checks, commits stop at 100 per item.
    - Not synced: contributors, star history, timeline events.
    - `reviews` has no `body_md`; local reviews store escaped text in `body_html`.
-   - No shared UI handler for `CmdError::Unauthorized` (footer covers sign-in).
-   - Diff: no multi-line comments, long lines clip, no `j` / `k` over files.
+   - Diff: a Shift+click range that spans two hunks is sent as is; GitHub
+     rejects it and the action rolls back. Changing the range after typing
+     clears the comment box.
    - Search: all terms must match in one doc (title or one comment).
-   - Repo tab titles show the id; pin toggle is not optimistic.
