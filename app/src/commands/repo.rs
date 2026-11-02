@@ -46,5 +46,9 @@ pub async fn repo_set_pinned(
     if !write(&state, move |c| repo::set_pinned(c, repo_id, pinned)).await? {
         return Err(CmdError::NotFound);
     }
+    if pinned {
+        // Start the repo's deep sync now instead of on the next tick.
+        state.sync.wake();
+    }
     emit_changed(&app, &["repos"])
 }

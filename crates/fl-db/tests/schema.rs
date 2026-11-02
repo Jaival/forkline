@@ -132,7 +132,7 @@ fn empty_queries_succeed() {
 #[test]
 fn query_plans_use_indexes() {
     let (_d, db) = fresh();
-    let queries: [String; 8] = [
+    let queries: [String; 15] = [
         format!(
             "SELECT {} FROM issues i INDEXED BY issues_updated JOIN repos r ON r.id = i.repo_id
              LEFT JOIN users u ON u.id = i.author_id WHERE i.state = 'open'
@@ -146,6 +146,15 @@ fn query_plans_use_indexes() {
         "SELECT id FROM notifications WHERE done = 0 AND repo_id = 1 ORDER BY updated_at DESC".into(),
         "SELECT id FROM search_docs WHERE issue_id = 1".into(),
         "SELECT id FROM action_queue WHERE state = 'pending' AND next_attempt_at <= 0".into(),
+        // Action queue worker and footer (agent 1).
+        "SELECT id FROM action_queue WHERE state = 'pending' AND next_attempt_at <= 0 ORDER BY next_attempt_at, id LIMIT 1".into(),
+        "SELECT id, summary FROM action_queue WHERE state = 'failed' ORDER BY next_attempt_at, id LIMIT 100".into(),
+        "SELECT 1 FROM pending_fields WHERE table_name = 'issues' AND row_id = 1 AND field = 'state'".into(),
+        "SELECT row_id FROM pending_fields WHERE action_id = 1".into(),
+        "SELECT r.id FROM repos r LEFT JOIN sync_state s ON s.key = 'repo:' || r.id
+         WHERE r.pinned = 1 AND r.sync_enabled = 1 AND COALESCE(s.last_synced_at, 0) + 300 <= 0".into(),
+        "SELECT id FROM labels WHERE repo_id = 1 AND name = 'bug'".into(),
+        "SELECT id FROM issues WHERE repo_id = 1 AND number = 1".into(),
     ];
     let req = PageReq { offset: 0, limit: 50 };
     let state = Some(IssueState::Open);

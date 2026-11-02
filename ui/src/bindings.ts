@@ -44,7 +44,22 @@ export const commands = {
 	diffFile: (prId: number, path: string) => __TAURI_INVOKE<DiffFile>("diff_file", { prId, path }),
 	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
+	/**  Run a sync pass now. */
+	syncNow: () => __TAURI_INVOKE<null>("sync_now"),
+	/**
+	 *  Validate, apply optimistically and queue a write. Returns at once; the
+	 *  worker sends it to GitHub in the background.
+	 */
 	actionEnqueue: (action: Action) => __TAURI_INVOKE<number>("action_enqueue", { action }),
+	actionFailedList: () => __TAURI_INVOKE<FailedAction[]>("action_failed_list"),
+	actionRetry: (id: number) => __TAURI_INVOKE<null>("action_retry", { id }),
+	actionDiscard: (id: number) => __TAURI_INVOKE<null>("action_discard", { id }),
+	authState: () => __TAURI_INVOKE<AuthState>("auth_state"),
+	/**  Start the device flow. The UI shows `user_code` and opens `verification_uri`. */
+	authStart: () => __TAURI_INVOKE<DeviceCode>("auth_start"),
+	/**  One poll; call again after `interval` seconds while `pending`. */
+	authPoll: () => __TAURI_INVOKE<AuthPoll>("auth_poll"),
+	authSignOut: () => __TAURI_INVOKE<null>("auth_sign_out"),
 };
 
 /** Events */
@@ -72,6 +87,23 @@ export type Action =
 { kind: "notification_read"; id: string } | 
 /**  Notification thread: mark done (removed from the inbox). */
 { kind: "notification_done"; id: string };
+
+export type AuthPoll = 
+/**  Not approved yet; poll again after `interval` seconds. */
+{ status: "pending"; interval: number } | { status: "done"; login: string } | { status: "expired" } | { status: "denied" };
+
+export type AuthState = {
+	signed_in: boolean,
+	/**  Viewer login, once known. */
+	login: string | null,
+	/**
+	 *  False when the build has no `FORKLINE_GITHUB_CLIENT_ID`; device-flow
+	 *  sign-in is then unavailable and only `FORKLINE_GITHUB_TOKEN` works.
+	 */
+	client_id_configured: boolean,
+	/**  True when `FORKLINE_GITHUB_TOKEN` supplies the token. */
+	env_override: boolean,
+};
 
 /**  Everything the UI needs before its first paint, in one IPC call. */
 export type Boot = {
@@ -121,6 +153,15 @@ export type DataChanged = {
 };
 
 export type DataChangedEvent = DataChanged;
+
+/**  Device-flow code to show the user. The device code itself stays in Rust. */
+export type DeviceCode = {
+	user_code: string,
+	verification_uri: string,
+	expires_in: number,
+	/**  Seconds to wait between `auth_poll` calls. */
+	interval: number,
+};
 
 /**  Full diff of one file. Binary files have no hunks. */
 export type DiffFile = {
@@ -182,6 +223,15 @@ export type DraftReviewComment = {
 export type EditOptions = {
 	labels: Label[],
 	users: User[],
+};
+
+/**  A write action that failed for good. Its optimistic change was rolled back. */
+export type FailedAction = {
+	id: number,
+	/**  Short human text, e.g. "Comment on owner/repo#12". */
+	summary: string,
+	error: string,
+	created_at: number,
 };
 
 export type FileStatus = "added" | "modified" | "deleted" | "renamed";

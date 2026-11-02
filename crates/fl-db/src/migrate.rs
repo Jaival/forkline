@@ -7,6 +7,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_search_docs_inbox.sql"),
     include_str!("../migrations/0003_phase1_shared.sql"),
+    include_str!("../migrations/0004_sync.sql"),
     include_str!("../migrations/0006_lists_inbox_issue.sql"),
     include_str!("../migrations/0007_pr.sql"),
     // Phase 1: each agent appends one line in its own number slot:

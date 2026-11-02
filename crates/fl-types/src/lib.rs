@@ -25,8 +25,6 @@ pub use lists::*;
 pub use pr::*;
 pub use repo::*;
 pub use search::*;
-// Empty until its agent adds types; drop the allow once filled.
-#[allow(unused_imports)]
 pub use sync::*;
 
 pub type RepoId = i64;
