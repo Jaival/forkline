@@ -409,6 +409,7 @@ export type PrReview = {
 	/**  APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED */
 	state: string,
 	body_html: string | null,
+	body_md: string | null,
 	submitted_at: number | null,
 };
 

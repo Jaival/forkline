@@ -15,5 +15,7 @@ it("merges by time, comments first on ties", () => {
 it("describes events and survives bad payloads", () => {
   expect(describeEvent(event(1, 0, "labeled", '{"label":"bug"}'))).toBe("added the bug label");
   expect(describeEvent(event(1, 0, "labeled", "not json"))).toBe("added the label");
+  expect(describeEvent(event(1, 0, "renamed", '{"from":"a","to":"b"}'))).toBe("renamed this from a to b");
+  expect(describeEvent(event(1, 0, "merged"))).toBe("merged this");
   expect(describeEvent(event(1, 0, "head_ref_force_pushed"))).toBe("head ref force pushed");
 });

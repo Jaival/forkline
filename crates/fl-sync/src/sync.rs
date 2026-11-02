@@ -214,20 +214,29 @@ pub async fn repos(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<
     }
     write(db, move |c| {
         let tx = c.transaction()?;
+        let mut seen = Vec::new();
         for r in owned.iter().flatten() {
-            repo(&tx, r, true)?;
+            seen.extend(repo(&tx, r, true)?);
         }
         if let Some(starred) = &starred {
             let mut ids = Vec::with_capacity(starred.len());
             for r in starred {
                 ids.extend(repo(&tx, r, true)?);
             }
+            seen.extend(&ids);
             tx.execute(
                 "UPDATE repos SET starred = (id IN (SELECT value FROM json_each(?1)))
                  WHERE starred <> (id IN (SELECT value FROM json_each(?1)))",
                 [ids_json(&ids)],
             )?;
         }
+        // GitHub has no star history API: keep one snapshot per repo and day.
+        tx.execute(
+            "INSERT INTO star_history (repo_id, day, stars)
+             SELECT id, ?1, stars FROM repos WHERE id IN (SELECT value FROM json_each(?2))
+             ON CONFLICT(repo_id, day) DO UPDATE SET stars = excluded.stars",
+            params![now / 86400, ids_json(&seen)],
+        )?;
         tx.commit()?;
         Ok(())
     })
@@ -320,11 +329,93 @@ macro_rules! actor {
         "fragment A on Actor{login avatarUrl ... on User{databaseId name} ... on Bot{databaseId}}"
     };
 }
+macro_rules! back {
+    () => {
+        "pageInfo{hasPreviousPage startCursor}"
+    };
+}
+macro_rules! fwd {
+    () => {
+        "pageInfo{hasNextPage endCursor}"
+    };
+}
+// Node selections and page arguments, shared by the first query and the
+// follow-up page queries so the two cannot drift apart.
+macro_rules! comment_sel {
+    () => {
+        "databaseId body bodyHTML createdAt updatedAt author{...A}"
+    };
+}
+macro_rules! timeline_args {
+    () => {
+        "first:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,ASSIGNED_EVENT,UNASSIGNED_EVENT,CLOSED_EVENT,REOPENED_EVENT,CROSS_REFERENCED_EVENT,RENAMED_TITLE_EVENT,MERGED_EVENT]"
+    };
+}
+macro_rules! timeline_sel {
+    () => {
+        "__typename
+         ... on LabeledEvent{createdAt actor{...A} label{name}}
+         ... on UnlabeledEvent{createdAt actor{...A} label{name}}
+         ... on AssignedEvent{createdAt actor{...A} assignee{... on User{login} ... on Bot{login}}}
+         ... on UnassignedEvent{createdAt actor{...A} assignee{... on User{login} ... on Bot{login}}}
+         ... on ClosedEvent{createdAt actor{...A}}
+         ... on ReopenedEvent{createdAt actor{...A}}
+         ... on CrossReferencedEvent{createdAt actor{...A}
+           source{... on Issue{number repository{nameWithOwner}} ... on PullRequest{number repository{nameWithOwner}}}}
+         ... on RenamedTitleEvent{createdAt actor{...A} previousTitle currentTitle}
+         ... on MergedEvent{createdAt actor{...A}}"
+    };
+}
+macro_rules! review_sel {
+    () => {
+        "databaseId state body bodyHTML submittedAt author{...A}"
+    };
+}
+macro_rules! thread_comment_sel {
+    () => {
+        "databaseId body bodyHTML createdAt author{...A} commit{oid} pullRequestReview{databaseId}"
+    };
+}
+macro_rules! thread_sel {
+    () => {
+        concat!(
+            "id isResolved isOutdated path diffSide line startLine originalLine
+             comments(first:50){",
+            fwd!(),
+            " nodes{",
+            thread_comment_sel!(),
+            "}}"
+        )
+    };
+}
+macro_rules! commit_sel {
+    () => {
+        "commit{oid messageHeadline authoredDate author{user{login}} statusCheckRollup{state}}"
+    };
+}
+macro_rules! check_sel {
+    () => {
+        "... on CheckRun{databaseId name status conclusion detailsUrl startedAt completedAt}"
+    };
+}
 macro_rules! common {
     () => {
-        "id databaseId number title body bodyHTML state createdAt updatedAt closedAt author{...A} milestone{title}
-         labels(first:50){nodes{name}} assignees(first:20){nodes{databaseId login avatarUrl name}}
-         comments(last:100){totalCount nodes{databaseId body bodyHTML createdAt updatedAt author{...A}}}"
+        concat!(
+            "id databaseId number title body bodyHTML state createdAt updatedAt closedAt author{...A} milestone{title}
+             labels(first:50){nodes{name}} assignees(first:20){nodes{databaseId login avatarUrl name}}
+             comments(last:100){totalCount ",
+            back!(),
+            " nodes{",
+            comment_sel!(),
+            "}}
+             timelineItems(",
+            timeline_args!(),
+            "){",
+            fwd!(),
+            " nodes{",
+            timeline_sel!(),
+            "}}"
+        )
     };
 }
 
@@ -346,15 +437,115 @@ pub const PULLS_QUERY: &str = concat!(
       additions deletions changedFiles
       reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Team{combinedSlug}}}}
       closingIssuesReferences(first:10){nodes{databaseId}}
-      reviews(last:50){nodes{databaseId state bodyHTML submittedAt author{...A}}}
-      reviewThreads(first:50){totalCount nodes{id isResolved isOutdated path diffSide line startLine originalLine
-        comments(first:50){nodes{databaseId body bodyHTML createdAt author{...A} commit{oid} pullRequestReview{databaseId}}}}}
-      commits(last:100){nodes{commit{oid messageHeadline authoredDate author{user{login}} statusCheckRollup{state}}}}
-      head:commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:50){nodes{
-        ... on CheckRun{databaseId name status conclusion detailsUrl startedAt completedAt}}}}}}}",
+      reviews(last:50){",
+    back!(),
+    " nodes{",
+    review_sel!(),
+    "}}
+      reviewThreads(first:50){totalCount ",
+    fwd!(),
+    " nodes{",
+    thread_sel!(),
+    "}}
+      commits(last:100){",
+    back!(),
+    " nodes{",
+    commit_sel!(),
+    "}}
+      head:commits(last:1){nodes{commit{id oid statusCheckRollup{state contexts(first:50){",
+    fwd!(),
+    " nodes{",
+    check_sel!(),
+    "}}}}}}",
     "}}}}",
     actor!()
 );
+
+// ---- per-item connection paging ---------------------------------------------
+
+/// Extra pages fetched per connection and item. Guards the rate limit: a
+/// connection longer than `100 * (1 + MAX_EXTRA_PAGES)` nodes stays partial.
+pub const MAX_EXTRA_PAGES: usize = 10;
+
+/// One paged connection of an item, re-queried through `node(id:)`.
+struct Conn {
+    /// GraphQL types that own the connection.
+    on: &'static [&'static str],
+    /// Field between the node and the connection (`statusCheckRollup`).
+    parent: Option<&'static str>,
+    field: &'static str,
+    /// Connection arguments of the first query, without the cursor.
+    args: &'static str,
+    select: &'static str,
+    /// `last:` connections page towards older nodes.
+    backward: bool,
+}
+
+const COMMENTS: Conn = Conn { on: &["Issue", "PullRequest"], parent: None, field: "comments", args: "last:100", select: comment_sel!(), backward: true };
+const TIMELINE: Conn = Conn { on: &["Issue", "PullRequest"], parent: None, field: "timelineItems", args: timeline_args!(), select: timeline_sel!(), backward: false };
+const REVIEWS: Conn = Conn { on: &["PullRequest"], parent: None, field: "reviews", args: "last:50", select: review_sel!(), backward: true };
+const COMMITS: Conn = Conn { on: &["PullRequest"], parent: None, field: "commits", args: "last:100", select: commit_sel!(), backward: true };
+const THREADS: Conn = Conn { on: &["PullRequest"], parent: None, field: "reviewThreads", args: "first:50", select: thread_sel!(), backward: false };
+const THREAD_COMMENTS: Conn =
+    Conn { on: &["PullRequestReviewThread"], parent: None, field: "comments", args: "first:50", select: thread_comment_sel!(), backward: false };
+const CHECKS: Conn = Conn { on: &["Commit"], parent: Some("statusCheckRollup"), field: "contexts", args: "first:50", select: check_sel!(), backward: false };
+
+/// Fetch the remaining pages of `conn` (a connection object holding `pageInfo`
+/// and `nodes`) for node `id`, up to `MAX_EXTRA_PAGES`.
+async fn fill(gh: &Github, token: &str, id: &str, c: &Conn, conn: &mut Value) -> Result<()> {
+    let (more, cursor) = if c.backward { ("hasPreviousPage", "startCursor") } else { ("hasNextPage", "endCursor") };
+    let page_info = if c.backward { back!() } else { fwd!() };
+    let cursor_arg = if c.backward { "before" } else { "after" };
+    let mut inner = format!("{}({},{cursor_arg}:$c){{{page_info} nodes{{{}}}}}", c.field, c.args, c.select);
+    if let Some(p) = c.parent {
+        inner = format!("{p}{{{inner}}}");
+    }
+    let on: String = c.on.iter().map(|t| format!("... on {t}{{{inner}}} ")).collect();
+    let fragment = if c.select.contains("...A") { actor!() } else { "" };
+    let query = format!("query($id:ID!,$c:String){{node(id:$id){{{on}}}}}{fragment}");
+    for _ in 0..MAX_EXTRA_PAGES {
+        if conn["pageInfo"][more].as_bool() != Some(true) {
+            break;
+        }
+        let Some(after) = conn["pageInfo"][cursor].as_str() else { break };
+        let mut data = gh.graphql(token, &query, json!({ "id": id, "c": after })).await?;
+        let mut page = data["node"].take();
+        if let Some(p) = c.parent {
+            page = page[p].take();
+        }
+        let mut page = page[c.field].take();
+        let new = page["nodes"].as_array().cloned().unwrap_or_default();
+        let Some(old) = conn["nodes"].as_array_mut() else { break };
+        if c.backward {
+            old.splice(0..0, new);
+        } else {
+            old.extend(new);
+        }
+        conn["pageInfo"] = page["pageInfo"].take();
+    }
+    Ok(())
+}
+
+/// Page every capped connection of one issue / PR node to completion (or the cap).
+async fn complete(gh: &Github, token: &str, n: &mut Value, is_pr: bool) -> Result<()> {
+    let id = n["id"].as_str().unwrap_or_default().to_owned();
+    fill(gh, token, &id, &COMMENTS, &mut n["comments"]).await?;
+    fill(gh, token, &id, &TIMELINE, &mut n["timelineItems"]).await?;
+    if !is_pr {
+        return Ok(());
+    }
+    fill(gh, token, &id, &REVIEWS, &mut n["reviews"]).await?;
+    fill(gh, token, &id, &COMMITS, &mut n["commits"]).await?;
+    fill(gh, token, &id, &THREADS, &mut n["reviewThreads"]).await?;
+    for t in n["reviewThreads"]["nodes"].as_array_mut().into_iter().flatten() {
+        let tid = t["id"].as_str().unwrap_or_default().to_owned();
+        fill(gh, token, &tid, &THREAD_COMMENTS, &mut t["comments"]).await?;
+    }
+    let head = &mut n["head"]["nodes"][0]["commit"];
+    let oid = head["id"].as_str().unwrap_or_default().to_owned();
+    fill(gh, token, &oid, &CHECKS, &mut head["statusCheckRollup"]["contexts"]).await?;
+    Ok(())
+}
 
 pub const OVERVIEW_QUERY: &str = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
   languages(first:10,orderBy:{field:SIZE,direction:DESC}){edges{size node{name}}}
@@ -370,11 +561,24 @@ pub async fn deep(gh: &Github, token: &str, db: &Arc<Db>, repo_id: i64, now: i64
 
     // Labels first: issues reference them by name.
     let labels = list_cached(gh, token, db, &format!("{key}:labels"), &format!("/repos/{owner}/{name}/labels?per_page=100"), now).await?;
+    // GitHub answers 204 for an empty repo; `list_cached` returns no rows then.
+    let contributors =
+        list_cached(gh, token, db, &format!("{key}:contributors"), &format!("/repos/{owner}/{name}/contributors?per_page=100"), now).await?;
     let ov = gh.graphql(token, OVERVIEW_QUERY, json!({ "owner": owner, "name": name })).await?;
     write(db, move |c| {
         let tx = c.transaction()?;
         if let Some(labels) = &labels {
             write_labels(&tx, repo_id, labels)?;
+        }
+        if let Some(contributors) = &contributors {
+            tx.prepare_cached("DELETE FROM repo_contributors WHERE repo_id = ?1")?.execute([repo_id])?;
+            for u in contributors {
+                // Anonymous contributors have no account.
+                if let Some(uid) = user(&tx, u)? {
+                    tx.prepare_cached("INSERT OR REPLACE INTO repo_contributors (repo_id, user_id, contributions) VALUES (?1, ?2, ?3)")?
+                        .execute(params![repo_id, uid, u["contributions"].as_i64().unwrap_or(0)])?;
+                }
+            }
         }
         write_overview(&tx, repo_id, &ov["repository"])?;
         tx.commit()?;
@@ -395,13 +599,15 @@ pub async fn deep(gh: &Github, token: &str, db: &Arc<Db>, repo_id: i64, now: i64
             let vars = json!({ "owner": owner, "name": name, "after": after, "since": since });
             let mut data = gh.graphql(token, query, vars).await?;
             let page = data["repository"][conn_name].take();
-            let mut items: Vec<Value> = nodes(&page).to_vec();
-            // PRs have no `since` filter: stop at the first item we already have.
+            let mut items: Vec<Value> = nodes(&page).to_vec();            // PRs have no `since` filter: stop at the first item we already have.
             let mut reached_old = false;
             if is_pr && let Some(s) = &since {
                 let before = items.len();
                 items.retain(|n| n["updatedAt"].as_str().is_some_and(|u| u > s.as_str()));
                 reached_old = items.len() < before;
+            }
+            for n in &mut items {
+                complete(gh, token, n, is_pr).await?;
             }
             for n in &items {
                 if let Some(u) = n["updatedAt"].as_str()
@@ -582,10 +788,44 @@ fn write_issue(tx: &Transaction<'_>, repo_id: i64, is_pr: bool, n: &Value) -> Re
         tx.prepare_cached("DELETE FROM comments WHERE issue_id = ?1 AND id > 0 AND id NOT IN (SELECT value FROM json_each(?2))")?
             .execute(params![id, ids_json(&seen)])?;
     }
+    write_timeline(tx, repo_id, id, n)?;
     if is_pr {
         write_pr(tx, repo_id, id, n)?;
     }
     fl_search::index_issue(tx, id)?;
+    Ok(())
+}
+
+/// Replace the item's timeline events. GraphQL timeline items carry no numeric
+/// id, so SQLite assigns the row ids; nothing refers to them. `kind` and
+/// `payload_json` follow `ui/src/features/issue/timeline.ts`.
+fn write_timeline(tx: &Transaction<'_>, repo_id: i64, issue: i64, n: &Value) -> Result<()> {
+    tx.prepare_cached("DELETE FROM timeline_events WHERE issue_id = ?1")?.execute([issue])?;
+    let own_repo: String = tx.query_row("SELECT owner || '/' || name FROM repos WHERE id = ?1", [repo_id], |r| r.get(0))?;
+    for e in nodes(&n["timelineItems"]) {
+        let (kind, payload) = match e["__typename"].as_str() {
+            Some("LabeledEvent") => ("labeled", Some(json!({ "label": e["label"]["name"] }))),
+            Some("UnlabeledEvent") => ("unlabeled", Some(json!({ "label": e["label"]["name"] }))),
+            Some("AssignedEvent") => ("assigned", Some(json!({ "assignee": e["assignee"]["login"] }))),
+            Some("UnassignedEvent") => ("unassigned", Some(json!({ "assignee": e["assignee"]["login"] }))),
+            Some("ClosedEvent") => ("closed", None),
+            Some("ReopenedEvent") => ("reopened", None),
+            Some("MergedEvent") => ("merged", None),
+            Some("RenamedTitleEvent") => ("renamed", Some(json!({ "from": e["previousTitle"], "to": e["currentTitle"] }))),
+            Some("CrossReferencedEvent") => {
+                let Some(number) = e["source"]["number"].as_i64() else { continue };
+                let reference = match e["source"]["repository"]["nameWithOwner"].as_str() {
+                    Some(r) if r != own_repo => format!("{r}#{number}"),
+                    _ => format!("#{number}"),
+                };
+                ("referenced", Some(json!({ "ref": reference })))
+            }
+            _ => continue,
+        };
+        let actor = user(tx, &e["actor"])?;
+        tx.prepare_cached("INSERT INTO timeline_events (issue_id, kind, actor_id, created_at, payload_json) VALUES (?1, ?2, ?3, ?4, ?5)")?
+            .execute(params![issue, kind, actor, e["createdAt"].as_str().map_or(0, parse_ts), payload.map(|p| p.to_string())])?;
+    }
     Ok(())
 }
 
@@ -641,9 +881,9 @@ fn write_pr(tx: &Transaction<'_>, repo_id: i64, id: i64, n: &Value) -> Result<()
         let Some(rid) = r["databaseId"].as_i64() else { continue };
         let author = user(tx, &r["author"])?;
         tx.prepare_cached(
-            "INSERT INTO reviews (id, pr_id, author_id, state, body_html, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO reviews (id, pr_id, author_id, state, body_html, body_md, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET state = excluded.state, body_html = excluded.body_html,
-               submitted_at = excluded.submitted_at",
+               body_md = excluded.body_md, submitted_at = excluded.submitted_at",
         )?
         .execute(params![
             rid,
@@ -651,6 +891,7 @@ fn write_pr(tx: &Transaction<'_>, repo_id: i64, id: i64, n: &Value) -> Result<()
             author,
             r["state"].as_str().unwrap_or("COMMENTED"),
             r["bodyHTML"].as_str().filter(|b| !b.is_empty()),
+            r["body"].as_str().filter(|b| !b.is_empty()),
             r["submittedAt"].as_str().map(parse_ts),
         ])?;
     }

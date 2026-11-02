@@ -58,6 +58,7 @@ pub struct PrReview {
     /// APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED
     pub state: String,
     pub body_html: Option<String>,
+    pub body_md: Option<String>,
     pub submitted_at: Option<Timestamp>,
 }
 

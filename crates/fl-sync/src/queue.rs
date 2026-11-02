@@ -553,24 +553,6 @@ fn ids_of(v: &Value) -> Vec<i64> {
     v.as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default()
 }
 
-/// Minimal HTML for local rows that only have an HTML column (reviews).
-fn escape_html(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 7);
-    out.push_str("<p>");
-    for c in s.chars() {
-        match c {
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '&' => out.push_str("&amp;"),
-            '"' => out.push_str("&quot;"),
-            '\n' => out.push_str("<br>"),
-            c => out.push(c),
-        }
-    }
-    out.push_str("</p>");
-    out
-}
-
 /// Apply the action to local tables and record ownership in `pending_fields`.
 fn apply(tx: &Transaction<'_>, id: ActionId, action: &Action, now: i64) -> Result<()> {
     match action {
@@ -602,10 +584,10 @@ fn apply(tx: &Transaction<'_>, id: ActionId, action: &Action, now: i64) -> Resul
                 ReviewEvent::RequestChanges => "CHANGES_REQUESTED",
                 ReviewEvent::Comment => "COMMENTED",
             };
-            let html = (!body_md.trim().is_empty()).then(|| escape_html(body_md));
+            let md = (!body_md.trim().is_empty()).then_some(body_md);
             tx.execute(
-                "INSERT INTO reviews (id, pr_id, author_id, state, body_html, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![review, pr_id, me, state, html, now],
+                "INSERT INTO reviews (id, pr_id, author_id, state, body_md, submitted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![review, pr_id, me, state, md, now],
             )?;
             own(tx, id, "reviews", review, "row", None)?;
             let head: Option<String> = tx

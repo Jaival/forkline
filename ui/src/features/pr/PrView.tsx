@@ -118,7 +118,7 @@ export function PrView({ id }: { id: number }) {
 function Conversation({ d, drafts, onSubmitted }: { d: PrDetail; drafts: DraftReviewComment[]; onSubmitted: () => void }) {
   const items = [
     ...d.comments.map((c) => ({ key: `c${c.id}`, at: c.created_at, author: c.author, tag: c.id < 0 ? "sending…" : "", html: c.body_html, md: c.body_md })),
-    ...d.reviews.map((r) => ({ key: `r${r.id}`, at: r.submitted_at ?? 0, author: r.author, tag: label(r.state), html: r.body_html, md: null })),
+    ...d.reviews.map((r) => ({ key: `r${r.id}`, at: r.submitted_at ?? 0, author: r.author, tag: label(r.state), html: r.body_html, md: r.body_md })),
   ].sort((a, b) => a.at - b.at);
   return (
     <div className="mx-auto max-w-3xl space-y-4">

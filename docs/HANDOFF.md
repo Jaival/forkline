@@ -89,7 +89,7 @@ Works (tests + bench on fake data; not yet exercised against real GitHub):
 
 Rules added in Phase 1:
 
-- Migrations 0003-0006 are numbered by schema version. Delete dev and fake
+- Migrations 0003-0007 are numbered by schema version. Delete dev and fake
   databases created before the renumbering.
 - Notifications in `action_queue` / `pending_fields` use
   `CAST(notifications.id AS INTEGER)` as the row id.
@@ -103,6 +103,8 @@ Rules added in Phase 1:
 - Git runs with credential helpers disabled and the token only in
   `GIT_CONFIG_*` env vars. Git for Windows is required.
 
+Delete dev and fake DBs: migration 0007 (`reviews.body_md`).
+
 ## Next
 
 1. Register the GitHub OAuth App (device flow on) and build with
@@ -111,9 +113,11 @@ Rules added in Phase 1:
    sync, every view, each action kind, diff of a real PR, failed action
    rollback. No view has been checked by eye yet.
 3. Known gaps:
-   - Comments, timeline, reviews, checks, commits stop at 100 per item.
-   - Not synced: contributors, star history, timeline events.
-   - `reviews` has no `body_md`; local reviews store escaped text in `body_html`.
+   - Connections longer than 1100 nodes (comments, timeline, reviews, commits, checks,
+     thread comments) stay partial: `MAX_EXTRA_PAGES` = 10 extra pages per item.
+     Labels and assignees are not paged.
+   - Star history starts at the first sync after 0007; no backfill (GitHub has no API).
+     Timeline event ids are assigned by SQLite (GraphQL has no numeric id).
    - Diff: a Shift+click range that spans two hunks is sent as is; GitHub
      rejects it and the action rolls back. Changing the range after typing
      clears the comment box.

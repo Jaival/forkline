@@ -183,7 +183,8 @@ async fn review_with_inline_comment_is_local_then_removed_on_failure() {
         })
         .await
         .unwrap();
-    assert_eq!(env.q::<String>("SELECT body_html FROM reviews"), "<p>fix &lt;this&gt;</p>");
+    assert_eq!(env.q::<String>("SELECT body_md FROM reviews"), "fix <this>");
+    assert_eq!(env.q::<Option<String>>("SELECT body_html FROM reviews"), None);
     assert_eq!(env.q::<i64>("SELECT count(*) FROM review_threads WHERE id < 0"), 1);
     assert_eq!(env.q::<i64>("SELECT review_id FROM review_comments"), -1);
     env.engine.process_actions().await.unwrap();

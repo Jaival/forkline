@@ -29,6 +29,8 @@ export function describeEvent(e: TimelineEvent): string {
     case "assigned": return `assigned${detail("assignee")}`;
     case "unassigned": return `unassigned${detail("assignee")}`;
     case "referenced": return `referenced this in${detail("ref")}`;
+    case "renamed": return `renamed this from${detail("from")} to${detail("to")}`;
+    case "merged": return "merged this";
     case "closed": return "closed this";
     case "reopened": return "reopened this";
     default: return e.kind.replaceAll("_", " ");
