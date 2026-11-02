@@ -93,3 +93,53 @@ fn reindex_replaces_rows_and_paging_works() {
     assert_eq!(p1.items.len(), 1);
     assert_eq!(p1.next, Some(1));
 }
+
+#[test]
+fn terms_may_hit_different_docs_of_one_issue() {
+    let c = seeded();
+    c.execute_batch(
+        "INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,body_md,author_id,created_at,updated_at)
+           VALUES (5,'e',1,5,0,'open','Crash on save','plain body',1,0,500);
+         INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at)
+           VALUES (20,5,1,'Only happens on windows',0,0),(21,5,1,'Also on linux',0,0);",
+    )
+    .unwrap();
+    index_issue(&c, 5).unwrap();
+    // title + comment, comment + comment, body + comment
+    assert_eq!(ids(&c, "crash windows"), vec![5]);
+    assert_eq!(ids(&c, "windows linux"), vec![5]);
+    assert_eq!(ids(&c, "plain windows"), vec![5]);
+    // every term must hit some doc of the issue
+    assert!(ids(&c, "crash macos").is_empty());
+    assert!(ids(&c, "windows nonexistentword").is_empty());
+    // a term in a different issue does not count
+    assert!(ids(&c, "save frobnicator").is_empty());
+    // operators still filter, negation spans docs
+    assert_eq!(ids(&c, "crash windows is:issue"), vec![5]);
+    assert!(ids(&c, "crash windows is:pr").is_empty());
+    assert!(ids(&c, "crash windows author:hubot").is_empty());
+    assert!(ids(&c, "crash windows -linux").is_empty());
+    assert_eq!(ids(&c, "crash windows -macos"), vec![5]);
+}
+
+#[test]
+fn snippet_comes_from_a_matching_doc() {
+    let c = seeded();
+    c.execute_batch(
+        "INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,body_md,author_id,created_at,updated_at)
+           VALUES (5,'e',1,5,0,'open','Crash on save','plain body',1,0,500);
+         INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at)
+           VALUES (20,5,1,'Only happens on windows',0,0),(21,5,1,'windows crash again',0,0);",
+    )
+    .unwrap();
+    index_issue(&c, 5).unwrap();
+    let hit = |q: &str| search(&c, q, REQ).unwrap().items.remove(0);
+    // Comment 20 matches two of three terms, the title only one.
+    let h = search(&c, "save happens windows", REQ).unwrap().items.remove(0);
+    assert_eq!(h.comment_id, Some(20));
+    assert!(h.snippet.contains("\u{e000}happens\u{e001}"));
+    // Comment 21 matches both terms, so it wins over the title.
+    let h = hit("crash windows");
+    assert_eq!(h.comment_id, Some(21));
+    assert!(h.snippet.contains('\u{e000}'));
+}

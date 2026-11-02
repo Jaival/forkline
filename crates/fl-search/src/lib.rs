@@ -10,10 +10,10 @@ mod tests;
 
 use fl_types::{IssueId, IssueRow, Page, PageReq, SearchHit};
 use fl_db::queries::{ISSUE_ROW_COLS, issue_row, page};
-use query::{Filter, fts_match, parse};
+use query::{Filter, fts_terms, parse};
 use rusqlite::{Connection, OptionalExtension, ToSql, params_from_iter};
 
-/// A match set larger than this is ranked by recency instead of bm25:
+/// When the terms together match more docs than this, results rank by recency, not bm25:
 /// scoring costs about 1.5 us per doc, and with that many hits every term is
 /// common, so bm25 separates little.
 const BROAD_DOCS: i64 = 2000;
@@ -55,7 +55,7 @@ pub fn index_issue(conn: &Connection, issue_id: IssueId) -> rusqlite::Result<()>
 fn condition(f: &Filter, params: &mut Vec<String>) -> String {
     let mut bind = |v: &str| {
         params.push(v.to_owned());
-        format!("?{}", params.len() + 1) // ?1 is reserved for the MATCH string
+        format!("?{}", params.len())
     };
     match f {
         Filter::IsPr => "i.is_pr = 1".into(),
@@ -80,15 +80,20 @@ fn condition(f: &Filter, params: &mut Vec<String>) -> String {
     }
 }
 
-/// Run a user query (free text plus operators). Invalid operators are
-/// treated as text, never as an error.
+const SNIPPET_SQL: &str = "SELECT snippet(search_fts, -1, char(57344), char(57345), '...', 16)
+     FROM search_fts WHERE search_fts MATCH ?1 AND rowid = ?2";
+
+/// Run a user query (free text plus operators). An issue matches when every
+/// free-text term hits at least one of its docs (title, body, any comment).
+/// Invalid operators are treated as text, never as an error.
 pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<Page<SearchHit>> {
     let req = req.clamped();
     let parsed = parse(query);
-    let fts = fts_match(&parsed.terms);
-    // Params: ?1 = MATCH string (unused without text), then filter values.
+    let (terms, neg) = fts_terms(&parsed.terms);
+    // Params: filter values first (?1..), then one MATCH string per term, the
+    // negated-terms MATCH string, limit and offset.
     let mut values: Vec<String> = Vec::new();
-    let wheres: Vec<String> = parsed
+    let mut wheres: Vec<String> = parsed
         .filters
         .iter()
         .map(|(f, neg)| {
@@ -96,7 +101,22 @@ pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<
             if *neg { format!("NOT ({c})") } else { c }
         })
         .collect();
+    let mut args: Vec<Box<dyn ToSql>> = values.into_iter().map(|v| Box::new(v) as Box<dyn ToSql>).collect();
+    let first_term = args.len() + 1;
+    args.extend(terms.iter().map(|t| Box::new(t.clone()) as Box<dyn ToSql>));
+    if let Some(n) = &neg {
+        // Negated terms exclude the whole issue, whichever doc they hit.
+        args.push(Box::new(n.clone()));
+        wheres.push(format!(
+            "i.id NOT IN (SELECT d.issue_id FROM search_fts JOIN search_docs d ON d.id = search_fts.rowid
+               WHERE search_fts MATCH ?{})",
+            args.len()
+        ));
+    }
     let where_sql = if wheres.is_empty() { "1".to_owned() } else { wheres.join(" AND ") };
+    let limit_at = args.len() + 1;
+    args.push(Box::new(req.limit + 1));
+    args.push(Box::new(req.offset));
 
     // The narrow inner query joins only what its filters read.
     let uses = |f: fn(&Filter) -> bool| parsed.filters.iter().any(|(x, _)| f(x));
@@ -106,49 +126,60 @@ pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<
         if uses(|f| matches!(f, Filter::Author(_))) { "LEFT JOIN users u ON u.id = i.author_id" } else { "" },
     );
 
-    let mut args: Vec<Box<dyn ToSql>> = vec![Box::new(fts.clone().unwrap_or_default())];
-    args.extend(values.into_iter().map(|v| Box::new(v) as Box<dyn ToSql>));
-    let n = args.len();
-    args.push(Box::new(req.limit + 1));
-    args.push(Box::new(req.offset));
-
-    let broad = match &fts {
-        Some(m) => {
-            let n: i64 = conn
-                .prepare_cached("SELECT count(*) FROM (SELECT 1 FROM search_fts WHERE search_fts MATCH ?1 LIMIT 2001)")?
-                .query_row([m], |r| r.get(0))?;
-            n > BROAD_DOCS
-        }
-        None => false,
-    };
+    // Docs matched by the terms together; capped counts keep this cheap.
+    let mut matched = 0;
+    for t in &terms {
+        matched += conn
+            .prepare_cached("SELECT count(*) FROM (SELECT 1 FROM search_fts WHERE search_fts MATCH ?1 LIMIT 2001)")?
+            .query_row([t], |r| r.get::<_, i64>(0))?;
+    }
+    let broad = matched > BROAD_DOCS;
+    // Highlights every term in the snippet of a doc.
+    let any_term = terms.join(" OR ");
 
     // (row, search_docs id of the best doc, its comment_id)
-    let rows: Vec<(IssueRow, i64, i64)> = if fts.is_some() && !broad {
-        // Best-ranked doc per issue: bare columns come from the MIN() row.
-        // Pick the page of (issue, best doc) on narrow columns first, then
-        // build the wide rows for only those issues.
+    let rows: Vec<(IssueRow, i64, i64)> = if !terms.is_empty() && !broad {
+        // One MATCH per term. `pk` holds the best score of each term per
+        // issue; the issue matches when all terms are present. The shown doc
+        // is the one matching most terms, then the best scored. Pick the page
+        // of issues on narrow columns first, then build the wide rows.
+        let hits = (0..terms.len())
+            .map(|k| {
+                format!(
+                    "SELECT rowid, {k} AS k, bm25(search_fts, 10.0, 1.0) AS s
+                     FROM search_fts WHERE search_fts MATCH ?{}",
+                    first_term + k
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
         let sql = format!(
-            "WITH h AS MATERIALIZED (
-               SELECT rowid, bm25(search_fts, 10.0, 1.0) AS score
-               FROM search_fts WHERE search_fts MATCH ?1),
+            "WITH ux AS MATERIALIZED (
+               SELECT d.issue_id AS iid, d.id AS did, d.comment_id AS cid, h.k, h.s
+               FROM ({hits}) h JOIN search_docs d ON d.id = h.rowid),
+             x AS MATERIALIZED (
+               SELECT iid, did, cid, count(*) AS nk, sum(s) AS sc FROM ux GROUP BY did),
+             pk AS MATERIALIZED (SELECT iid, k, MIN(s) AS s FROM ux GROUP BY iid, k),
              best AS (
-               SELECT i.id AS iid, d.id AS did, d.comment_id AS cid, MIN(h.score) AS sc
-               FROM h
-               JOIN search_docs d ON d.id = h.rowid
-               JOIN issues i ON i.id = d.issue_id
+               SELECT i.id AS iid, SUM(pk.s) AS sc
+               FROM pk
+               JOIN issues i ON i.id = pk.iid
                {inner_joins}
                WHERE {where_sql}
                GROUP BY i.id
+               HAVING count(*) = {}
                ORDER BY sc, i.updated_at DESC
-               LIMIT ?{} OFFSET ?{})
-             SELECT {ISSUE_ROW_COLS}, best.did, best.cid
+               LIMIT ?{limit_at} OFFSET ?{})
+             SELECT {ISSUE_ROW_COLS},
+               (SELECT did FROM x WHERE x.iid = best.iid ORDER BY nk DESC, sc LIMIT 1),
+               (SELECT cid FROM x WHERE x.iid = best.iid ORDER BY nk DESC, sc LIMIT 1)
              FROM best
              JOIN issues i ON i.id = best.iid
              JOIN repos r ON r.id = i.repo_id
              LEFT JOIN users u ON u.id = i.author_id
              ORDER BY best.sc, i.updated_at DESC",
-            n + 1,
-            n + 2
+            terms.len(),
+            limit_at + 1,
         );
         conn.prepare_cached(&sql)?
             .query_map(params_from_iter(args.iter()), |r| Ok((issue_row(r)?, r.get(11)?, r.get(12)?)))?
@@ -156,27 +187,26 @@ pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<
     } else {
         // Operators only, or a broad text match: newest first, straight off
         // the `issues_updated` index, stopping after one page.
-        let (with, text) = if fts.is_some() {
-            (
-                "WITH m AS MATERIALIZED (SELECT d.issue_id AS iid FROM search_fts
-                   JOIN search_docs d ON d.id = search_fts.rowid WHERE search_fts MATCH ?1)",
-                "AND i.id IN (SELECT iid FROM m)",
-            )
-        } else {
-            ("", "")
-        };
+        let text: String = (0..terms.len())
+            .map(|k| {
+                format!(
+                    "AND i.id IN (SELECT d.issue_id FROM search_fts
+                       JOIN search_docs d ON d.id = search_fts.rowid WHERE search_fts MATCH ?{})",
+                    first_term + k
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         let sql = format!(
-            "{with} SELECT {ISSUE_ROW_COLS}, 0, 0
+            "SELECT {ISSUE_ROW_COLS}, 0, 0
              FROM issues i INDEXED BY issues_updated
              JOIN repos r ON r.id = i.repo_id
              LEFT JOIN users u ON u.id = i.author_id
              WHERE {where_sql} {text}
              ORDER BY i.updated_at DESC
-             LIMIT ?{} OFFSET ?{}",
-            n + 1,
-            n + 2
+             LIMIT ?{limit_at} OFFSET ?{}",
+            limit_at + 1
         );
-        // Without text, ?1 is unused but still bound.
         conn.prepare_cached(&sql)?
             .query_map(params_from_iter(args.iter()), |r| Ok((issue_row(r)?, r.get(11)?, r.get(12)?)))?
             .collect::<rusqlite::Result<_>>()?
@@ -184,45 +214,35 @@ pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<
 
     let mut hits = Vec::with_capacity(rows.len());
     for (row, doc_id, comment_id) in rows {
-        let (snippet, comment_id) = match &fts {
-            // The look-ahead row is dropped by `page`; skip its snippet.
-            Some(_) if hits.len() >= req.limit as usize => (String::new(), comment_id),
-            Some(m) if doc_id != 0 => (
-                conn.prepare_cached(
-                    "SELECT snippet(search_fts, -1, char(57344), char(57345), '...', 16)
-                     FROM search_fts WHERE search_fts MATCH ?1 AND rowid = ?2",
-                )?
-                .query_row((m, doc_id), |r| r.get(0))?,
-                comment_id,
-            ),
-            // Broad match: find this issue's best doc now. Rowid lookups
-            // are cheap; a `d.issue_id` filter would rerun the whole match.
-            Some(m) => {
-                let docs = conn
-                    .prepare_cached("SELECT id, comment_id FROM search_docs WHERE issue_id = ?1 ORDER BY comment_id")?
-                    .query_map([row.id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                let mut found = (String::new(), 0);
-                for (id, cid) in docs {
-                    let s: Option<String> = conn
-                        .prepare_cached(
-                            "SELECT snippet(search_fts, -1, char(57344), char(57345), '...', 16)
-                             FROM search_fts WHERE search_fts MATCH ?1 AND rowid = ?2",
-                        )?
-                        .query_row((m, id), |r| r.get(0))
-                        .optional()?;
-                    if let Some(s) = s {
-                        found = (s, cid);
-                        break;
-                    }
-                }
-                found
-            }
-            None => (
+        let (snippet, comment_id) = if terms.is_empty() {
+            (
                 conn.prepare_cached("SELECT substr(COALESCE(body_md, ''), 1, 160) FROM issues WHERE id = ?1")?
                     .query_row([row.id], |r| r.get(0))?,
                 0,
-            ),
+            )
+        } else if hits.len() >= req.limit as usize {
+            // The look-ahead row is dropped by `page`; skip its snippet.
+            (String::new(), comment_id)
+        } else if doc_id != 0 {
+            (conn.prepare_cached(SNIPPET_SQL)?.query_row((&any_term, doc_id), |r| r.get(0))?, comment_id)
+        } else {
+            // Broad match: take this issue's first doc that matches any term.
+            // Rowid lookups are cheap; a `d.issue_id` filter would rerun the
+            // whole match.
+            let docs = conn
+                .prepare_cached("SELECT id, comment_id FROM search_docs WHERE issue_id = ?1 ORDER BY comment_id")?
+                .query_map([row.id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut found = (String::new(), 0);
+            for (id, cid) in docs {
+                let s: Option<String> =
+                    conn.prepare_cached(SNIPPET_SQL)?.query_row((&any_term, id), |r| r.get(0)).optional()?;
+                if let Some(s) = s {
+                    found = (s, cid);
+                    break;
+                }
+            }
+            found
         };
         hits.push(SearchHit {
             row,

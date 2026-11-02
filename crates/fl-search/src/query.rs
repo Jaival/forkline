@@ -99,16 +99,17 @@ pub fn parse(input: &str) -> Parsed {
     p
 }
 
-/// Build the FTS5 MATCH expression from the free text, or `None` when there
-/// is nothing searchable. Every term is a quoted string, so user text can
-/// never be read as FTS syntax. The last plain term matches as a prefix.
-pub fn fts_match(terms: &[(String, bool, bool)]) -> Option<String> {
+/// Build one FTS5 MATCH string per positive free-text term, plus one for the
+/// negated terms (joined with OR). Every term is a quoted string, so user text
+/// can never be read as FTS syntax. The last plain term matches as a prefix.
+/// An empty list means there is nothing searchable.
+pub fn fts_terms(terms: &[(String, bool, bool)]) -> (Vec<String>, Option<String>) {
     let quote = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
     // FTS5 splits on non-alphanumerics, so a term with none would be empty.
     let usable = |t: &str| t.chars().any(char::is_alphanumeric);
     let pos: Vec<_> = terms.iter().filter(|(t, _, n)| !n && usable(t)).collect();
     if pos.is_empty() {
-        return None;
+        return (Vec::new(), None);
     }
     let last = pos.len() - 1;
     let positive = pos
@@ -118,18 +119,13 @@ pub fn fts_match(terms: &[(String, bool, bool)]) -> Option<String> {
             let q = quote(t);
             if i == last && !phrase { format!("{q}*") } else { q }
         })
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect();
     let neg: Vec<_> = terms
         .iter()
         .filter(|(t, _, n)| *n && usable(t))
         .map(|(t, _, _)| quote(t))
         .collect();
-    Some(if neg.is_empty() {
-        positive
-    } else {
-        format!("({positive}) NOT ({})", neg.join(" OR "))
-    })
+    (positive, (!neg.is_empty()).then(|| neg.join(" OR ")))
 }
 
 #[cfg(test)]
@@ -171,14 +167,14 @@ mod tests {
     }
 
     #[test]
-    fn fts_expression_is_always_quoted() {
-        let m = |q: &str| fts_match(&parse(q).terms);
-        assert_eq!(m("foo bar").as_deref(), Some(r#""foo" "bar"*"#));
-        assert_eq!(m(r#""foo bar""#).as_deref(), Some(r#""foo bar""#));
-        assert_eq!(m("foo -bar").as_deref(), Some(r#"("foo"*) NOT ("bar")"#));
-        assert_eq!(m("NEAR(a b) OR AND *").as_deref(), Some(r#""NEAR(a" "b)" "OR" "AND"*"#));
-        assert_eq!(m("*** ^ ()"), None);
-        assert_eq!(m("-only"), None);
-        assert_eq!(m(r#"a"b"#).as_deref(), Some(r#""ab""#));
+    fn fts_terms_are_always_quoted() {
+        let m = |q: &str| fts_terms(&parse(q).terms);
+        assert_eq!(m("foo bar"), (vec![r#""foo""#.into(), r#""bar"*"#.into()], None));
+        assert_eq!(m(r#""foo bar""#).0, vec![r#""foo bar""#]);
+        assert_eq!(m("foo -bar -baz"), (vec![r#""foo"*"#.into()], Some(r#""bar" OR "baz""#.into())));
+        assert_eq!(m("NEAR(a b) OR AND *").0, vec![r#""NEAR(a""#, r#""b)""#, r#""OR""#, r#""AND"*"#]);
+        assert!(m("*** ^ ()").0.is_empty());
+        assert!(m("-only").0.is_empty());
+        assert_eq!(m(r#"a"b"#).0, vec![r#""ab""#]);
     }
 }

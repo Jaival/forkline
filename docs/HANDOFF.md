@@ -117,4 +117,6 @@ Rules added in Phase 1:
    - Diff: a Shift+click range that spans two hunks is sent as is; GitHub
      rejects it and the action rolls back. Changing the range after typing
      clears the comment box.
-   - Search: all terms must match in one doc (title or one comment).
+   - Search: broad queries (> 2000 docs) rank by recency and take the snippet
+     from the first doc matching any term. A phrase cannot span title and a
+     comment.
