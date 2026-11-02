@@ -24,7 +24,8 @@ export const commands = {
 	issueGet: (id: number) => __TAURI_INVOKE<IssueDetail>("issue_get", { id }),
 	prGet: (id: number) => __TAURI_INVOKE<null>("pr_get", { id }),
 	diffGet: (prId: number) => __TAURI_INVOKE<null>("diff_get", { prId }),
-	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
+	/**  Free text plus operators (`is:pr`, `author:`, `label:`, `repo:`, ...). */
+	search: (query: string, page: PageReq) => __TAURI_INVOKE<Page<SearchHit>>("search", { query, page }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
 	actionEnqueue: (action: Action) => __TAURI_INVOKE<number>("action_enqueue", { action }),
 };
@@ -147,6 +148,17 @@ export type RepoSummary = {
 };
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/**
+ *  One issue / PR that matched. `snippet` is plain text; matched terms are
+ *  wrapped in U+E000 / U+E001 so the UI can highlight without parsing HTML.
+ */
+export type SearchHit = {
+	row: IssueRow,
+	snippet: string,
+	/**  Set when the best match was in a comment. */
+	comment_id: number | null,
+};
 
 export type SyncStatus = {
 	last_synced_at: number | null,

@@ -1,6 +1,7 @@
 import type { ViewRef } from "../lib/layout";
 import { HomeView } from "../features/home/HomeView";
 import { IssueView } from "../features/issue/IssueView";
+import { SearchView } from "../features/search/SearchView";
 import { Placeholder } from "../features/placeholder/Placeholder";
 
 /** Maps a tab's view to its component. Each feature agent replaces its Placeholder. */
@@ -11,6 +12,8 @@ export function ViewHost({ view, onNavigate }: { view: ViewRef; onNavigate: (v: 
     case "issue":
     case "pr":
       return <IssueView id={view.id} />;
+    case "search":
+      return <SearchView q={view.q} onNavigate={onNavigate} />;
     default:
       return <Placeholder view={view} />;
   }
