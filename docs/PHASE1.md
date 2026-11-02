@@ -21,9 +21,9 @@ schema rules, bench rules) still apply.
 - **Write actions:** see `fl_types::Action`. All go through
   `action_enqueue`, are optimistic, and use `pending_fields` (rules in
   HANDOFF.md).
-- **Git:** gitoxide (`gix`) for blobless bare clones, fetch, merge-base and
-  diffs. If a needed gix feature is missing, shelling out to `git` for that
-  one operation is allowed; note it in the PR body.
+- **Git:** the `git` CLI (spawned with `std::process::Command`) for blobless
+  bare clones, fetch, merge-base and diffs. Git for Windows is a stated
+  requirement. No gitoxide.
 
 ## Shared contracts (fixed; change only via the integrator)
 
@@ -196,11 +196,13 @@ Owns `crates/fl-git`, `crates/fl-search`, `app/src/commands/search.rs`,
 `fl-types/src/search.rs`, migration 0008, `ui/src/features/search/`, and the
 base loop's search indexing in `crates/fl-fake/src/main.rs`.
 
-- `fl-git`: implement `GitStore` with gix: bare blobless clone
+- `fl-git`: implement `GitStore` with the `git` CLI: bare blobless clone
   (`--filter=blob:none`) under `<data_dir>/git/<owner>/<name>.git`, fetch
   missing oids (PR heads via `refs/pull/<n>/head`), merge-base, tree diff,
-  per-file unified hunks with line numbers. Token via HTTPS basic auth
-  (`x-access-token:<token>`); never write the token to disk or logs. Lock
+  per-file unified hunks with line numbers (parse `git diff` output). Pass
+  the token per command via `-c http.extraHeader=...` or a credential
+  helper reading an env var; never put it in argv, URLs, git config, logs or
+  disk. Hide console windows (`CREATE_NO_WINDOW`). Lock
   per repo so two fetches do not race. Tests on a local repo made in a temp
   dir (no network).
 - `fl-search`: `index_issue` and `search`. Parser for free text plus
