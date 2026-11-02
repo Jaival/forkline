@@ -9,6 +9,23 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+// One module per Phase 1 area (see docs/PHASE1.md). Each agent adds its
+// DTOs to its own module only; shared contracts live in `action` and `diff`.
+pub mod action;
+pub mod diff;
+pub mod lists;
+pub mod pr;
+pub mod repo;
+pub mod search;
+pub mod sync;
+
+pub use action::*;
+pub use diff::*;
+pub use search::*;
+// Empty until their agents add types; drop the allow once filled.
+#[allow(unused_imports)]
+pub use {lists::*, pr::*, repo::*, sync::*};
+
 pub type RepoId = i64;
 pub type IssueId = i64;
 pub type UserId = i64;
@@ -135,6 +152,12 @@ pub enum CmdError {
     NotFound,
     #[error("not implemented yet: {0}")]
     NotImplemented(String),
+    /// No GitHub token: the UI shows the sign-in flow.
+    #[error("not signed in")]
+    Unauthorized,
+    /// GitHub or the network failed; `message` is safe to show.
+    #[error("github: {0}")]
+    Github(String),
     #[error("{0}")]
     Other(String),
 }

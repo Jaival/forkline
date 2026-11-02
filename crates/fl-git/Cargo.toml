@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 fl-types.workspace = true
 fl-db.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

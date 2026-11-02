@@ -26,7 +26,7 @@ export const commands = {
 	diffGet: (prId: number) => __TAURI_INVOKE<null>("diff_get", { prId }),
 	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
-	actionEnqueue: (kind: string, payloadJson: string) => __TAURI_INVOKE<null>("action_enqueue", { kind, payloadJson }),
+	actionEnqueue: (action: Action) => __TAURI_INVOKE<number>("action_enqueue", { action }),
 };
 
 /** Events */
@@ -35,6 +35,26 @@ export const events = {
 };
 
 /* Types */
+export type Action = 
+/**  New comment. Shown at once as a local comment with a negative id. */
+{ kind: "comment"; issue_id: number; body_md: string } | 
+/**  Close or reopen an issue / PR. `state` must be `open` or `closed`. */
+{ kind: "set_state"; issue_id: number; state: IssueState } | 
+/**  Replace the full label set. */
+{ kind: "set_labels"; issue_id: number; label_ids: number[] } | 
+/**  Replace the full assignee set. */
+{ kind: "set_assignees"; issue_id: number; user_ids: number[] } | 
+/**  Submit a review with optional inline comments. */
+{ kind: "submit_review"; pr_id: number; event: ReviewEvent; body_md: string; comments: DraftReviewComment[] } | 
+/**  Reply in an existing review thread. */
+{ kind: "reply_thread"; thread_id: number; body_md: string } | 
+/**  Resolve or unresolve a review thread. */
+{ kind: "resolve_thread"; thread_id: number; resolved: boolean } | { kind: "merge"; pr_id: number; method: MergeMethod } | 
+/**  Notification thread: mark read. */
+{ kind: "notification_read"; id: string } | 
+/**  Notification thread: mark done (removed from the inbox). */
+{ kind: "notification_done"; id: string };
+
 /**  Everything the UI needs before its first paint, in one IPC call. */
 export type Boot = {
 	/**  Saved tabs + panes (UI-owned JSON), if any. */
@@ -45,7 +65,11 @@ export type Boot = {
 };
 
 /**  Error type returned by every command. */
-export type CmdError = { kind: "Db"; message: string } | { kind: "NotFound" } | { kind: "NotImplemented"; message: string } | { kind: "Other"; message: string };
+export type CmdError = { kind: "Db"; message: string } | { kind: "NotFound" } | { kind: "NotImplemented"; message: string } | 
+/**  No GitHub token: the UI shows the sign-in flow. */
+{ kind: "Unauthorized" } | 
+/**  GitHub or the network failed; `message` is safe to show. */
+{ kind: "Github"; message: string } | { kind: "Other"; message: string };
 
 /**
  *  Emitted when sync or an action changed rows. The UI invalidates queries
@@ -56,6 +80,18 @@ export type DataChanged = {
 };
 
 export type DataChangedEvent = DataChanged;
+
+export type DiffSide = "LEFT" | "RIGHT";
+
+/**  Inline comment in a review. Lines are file line numbers on `side`. */
+export type DraftReviewComment = {
+	path: string,
+	side: DiffSide,
+	line: number,
+	/**  Set for a multi-line comment; must be < `line`. */
+	start_line: number | null,
+	body_md: string,
+};
 
 export type IssueDetail = {
 	row: IssueRow,
@@ -88,6 +124,8 @@ export type Label = {
 	color: string,
 };
 
+export type MergeMethod = "merge" | "squash" | "rebase";
+
 /**  One page of rows. `next` is the offset of the following page, if any. */
 export type Page<T> = {
 	items: T[],
@@ -107,6 +145,8 @@ export type RepoSummary = {
 	open_prs: number,
 	open_issues: number,
 };
+
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
 export type SyncStatus = {
 	last_synced_at: number | null,

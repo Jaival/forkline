@@ -1,3 +1,7 @@
+mod lists;
+mod pr;
+mod repo;
+
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
@@ -54,6 +58,10 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        // Per-area fixtures; each module is owned by one Phase 1 agent.
+        repo::seed(&tx)?;
+        lists::seed(&tx)?;
+        pr::seed(&tx)?;
         tx.commit()
     })?;
     println!(

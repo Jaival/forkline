@@ -14,6 +14,8 @@ use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events}
 pub struct AppState {
     pub db: Arc<Db>,
     pub data_dir: PathBuf,
+    /// Internal blobless clones (agent 5); used by `diff_*` (agent 4).
+    pub git: Arc<fl_git::GitStore>,
 }
 
 /// Command-line flags (validated once here).
@@ -126,6 +128,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             db: Arc::new(db),
+            git: Arc::new(fl_git::GitStore::new(&data_dir)),
             data_dir,
         })
         .manage(bench::BenchState::new(args.bench_out, process_started_ms))

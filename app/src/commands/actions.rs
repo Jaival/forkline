@@ -1,7 +1,7 @@
 //! Owner: agent 1 (sync status, action queue).
 
 use fl_db::queries::sync;
-use fl_types::{CmdResult, SyncStatus};
+use fl_types::{Action, ActionId, CmdResult, SyncStatus};
 use tauri::State;
 
 use super::{not_implemented, read};
@@ -15,6 +15,6 @@ pub async fn sync_status(state: State<'_, AppState>) -> CmdResult<SyncStatus> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn action_enqueue(_kind: String, _payload_json: String) -> CmdResult<()> {
+pub async fn action_enqueue(_action: Action) -> CmdResult<ActionId> {
     not_implemented("action_enqueue")
 }
