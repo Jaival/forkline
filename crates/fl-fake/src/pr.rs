@@ -128,14 +128,15 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
             let rid = id * 10 + n as i64;
             review_ids.push(rid);
             tx.execute(
-                "INSERT INTO reviews(id, pr_id, author_id, state, body_html, submitted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO reviews(id, pr_id, author_id, state, body_html, body_md, submitted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     rid,
                     id,
                     REVIEWERS[(k + n) % 4].0,
                     REVIEW_STATE[(k + n) % 4],
                     "<p>Looks reasonable overall. A few notes inline.</p>",
+                    "Looks reasonable overall. A few notes inline.",
                     NOW - 20_000 + (n as i64) * 1_000,
                 ],
             )?;

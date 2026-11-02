@@ -119,7 +119,7 @@ pub fn get(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<PrDetail>>
         .collect::<rusqlite::Result<_>>()?;
     d.reviews = conn
         .prepare_cached(
-            "SELECT v.id, COALESCE(u.login, 'ghost'), v.state, v.body_html, v.submitted_at
+            "SELECT v.id, COALESCE(u.login, 'ghost'), v.state, v.body_html, v.body_md, v.submitted_at
              FROM reviews v LEFT JOIN users u ON u.id = v.author_id
              WHERE v.pr_id = ?1 ORDER BY v.submitted_at LIMIT ?2",
         )?
@@ -129,7 +129,8 @@ pub fn get(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<PrDetail>>
                 author: r.get(1)?,
                 state: r.get(2)?,
                 body_html: r.get(3)?,
-                submitted_at: r.get(4)?,
+                body_md: r.get(4)?,
+                submitted_at: r.get(5)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

@@ -171,6 +171,11 @@ async fn deep_sync_writes_issues_prs_and_keeps_pending_fields() {
         ])))
         .mount(&env.server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/contributors"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&env.server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/graphql"))
         .and(body_string_contains("languages(first"))
@@ -317,4 +322,164 @@ async fn missing_client_id_explains_the_dev_override() {
     assert!(!engine.auth_state().await.unwrap().client_id_configured);
     let err = engine.auth_start().await.unwrap_err().to_string();
     assert!(err.contains("FORKLINE_GITHUB_TOKEN"), "{err}");
+}
+
+// ---- paging, timeline, contributors, star history ----------------------------
+
+/// Pinned repo 1, everything else fresh; mocks labels, overview, and an empty PR list.
+async fn deep_env(contributors: ResponseTemplate) -> common::Env {
+    let env = common::env().await;
+    env.db
+        .write(|c| {
+            c.execute_batch(
+                "UPDATE repos SET pinned = 1 WHERE id = 1;
+                 INSERT INTO sync_state (key, last_synced_at) VALUES ('repos', 4102444800);
+                 INSERT INTO sync_state (key, last_synced_at, poll_interval) VALUES ('notifications', 4102444800, 60);",
+            )
+        })
+        .unwrap();
+    Mock::given(method("GET")).and(path("/repos/o/r/labels")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&env.server).await;
+    Mock::given(method("GET")).and(path("/repos/o/r/contributors")).respond_with(contributors).mount(&env.server).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("languages(first"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "repository": {} } })))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("pullRequests(first"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "repository": { "pullRequests": {
+            "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": []
+        }}}})))
+        .mount(&env.server)
+        .await;
+    env
+}
+
+async fn mount_issues(env: &common::Env, node: Value) {
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("issues(first"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "repository": { "issues": {
+            "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [node]
+        }}}})))
+        .mount(&env.server)
+        .await;
+}
+
+fn comment(id: i64) -> Value {
+    json!({ "databaseId": id, "body": format!("c{id}"), "bodyHTML": "<p>c</p>",
+        "createdAt": "2024-01-01T00:00:00Z", "updatedAt": "2024-01-01T00:00:00Z", "author": actor(11, "alice") })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn comments_beyond_one_page_are_fetched_with_node_queries() {
+    let env = deep_env(ResponseTemplate::new(204)).await;
+    let mut node = issue_node(3, 3, "2024-02-01T00:00:00Z");
+    node["comments"] = json!({ "totalCount": 3,
+        "pageInfo": { "hasPreviousPage": true, "startCursor": "cur1" }, "nodes": [comment(32)] });
+    mount_issues(&env, node).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("node(id:$id)"))
+        .and(body_string_contains("\"c\":\"cur1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "node": { "comments": {
+            "pageInfo": { "hasPreviousPage": false, "startCursor": "cur0" }, "nodes": [comment(30), comment(31)]
+        }}}})))
+        .expect(1)
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM comments WHERE issue_id = 3"), 3);
+    assert_eq!(env.q::<String>("SELECT group_concat(id) FROM (SELECT id FROM comments WHERE issue_id = 3 ORDER BY id)"), "30,31,32");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn timeline_events_are_written_and_replaced() {
+    let env = deep_env(ResponseTemplate::new(204)).await;
+    env.db
+        .write(|c| {
+            c.execute_batch(
+                "INSERT INTO issues (id, node_id, repo_id, number, is_pr, state, title, created_at, updated_at) VALUES (3, 'I_3', 1, 3, 0, 'open', 'x', 0, 0);
+                 INSERT INTO timeline_events (issue_id, kind, created_at) VALUES (3, 'closed', 1);",
+            )
+        })
+        .unwrap();
+    let mut node = issue_node(3, 3, "2024-02-01T00:00:00Z");
+    let at = "2024-01-05T00:00:00Z";
+    node["timelineItems"] = json!({ "pageInfo": { "hasNextPage": true, "endCursor": "t1" }, "nodes": [
+        { "__typename": "LabeledEvent", "createdAt": at, "actor": actor(11, "alice"), "label": { "name": "bug" } },
+        { "__typename": "AssignedEvent", "createdAt": at, "actor": actor(11, "alice"), "assignee": { "login": "bob" } },
+    ]});
+    mount_issues(&env, node).await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("node(id:$id)"))
+        .and(body_string_contains("\"c\":\"t1\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "node": { "timelineItems": {
+            "pageInfo": { "hasNextPage": false, "endCursor": "t2" }, "nodes": [
+                { "__typename": "CrossReferencedEvent", "createdAt": at, "actor": null,
+                  "source": { "number": 9, "repository": { "nameWithOwner": "o/other" } } },
+                { "__typename": "RenamedTitleEvent", "createdAt": at, "actor": actor(11, "alice"), "previousTitle": "a", "currentTitle": "b" },
+                { "__typename": "ClosedEvent", "createdAt": at, "actor": actor(11, "alice") },
+            ]
+        }}}})))
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM timeline_events WHERE issue_id = 3"), 5);
+    assert_eq!(env.q::<String>("SELECT payload_json FROM timeline_events WHERE kind = 'labeled'"), r#"{"label":"bug"}"#);
+    assert_eq!(env.q::<String>("SELECT payload_json FROM timeline_events WHERE kind = 'assigned'"), r#"{"assignee":"bob"}"#);
+    assert_eq!(env.q::<String>("SELECT payload_json FROM timeline_events WHERE kind = 'referenced'"), r##"{"ref":"o/other#9"}"##);
+    assert_eq!(env.q::<String>("SELECT payload_json FROM timeline_events WHERE kind = 'renamed'"), r#"{"from":"a","to":"b"}"#);
+    assert_eq!(env.q::<Option<String>>("SELECT payload_json FROM timeline_events WHERE kind = 'closed'"), None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM timeline_events WHERE created_at = 1"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn contributors_are_replaced_and_empty_repo_204_clears_them() {
+    let env = deep_env(ResponseTemplate::new(200).set_body_json(json!([
+        { "id": 11, "login": "alice", "avatar_url": "a", "contributions": 40 },
+        { "id": 12, "login": "bob", "avatar_url": "b", "contributions": 3 },
+        { "type": "Anonymous", "name": "x", "contributions": 1 },
+    ])))
+    .await;
+    mount_issues(&env, issue_node(3, 3, "2024-02-01T00:00:00Z")).await;
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM repo_contributors WHERE repo_id = 1"), 2);
+    assert_eq!(env.q::<i64>("SELECT contributions FROM repo_contributors WHERE user_id = 11"), 40);
+
+    // Same flow with a 204 (empty repo): rows are replaced by nothing.
+    let env = deep_env(ResponseTemplate::new(204)).await;
+    env.db
+        .write(|c| c.execute_batch("INSERT INTO repo_contributors (repo_id, user_id, contributions) VALUES (1, 11, 5);"))
+        .unwrap();
+    mount_issues(&env, issue_node(3, 3, "2024-02-01T00:00:00Z")).await;
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM repo_contributors"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn star_history_gets_one_snapshot_per_day() {
+    let env = common::env().await;
+    only_repos(&env).await;
+    Mock::given(method("GET"))
+        .and(path("/user/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([repo_json(1, "r")])))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET")).and(path("/user/starred")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&env.server).await;
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT stars FROM star_history WHERE repo_id = 1"), 7);
+    assert_eq!(env.q::<i64>("SELECT day FROM star_history WHERE repo_id = 1"), fl_sync::now() / 86400);
+    // Repo 2 was not part of the response: no snapshot.
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM star_history WHERE repo_id = 2"), 0);
 }
