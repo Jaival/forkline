@@ -16,7 +16,10 @@ export const commands = {
 	/**  Write the report to the `--bench` file and exit the app. */
 	benchFinish: () => __TAURI_INVOKE<null>("bench_finish"),
 	reposPinned: () => __TAURI_INVOKE<RepoSummary[]>("repos_pinned"),
-	repoOverview: (repoId: number) => __TAURI_INVOKE<null>("repo_overview", { repoId }),
+	reposList: (filter: RepoFilter, page: PageReq) => __TAURI_INVOKE<Page<RepoRow>>("repos_list", { filter, page }),
+	repoOverview: (repoId: number) => __TAURI_INVOKE<RepoOverview>("repo_overview", { repoId }),
+	/**  Local-only write. Sync (agent 1) deep-syncs pinned repos. */
+	repoSetPinned: (repoId: number, pinned: boolean) => __TAURI_INVOKE<null>("repo_set_pinned", { repoId, pinned }),
 	homeFeed: (page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("home_feed", { page }),
 	/**  Pull requests, Issues and Review requests views. */
 	issueList: (filter: IssueFilter, page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("issue_list", { filter, page }),
@@ -87,6 +90,20 @@ export type CommentRow = {
 	body_html: string | null,
 	body_md: string | null,
 	created_at: number,
+};
+
+export type CommitRow = {
+	oid: string,
+	headline: string,
+	author: string | null,
+	authored_at: number,
+	/**  SUCCESS | FAILURE | PENDING | ERROR, if known. */
+	check_state: string | null,
+};
+
+export type ContributorRow = {
+	login: string,
+	contributions: number,
 };
 
 /**
@@ -199,6 +216,11 @@ export type Label = {
 	color: string,
 };
 
+export type LanguageShare = {
+	name: string,
+	bytes: number,
+};
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 /**  One page of rows. `next` is the offset of the following page, if any. */
@@ -212,6 +234,52 @@ export type PageReq = {
 	limit: number,
 };
 
+export type ReleaseRow = {
+	tag: string,
+	name: string | null,
+	published_at: number | null,
+};
+
+/**  Filter for `repos_list`. `query` matches `owner/name` (case-insensitive substring). */
+export type RepoFilter = {
+	query: string,
+	starred_only: boolean,
+};
+
+export type RepoOverview = {
+	id: number,
+	owner: string,
+	name: string,
+	description: string | null,
+	default_branch: string,
+	license: string | null,
+	stars: number,
+	forks: number,
+	pinned: boolean,
+	starred: boolean,
+	open_prs: number,
+	open_issues: number,
+	languages: LanguageShare[],
+	commits: CommitRow[],
+	releases: ReleaseRow[],
+	contributors: ContributorRow[],
+	star_history: StarPoint[],
+};
+
+/**  One row in the Repositories and Starred views. */
+export type RepoRow = {
+	id: number,
+	owner: string,
+	name: string,
+	description: string | null,
+	language: string | null,
+	stars: number,
+	pinned: boolean,
+	starred: boolean,
+	open_prs: number,
+	open_issues: number,
+};
+
 export type RepoSummary = {
 	id: number,
 	owner: string,
@@ -222,6 +290,12 @@ export type RepoSummary = {
 };
 
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/**  Star count on one day (`day` = unix seconds / 86400). */
+export type StarPoint = {
+	day: number,
+	stars: number,
+};
 
 export type SyncStatus = {
 	last_synced_at: number | null,

@@ -38,6 +38,7 @@ function isView(v: unknown): v is ViewRef {
   const o = v as Record<string, unknown>;
   if (typeof o.kind !== "string" || !VIEW_KINDS.has(o.kind)) return false;
   if (o.kind === "repo") return typeof o.repoId === "number";
+  if (o.kind === "pulls" || o.kind === "issues") return o.repoId === undefined || typeof o.repoId === "number";
   if (o.kind === "issue" || o.kind === "pr") return typeof o.id === "number";
   if (o.kind === "search") return typeof o.q === "string";
   return true;

@@ -22,10 +22,11 @@ pub mod sync;
 pub use action::*;
 pub use diff::*;
 pub use lists::*;
+pub use repo::*;
 pub use search::*;
 // Empty until their agents add types; drop the allow once filled.
 #[allow(unused_imports)]
-pub use {pr::*, repo::*, sync::*};
+pub use {pr::*, sync::*};
 
 pub type RepoId = i64;
 pub type IssueId = i64;
