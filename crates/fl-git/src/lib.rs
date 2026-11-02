@@ -50,15 +50,22 @@ fn run_git(dir: Option<&Path>, args: &[&str], token: Option<&str>, offline: bool
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Git for Windows enables Git Credential Manager system-wide; on a 401
+        // it would open a sign-in window. An empty helper clears the list.
+        .env("GCM_INTERACTIVE", "never")
+        .env("GIT_CONFIG_KEY_0", "credential.helper")
+        .env("GIT_CONFIG_VALUE_0", "");
     if offline {
         cmd.env("GIT_NO_LAZY_FETCH", "1");
     }
     if let Some(t) = token {
         let basic = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{t}"));
-        cmd.env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "http.extraHeader")
-            .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {basic}"));
+        cmd.env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_1", "http.extraHeader")
+            .env("GIT_CONFIG_VALUE_1", format!("Authorization: Basic {basic}"));
+    } else {
+        cmd.env("GIT_CONFIG_COUNT", "1");
     }
     #[cfg(windows)]
     {
