@@ -65,7 +65,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::bench::bench_finish,
             // repo (agent 2)
             repo::repos_pinned,
+            repo::repos_list,
             repo::repo_overview,
+            repo::repo_set_pinned,
             // lists + inbox + issue (agent 3)
             lists::home_feed,
             lists::issue_list,

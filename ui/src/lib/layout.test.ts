@@ -45,4 +45,17 @@ describe("layout", () => {
     const badView = { ...l, panes: [{ ...l.panes[0]!, tabs: [{ id: "t", view: { kind: "issue" } }] }] };
     expect(parseLayout(JSON.stringify(badView))).not.toEqual(badView);
   });
+
+  it("accepts an optional repoId on pulls and issues only as a number", () => {
+    const withView = (view: unknown) => {
+      const l = defaultLayout();
+      return JSON.stringify({ ...l, panes: [{ ...l.panes[0]!, tabs: [{ id: l.panes[0]!.activeTabId, view }] }] });
+    };
+    for (const kind of ["pulls", "issues"]) {
+      for (const view of [{ kind }, { kind, repoId: 7 }]) {
+        expect(activeTab(activePane(parseLayout(withView(view)))).view).toEqual(view);
+      }
+      expect(activeTab(activePane(parseLayout(withView({ kind, repoId: "7" })))).view.kind).toBe("home");
+    }
+  });
 });
