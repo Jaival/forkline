@@ -11,12 +11,9 @@ struct Report {
     durations: BTreeMap<String, Vec<f64>>,
 }
 
-#[derive(Deserialize)]
-struct Budgets {
-    /// Page navigation start to Home rows painted. Excludes Tauri / WebView2
-    /// process startup, which the app cannot speed up.
-    page_start_to_home_ms: f64,
-}
+/// Checked by `fl-sync`'s queue tests (enqueue never waits on the network),
+/// not by the UI scenario.
+const RUST_TESTED: &[&str] = &["optimistic_action_network_wait_ms"];
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -35,14 +32,10 @@ fn main() -> anyhow::Result<()> {
     let report: Report = serde_json::from_slice(
         &fs::read(&report_path).with_context(|| format!("read {}", report_path.display()))?,
     )?;
-    let budgets: Budgets = serde_json::from_slice(
+    // Key = report duration name. `*_fps` budgets are minimums, the rest maximums.
+    let budgets: BTreeMap<String, f64> = serde_json::from_slice(
         &fs::read(&budgets_path).with_context(|| format!("read {}", budgets_path.display()))?,
     )?;
-    let page_to_home = report
-        .durations
-        .get("page_start_to_home")
-        .and_then(|v| v.first())
-        .context("report is missing page_start_to_home")?;
 
     // Informational only: includes WebView2 startup, so it has no budget.
     let start = report.marks.get("process_main");
@@ -51,12 +44,30 @@ fn main() -> anyhow::Result<()> {
         println!("process start to home: {:.1} ms (not budgeted)", painted - start);
     }
 
-    println!(
-        "page start to home: {page_to_home:.1} ms (budget {:.1} ms)",
-        budgets.page_start_to_home_ms
-    );
-    if *page_to_home > budgets.page_start_to_home_ms {
-        bail!("page start to home missed its budget");
+    let mut missed = Vec::new();
+    for (key, &budget) in &budgets {
+        if RUST_TESTED.contains(&key.as_str()) {
+            println!("{key}: checked by cargo tests");
+            continue;
+        }
+        let value = *report
+            .durations
+            .get(key)
+            .and_then(|v| v.first())
+            .with_context(|| format!("report is missing {key}"))?;
+        let is_min = key.ends_with("_fps");
+        let ok = if is_min { value >= budget } else { value <= budget };
+        let rel = if is_min { "min" } else { "max" };
+        println!(
+            "{key}: {value:.1} ({rel} {budget:.1}){}",
+            if ok { "" } else { "  MISSED" }
+        );
+        if !ok {
+            missed.push(key.as_str());
+        }
+    }
+    if !missed.is_empty() {
+        bail!("missed budgets: {}", missed.join(", "));
     }
     Ok(())
 }
