@@ -81,7 +81,7 @@ export function InboxView({ onNavigate }: { onNavigate: (v: ViewRef) => void }) 
                   <span className="w-32 shrink-0 truncate text-muted">{i.row.reason.replaceAll("_", " ")}</span>
                   <span className="w-10 shrink-0 text-right text-muted">{timeAgo(i.row.updated_at)}</span>
                 </button>
-                {i.row.pending ? <span className="rounded bg-raised px-1.5 text-xs text-muted">sending…</span> : null}
+                {i.row.pending ? <span className="rounded bg-raised px-1.5 text-xs text-muted">sendingâ€¦</span> : null}
                 {i.row.unread ? (
                   <button
                     className="rounded px-2 hover:bg-bg"
