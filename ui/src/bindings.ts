@@ -18,10 +18,19 @@ export const commands = {
 	reposPinned: () => __TAURI_INVOKE<RepoSummary[]>("repos_pinned"),
 	repoOverview: (repoId: number) => __TAURI_INVOKE<null>("repo_overview", { repoId }),
 	homeFeed: (page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("home_feed", { page }),
-	issueList: () => __TAURI_INVOKE<null>("issue_list"),
-	inboxList: () => __TAURI_INVOKE<null>("inbox_list"),
+	/**  Pull requests, Issues and Review requests views. */
+	issueList: (filter: IssueFilter, page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("issue_list", { filter, page }),
+	/**
+	 *  Open (not done) notifications, newest first. Mark read / done go through
+	 *  `action_enqueue`.
+	 */
+	inboxList: (filter: InboxFilter, page: PageReq) => __TAURI_INVOKE<Page<InboxRow>>("inbox_list", { filter, page }),
 	/**  Read an issue or PR from cache and clear its unread dot. */
 	issueGet: (id: number) => __TAURI_INVOKE<IssueDetail>("issue_get", { id }),
+	/**  Conversation, timeline, assignees, linked items and pending fields. */
+	issueThread: (id: number) => __TAURI_INVOKE<IssueThread>("issue_thread", { id }),
+	/**  Labels and users to choose from in the editors. */
+	issueEditOptions: (repoId: number) => __TAURI_INVOKE<EditOptions>("issue_edit_options", { repoId }),
 	prGet: (id: number) => __TAURI_INVOKE<null>("pr_get", { id }),
 	diffGet: (prId: number) => __TAURI_INVOKE<null>("diff_get", { prId }),
 	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
@@ -71,6 +80,15 @@ export type CmdError = { kind: "Db"; message: string } | { kind: "NotFound" } | 
 /**  GitHub or the network failed; `message` is safe to show. */
 { kind: "Github"; message: string } | { kind: "Other"; message: string };
 
+/**  A comment. Local optimistic comments have a negative `id`. */
+export type CommentRow = {
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
+
 /**
  *  Emitted when sync or an action changed rows. The UI invalidates queries
  *  whose key starts with one of `scopes` (e.g. "issues", "repos").
@@ -93,12 +111,55 @@ export type DraftReviewComment = {
 	body_md: string,
 };
 
+/**  Choices for the label and assignee editors. */
+export type EditOptions = {
+	labels: Label[],
+	users: User[],
+};
+
+export type InboxFilter = {
+	repo_id: number | null,
+	unread_only: boolean,
+	/**  Order by repo first so the UI can render repo groups. */
+	grouped: boolean,
+};
+
+export type InboxRow = {
+	/**  GitHub notification thread id. */
+	id: string,
+	repo_id: number,
+	repo: string,
+	subject_type: string,
+	/**  Linked cached issue / PR, if any. */
+	issue_id: number | null,
+	is_pr: boolean,
+	title: string,
+	reason: string,
+	unread: boolean,
+	updated_at: number,
+};
+
 export type IssueDetail = {
 	row: IssueRow,
 	body_html: string | null,
 	body_md: string | null,
 	labels: Label[],
 	created_at: number,
+};
+
+/**  Filter for `issue_list`. Every field narrows the result; `None` / `false` means "any". */
+export type IssueFilter = {
+	repo_id: number | null,
+	state: IssueState | null,
+	/**  Author login. */
+	author: string | null,
+	/**  Assignee login. */
+	assignee: string | null,
+	/**  Label name. */
+	label: string | null,
+	is_pr: boolean | null,
+	/**  Open PRs with a review request for the signed-in user (`viewer` setting). */
+	review_requested: boolean,
 };
 
 /**  One row in any issue / PR list. */
@@ -117,6 +178,20 @@ export type IssueRow = {
 };
 
 export type IssueState = "open" | "closed" | "merged";
+
+/**
+ *  Everything under the issue header: assignees, conversation, timeline.
+ *  Comments and events are capped at 100 each (oldest first).
+ */
+export type IssueThread = {
+	assignees: User[],
+	comments: CommentRow[],
+	timeline: TimelineEvent[],
+	/**  PRs linked to an issue, or issues linked to a PR. */
+	linked: IssueRow[],
+	/**  Fields of the issue row with an unsent action: `state`, `labels`, `assignees`. */
+	pending_fields: string[],
+};
 
 export type Label = {
 	id: number,
@@ -154,6 +229,19 @@ export type SyncStatus = {
 	failed_actions: number,
 	paused: boolean,
 	error: string | null,
+};
+
+export type TimelineEvent = {
+	id: number,
+	kind: string,
+	actor: string,
+	created_at: number,
+	payload_json: string | null,
+};
+
+export type User = {
+	id: number,
+	login: string,
 };
 
 /* Tauri Specta runtime */
