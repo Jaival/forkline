@@ -1,10 +1,13 @@
-# Phase 0 handoff
+# Handoff (Phase 0 + Phase 1)
 
 ## Workspace ownership
 
 - `crates/fl-types`: shared DTOs and command errors.
 - `crates/fl-db`: SQLite connection setup, migration 1, query modules.
-- `crates/fl-sync`, `crates/fl-git`, `crates/fl-search`: Phase 1 service boundaries.
+- `crates/fl-sync`: GitHub auth (device flow, Windows Credential Manager),
+  REST/GraphQL client, sync engine, optimistic action queue.
+- `crates/fl-git`: `GitStore` over the `git` CLI (bare blobless clones, diffs).
+- `crates/fl-search`: FTS5 indexing (`index_issue`) and query parser (`search`).
 - `crates/fl-fake`: isolated deterministic fixture data generator.
 - `crates/fl-bench`: budget checker and local query benchmarks.
 - `app`: Tauri startup, typed command registration, and event boundary.
@@ -62,8 +65,52 @@ default layout, never save it, and wait for `signalReady(key)` (see
 rows are in the DOM. Feature phases should add
 their query and interaction measurements as the relevant UI becomes available.
 
-## Current scaffold boundary
+## Phase 1 state
 
-The local shell and typed IPC are wired. GitHub synchronization, action retries,
-search behavior, git operations, full feature views, and comprehensive UI
-benchmark scenarios remain later-phase work.
+Plan and per-area ownership: `docs/PHASE1.md`. Five agents built the areas in
+parallel; all are merged into `phase-1`.
+
+Works (tests + bench on fake data; not yet exercised against real GitHub):
+
+- Sync: repo metadata + `starred` for all repos, deep sync for pinned repos
+  (newest 300 issues / 60 PRs on first sync), notifications polling, rate
+  limit pauses. Engine starts in `setup`; not in bench mode.
+- Actions: every `fl_types::Action` is applied locally at once, sent by a
+  worker, retried with backoff, rolled back on final failure. Failed actions
+  show in the footer with Retry / Discard.
+- Views: Home, Inbox, PR / Issue / Review-request lists, issue detail, PR
+  view (conversation, commits, checks, files + diff), repo overview,
+  Repositories, Starred, Search, sign-in dialog, footer.
+- Keys: `Ctrl+K` palette, `Ctrl+Tab`, `/`, `j` / `k` / Enter in lists
+  (`VirtualList` takes `onOpen` and wires `listNav`).
+- Bench: all budgets in `bench/budgets.json` are checked by `fl-bench`.
+  Release, 10k fake issues: launch 178-200 ms, open item 14-19 ms, tab
+  switch 4 ms, search p95 17-19 ms, diff scroll 240 fps.
+
+Rules added in Phase 1:
+
+- Migrations 0003-0006 are numbered by schema version. Delete dev and fake
+  databases created before the renumbering.
+- Notifications in `action_queue` / `pending_fields` use
+  `CAST(notifications.id AS INTEGER)` as the row id.
+- Local optimistic rows have negative ids. Sync deletes local rows that no
+  action owns any more (`confirmed_local` in `fl-sync/src/sync.rs`).
+- `data-changed` scopes: `issues`, `repos`, `inbox`, `pr`, `sync`, `search`.
+- Git runs with credential helpers disabled and the token only in
+  `GIT_CONFIG_*` env vars. Git for Windows is required.
+
+## Next
+
+1. Register the GitHub OAuth App (device flow on) and build with
+   `FORKLINE_GITHUB_CLIENT_ID`. Until then use `FORKLINE_GITHUB_TOKEN`.
+2. Manual pass in the running app against a real account: sign-in, first
+   sync, every view, each action kind, diff of a real PR, failed action
+   rollback. No view has been checked by eye yet.
+3. Known gaps:
+   - Comments, timeline, reviews, checks, commits stop at 100 per item.
+   - Not synced: contributors, star history, timeline events.
+   - `reviews` has no `body_md`; local reviews store escaped text in `body_html`.
+   - No shared UI handler for `CmdError::Unauthorized` (footer covers sign-in).
+   - Diff: no multi-line comments, long lines clip, no `j` / `k` over files.
+   - Search: all terms must match in one doc (title or one comment).
+   - Repo tab titles show the id; pin toggle is not optimistic.
