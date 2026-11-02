@@ -71,6 +71,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             lists::issue_list,
             inbox::inbox_list,
             issue::issue_get,
+            issue::issue_thread,
+            issue::issue_edit_options,
             // pr + diff (agent 4)
             pr::pr_get,
             diff::diff_get,

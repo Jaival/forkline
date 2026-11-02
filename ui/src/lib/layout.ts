@@ -4,8 +4,8 @@
 export type ViewRef =
   | { kind: "home" }
   | { kind: "inbox" }
-  | { kind: "pulls" }
-  | { kind: "issues" }
+  | { kind: "pulls"; repoId?: number }
+  | { kind: "issues"; repoId?: number }
   | { kind: "reviews" }
   | { kind: "starred" }
   | { kind: "repos" }
