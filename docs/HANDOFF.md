@@ -15,8 +15,10 @@
 
 ## Shared rules
 
-- Keep the approved stack fixed: Tauri 2, Rust, SQLite/FTS5, Bun, React,
-  TypeScript, Vite, Tailwind, TanStack Query, Vitest, and TanStack Virtual.
+- The UI moves to GPUI + gpui-component on branch `gpui`; see
+  `docs/adr/0001-gpui.md` for the stack, pins and changed decisions. The
+  Tauri + React app (`app/`, `ui/`) stays until GPUI parity, then is deleted.
+  Do not change the stack without asking.
 - Keep each feature's backend implementation in its matching command/query
   module. Register commands centrally in `app/src/lib.rs`.
 - Regenerate `ui/src/bindings.ts` with `bun run bindings`; do not hand edit it.
