@@ -27,7 +27,6 @@ impl ViewPanel {
         cx.new(|_| Self { content: built.view, view_ref, focus_handle: built.focus })
     }
 
-    #[cfg(test)]
     pub(crate) fn content(&self) -> &AnyView {
         &self.content
     }

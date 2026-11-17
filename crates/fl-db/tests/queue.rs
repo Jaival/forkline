@@ -52,7 +52,7 @@ fn q(kind: QueueKind, repo_id: Option<i64>) -> QueueQuery {
 }
 
 fn rows(db: &Db, q: QueueQuery) -> Vec<QueueRow> {
-    db.read(|c| queries::queue::page(c, &q, PageReq { offset: 0, limit: 100 }))
+    db.read(|c| queries::queue::page(c, &q, None, PageReq { offset: 0, limit: 100 }))
         .unwrap()
         .items
 }
@@ -159,7 +159,7 @@ fn counts_match_rows() {
     seed(&db);
     seed_inbox(&db);
     use QueueGroup::*;
-    let counts = |query| db.read(|c| queries::queue::counts(c, &query)).unwrap();
+    let counts = |query| db.read(|c| queries::queue::counts(c, &query, None)).unwrap();
     assert_eq!(
         counts(q(QueueKind::Inbox, None)),
         [(ReviewRequested, 1), (Mentioned, 2), (Assigned, 1), (YourPrs, 1), (Other, 3)]
@@ -178,7 +178,7 @@ fn counts_match_rows() {
         }
     }
     let empty = fresh();
-    assert!(empty.1.read(|c| queries::queue::counts(c, &q(QueueKind::Inbox, None))).unwrap().is_empty());
+    assert!(empty.1.read(|c| queries::queue::counts(c, &q(QueueKind::Inbox, None), None)).unwrap().is_empty());
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn paging() {
     seed(&db);
     let query = q(QueueKind::Pulls, None);
     let page = |offset| {
-        db.read(|c| queries::queue::page(c, &query, PageReq { offset, limit: 2 })).unwrap()
+        db.read(|c| queries::queue::page(c, &query, None, PageReq { offset, limit: 2 })).unwrap()
     };
     let first = page(0);
     assert_eq!(keys(&first.items), ["6", "3"]);

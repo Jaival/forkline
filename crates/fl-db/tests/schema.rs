@@ -179,8 +179,8 @@ fn query_plans_use_indexes() {
     for kind in [QueueKind::Inbox, QueueKind::Pulls, QueueKind::Issues, QueueKind::Reviews] {
         for repo_id in [None, Some(1)] {
             let q = QueueQuery { kind, repo_id };
-            queries.push(queries::queue::queue_sql(&q, req));
-            queries.push(queries::queue::counts_sql(&q));
+            queries.push(queries::queue::queue_sql(&q, None, req));
+            queries.push(queries::queue::counts_sql(&q, None));
         }
     }
     for (q, args) in queries {

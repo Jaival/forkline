@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use fl_db::queries::{inbox, layout, repo};
-use fl_types::{DataChanged, RepoSummary};
+use fl_db::queries::{inbox, layout, repo, views};
+use fl_types::{DataChanged, QueueKind, RepoSummary};
 use gpui_kit::base::Placement;
 use gpui_kit::component::dock::{
     ClosePanel, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
@@ -12,16 +12,18 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions, div,
+    FocusHandle, MouseButton, ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions,
+    deferred, div, px,
 };
 
 use crate::footer::Footer;
+use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
 use crate::rail;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette]);
 
 /// Ask the workspace to show a view, so child views need no workspace handle.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
@@ -40,6 +42,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-t", NewTab, None),
         KeyBinding::new("ctrl-w", ClosePanel, None),
         KeyBinding::new("ctrl-\\", SplitRight, None),
+        KeyBinding::new("ctrl-k", OpenPalette, None),
     ]);
 }
 
@@ -50,6 +53,10 @@ pub struct Workspace {
     inbox_unread: u32,
     /// False in a bench run: it neither loads nor overwrites the user's layout.
     save_layout: bool,
+    /// The command palette, while open, and the focus it came from.
+    palette: Option<Entity<Palette>>,
+    palette_return: Option<FocusHandle>,
+    _palette_subscription: Option<Subscription>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -98,6 +105,9 @@ impl Workspace {
             pinned: Vec::new(),
             inbox_unread: 0,
             save_layout,
+            palette: None,
+            palette_return: None,
+            _palette_subscription: None,
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -163,6 +173,67 @@ impl Workspace {
         self.open(action.0.clone(), window, cx);
     }
 
+    fn on_open_palette(&mut self, _: &OpenPalette, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+            return;
+        }
+        self.palette_return = window.focused(cx);
+        let palette = cx.new(|cx| Palette::new(&self.pinned, window, cx));
+        self._palette_subscription = Some(cx.subscribe_in(&palette, window, Self::on_palette_event));
+        self.palette = Some(palette);
+        cx.notify();
+    }
+
+    /// Hide the palette and give focus back to where it came from.
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette = None;
+        self._palette_subscription = None;
+        match self.palette_return.take() {
+            Some(focus) => window.focus(&focus, cx),
+            None => {
+                if let Some((_, id)) = self.focused_group(window, cx) {
+                    self.focus_panel(id, window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn on_palette_event(&mut self, _: &Entity<Palette>, event: &PaletteEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_palette(window, cx);
+        let PaletteEvent::Run(run) = event else { return };
+        match run {
+            // Dispatch is deferred, so it runs with focus back on the view.
+            Run::Action(action) => window.dispatch_action(action.boxed_clone(), cx),
+            Run::OpenSaved(view) => {
+                let view_ref = match view.kind {
+                    QueueKind::Inbox => ViewRef::Inbox,
+                    QueueKind::Pulls => ViewRef::Pulls { repo_id: None },
+                    QueueKind::Issues => ViewRef::Issues { repo_id: None },
+                    QueueKind::Reviews => ViewRef::Reviews,
+                };
+                self.open(view_ref.clone(), window, cx);
+                // By view, not by focus: a new tab has not rendered yet, so
+                // the focus does not tell its group apart.
+                let content = self.find(&view_ref, cx).and_then(|id| self.content_of(id, cx));
+                if let Some(content) = content {
+                    crate::views::set_filter(&content, &view.query, window, cx);
+                }
+            }
+            Run::DeleteView(id) => {
+                let (id, db) = (*id, Store::global(cx).read(cx).db().clone());
+                let task = cx.background_spawn(async move { db.write(|c| views::delete(c, id)) });
+                cx.spawn(async move |_, cx| {
+                    if task.await.is_ok() {
+                        cx.update(|cx| Store::emit_changed(&["views"], cx));
+                    }
+                })
+                .detach();
+            }
+        }
+    }
+
     fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_theme(window, cx);
     }
@@ -217,8 +288,18 @@ impl Workspace {
     #[cfg(test)]
     pub(crate) fn active_view(&self, window: &Window, cx: &App) -> Option<gpui_kit::AnyView> {
         let (_, id) = self.focused_group(window, cx)?;
+        self.content_of(id, cx)
+    }
+
+    fn content_of(&self, id: PanelId, cx: &App) -> Option<gpui_kit::AnyView> {
         let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
         Some(panel.read(cx).content().clone())
+    }
+
+    /// The open command palette, if any.
+    #[cfg(test)]
+    pub(crate) fn palette(&self) -> Option<&Entity<Palette>> {
+        self.palette.as_ref()
     }
 
     /// Tab groups in the center, each as its list of views (active one marked `*`).
@@ -312,6 +393,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_split_right))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_view))
+            .on_action(cx.listener(Self::on_open_palette))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -324,6 +406,29 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
             )
             .child(self.footer.clone())
+            .children(self.palette.clone().map(|palette| {
+                // Over the dock; a click outside the box closes it.
+                deferred(
+                    div()
+                        .id("palette-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx)))
+                        .child(
+                            div().w_full().flex().justify_center().pt(px(80.)).child(
+                                div()
+                                    .id("palette-box")
+                                    .occlude()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                    .child(palette),
+                            ),
+                        ),
+                )
+                .with_priority(1)
+            }))
     }
 }
 

@@ -9,6 +9,7 @@ fl-types.workspace = true
 fl-db.workspace = true
 fl-sync.workspace = true
 fl-git.workspace = true
+fl-search.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

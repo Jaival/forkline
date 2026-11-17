@@ -10,6 +10,7 @@ pub mod pr;
 pub mod queue;
 pub mod repo;
 pub mod sync;
+pub mod views;
 
 use fl_types::{IssueRow, IssueState};
 use rusqlite::Row;

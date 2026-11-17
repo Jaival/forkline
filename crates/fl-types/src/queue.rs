@@ -18,6 +18,34 @@ pub enum QueueKind {
     Reviews,
 }
 
+impl QueueKind {
+    pub const ALL: [Self; 4] = [Self::Inbox, Self::Pulls, Self::Issues, Self::Reviews];
+
+    /// Stable text form, stored in `saved_views.kind`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Pulls => "pulls",
+            Self::Issues => "issues",
+            Self::Reviews => "reviews",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// A named `/` filter of one queue kind (`saved_views`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedView {
+    pub id: i64,
+    pub name: String,
+    pub kind: QueueKind,
+    /// `fl-search` query text, e.g. `is:open label:bug crash`.
+    pub query: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct QueueQuery {
     pub kind: QueueKind,

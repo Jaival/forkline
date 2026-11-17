@@ -4,11 +4,13 @@
 //!
 //! Views call [`ready`] once their rows are on screen; the first call for a
 //! key records when that frame was painted. G1 areas add their scenario
-//! steps to [`run`] (search still to come).
+//! steps to [`run`].
 //!
 //! Steps: launch (`inbox_painted`), tab switch (`switch_tab_ms`), the other
 //! queues (`*_painted`), open a cached item in the reading pane
-//! (`open_cached_item_ms`: `j` in the Inbox until the item is painted), scroll
+//! (`open_cached_item_ms`: `j` in the Inbox until the item is painted), filter
+//! the Issues queue with 20 `/` queries (`search_p95_ms`: p95 of change ->
+//! first filtered page painted, 10 rounds after one warm-up round), scroll
 //! the 10k-line diff (`diff_scroll_fps`: the Files tab of the fake PR
 //! `tune-generated`, `diff::ScrollDown` every frame for two seconds).
 
@@ -17,7 +19,8 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::diff::DiffState;
-use gpui_kit::{App, AsyncWindowContext, Entity, Focusable as _, Global, Window};
+use fl_types::QueueKind;
+use gpui_kit::{AnyView, App, AsyncWindowContext, Entity, Focusable as _, Global, Window};
 use rusqlite::OptionalExtension as _;
 use serde::Serialize;
 
@@ -28,6 +31,16 @@ const TAB_SWITCH_SAMPLES: usize = 20;
 const OPEN_ITEM_SAMPLES: usize = 20;
 /// Frames to wait for an item; a row without a cached item never paints one.
 const OPEN_ITEM_MAX_FRAMES: usize = 60;
+/// The `/` queries of the search step: the set of `fl-search`'s
+/// `queue_filter_bench` example.
+const SEARCH_QUERIES: &[&str] = &[
+    "fixture", "fixture item", "project 42", "gener", "fix*", "PR #7", "is:pr fixture",
+    "is:issue is:open fixture", "-is:pr fixture", "author:octocat fixture", "repo:forkline-demo/project-007",
+    "repo:forkline-demo/project-007 is:pr item", "is:pr", "author:octocat is:open", "label:bug fixture",
+    "assignee:octocat", "fixture -generated", "\"local data\" project", "NEAR( AND \" * -", "zzzznomatch",
+];
+/// Round 0 warms the caches and is dropped.
+const SEARCH_ROUNDS: usize = 11;
 /// The fake-data PR whose diff changes every tenth line of a 10k-line file
 /// (`fl-fake/src/git.rs`).
 const BIG_DIFF_HEAD_REF: &str = "tune-generated";
@@ -50,6 +63,8 @@ struct Bench {
     report: Report,
     /// The last diff on screen, for the scroll step.
     diff: Option<Entity<DiffState>>,
+    /// The last Issues list view built, for the search step.
+    issues: Option<AnyView>,
 }
 
 impl Global for Bench {}
@@ -66,7 +81,7 @@ pub fn init(out: PathBuf, early: &[(&str, f64)], cx: &mut App) {
         report.marks.insert((*name).into(), *ms);
     }
     report.marks.insert("app_init".into(), epoch_ms());
-    cx.set_global(Bench { out, report, diff: None });
+    cx.set_global(Bench { out, report, diff: None, issues: None });
 }
 
 /// Record a startup phase (e.g. `store_ready`). No-op outside bench mode.
@@ -87,6 +102,14 @@ pub fn ready(key: &'static str, window: &Window, cx: &App) {
     window.on_next_frame(move |_, cx| {
         cx.global_mut::<Bench>().report.marks.entry(mark).or_insert_with(epoch_ms);
     });
+}
+
+/// A queue list view was built: keep the Issues one for the search step.
+/// No-op outside bench mode.
+pub fn list_built(kind: QueueKind, view: AnyView, cx: &mut App) {
+    if kind == QueueKind::Issues && cx.has_global::<Bench>() {
+        cx.global_mut::<Bench>().issues = Some(view);
+    }
 }
 
 /// A Files tab shows `diff`: mark `diff_painted` and keep it for the scroll
@@ -168,6 +191,8 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         }
     }
 
+    let search = search_p95(&ws, &mut cx).await;
+
     let fps = scroll_big_diff(&ws, &mut cx).await;
 
     let _ = cx.update(|_, cx| {
@@ -176,6 +201,9 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
             bench.report.durations.insert("diff_scroll_fps".into(), vec![fps]);
         }
         bench.report.durations.insert("switch_tab_ms".into(), vec![median(samples)]);
+        if let Some(ms) = search {
+            bench.report.durations.insert("search_p95_ms".into(), vec![ms]);
+        }
         if !opens.is_empty() {
             bench.report.durations.insert("open_cached_item_ms".into(), vec![median(opens)]);
         }
@@ -185,6 +213,41 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         }
         cx.quit();
     });
+}
+
+/// Filter the Issues queue by each query, time change -> first filtered page
+/// painted, and return the p95. `None` when the queue never showed.
+async fn search_p95(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> Option<f64> {
+    let _ = cx.update(|window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Issues { repo_id: None }, window, cx)));
+    painted(cx).await;
+    let view = cx.update(|_, cx| cx.global::<Bench>().issues.clone()).ok()??;
+    let mut samples = Vec::with_capacity((SEARCH_ROUNDS - 1) * SEARCH_QUERIES.len());
+    for round in 0..SEARCH_ROUNDS {
+        for query in SEARCH_QUERIES {
+            let start = epoch_ms();
+            let _ = cx.update(|window, cx| {
+                cx.global_mut::<Bench>().report.marks.remove("filter_painted");
+                crate::views::set_filter(&view, query, window, cx);
+            });
+            for _ in 0..OPEN_ITEM_MAX_FRAMES {
+                painted(cx).await;
+                let mark = cx.update(|_, cx| cx.global::<Bench>().report.marks.get("filter_painted").copied());
+                if let Ok(Some(at)) = mark {
+                    if round > 0 {
+                        samples.push(at - start);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    let _ = cx.update(|window, cx| crate::views::set_filter(&view, "", window, cx));
+    painted(cx).await;
+    if samples.is_empty() {
+        return None;
+    }
+    samples.sort_by(f64::total_cmp);
+    Some(samples[samples.len() * 95 / 100])
 }
 
 /// Open the big fake diff in a PR tab, then scroll it for two seconds and

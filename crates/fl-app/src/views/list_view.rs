@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::Built;
-use super::queue::{Queue, QueueEvent};
+use super::queue::{FocusFilter, Queue, QueueEvent, SaveView};
 use super::reading::{Approve, Done, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleViewed};
 use crate::store::Store;
 
@@ -21,6 +21,7 @@ pub struct ListView {
 impl ListView {
     pub fn build(query: QueueQuery, title: SharedString, window: &mut Window, cx: &mut App) -> Built {
         let inbox = query.kind == QueueKind::Inbox;
+        let kind = query.kind;
         let queue = cx.new(|cx| Queue::new(query, title, window, cx));
         let focus = queue.read(cx).focus.clone();
         let reading = cx.new(|cx| ReadingPane::new(inbox, cx));
@@ -43,6 +44,7 @@ impl ListView {
             });
             Self { queue, reading, _subscription }
         });
+        crate::bench::list_built(kind, view.clone().into(), cx);
         Built { view: view.into(), focus }
     }
 }
@@ -80,6 +82,15 @@ impl ListView {
     fn show_files(&mut self, a: &ShowFiles, window: &mut Window, cx: &mut Context<Self>) {
         self.reading.update(cx, |pane, cx| pane.show_files(a, window, cx));
     }
+
+    // `/` and Save view work from the reading pane too; the queue owns the bar.
+    fn focus_filter(&mut self, a: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.queue.update(cx, |queue, cx| queue.focus_filter(a, window, cx));
+    }
+
+    fn save_view(&mut self, a: &SaveView, window: &mut Window, cx: &mut Context<Self>) {
+        self.queue.update(cx, |queue, cx| queue.save_view(a, window, cx));
+    }
 }
 
 impl Render for ListView {
@@ -94,6 +105,8 @@ impl Render for ListView {
             .on_action(cx.listener(Self::prev_file))
             .on_action(cx.listener(Self::toggle_viewed))
             .on_action(cx.listener(Self::show_files))
+            .on_action(cx.listener(Self::focus_filter))
+            .on_action(cx.listener(Self::save_view))
             .child(
                 h_resizable("list-view")
                     .child(

@@ -14,8 +14,21 @@ const VIEWER_REVIEW: &str = "i.is_pr = 1 AND i.state = 'open' AND i.id IN (SELEC
      pr_review_requests WHERE reviewer_login = \
      (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer'))";
 
+/// An extra SQL condition on a queue (the `/` filter), built by
+/// `fl_search::queue_filter`. It may read the aliases `i` (issues), `r`
+/// (repos) and `u` (author); in the Inbox `i` and `u` are left joins, so a
+/// notification without a cached issue fails any condition on them. Bind
+/// with anonymous `?` only, in the order of `args`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cond {
+    pub sql: String,
+    pub args: Vec<Value>,
+}
+
 /// FROM and WHERE, shared by the list and the counts.
-fn from_where(q: &QueueQuery, joins: bool) -> (String, Vec<Value>) {
+fn from_where(q: &QueueQuery, cond: Option<&Cond>, joins: bool) -> (String, Vec<Value>) {
+    // A filter reads the joined tables.
+    let joins = joins || cond.is_some();
     let mut args = Vec::new();
     let (from, mut conds, alias) = match q.kind {
         QueueKind::Inbox => (
@@ -51,12 +64,16 @@ fn from_where(q: &QueueQuery, joins: bool) -> (String, Vec<Value>) {
         conds.push(&repo_cond);
         args.push(repo_id.into());
     }
+    if let Some(cond) = cond {
+        conds.push(&cond.sql);
+        args.extend(cond.args.iter().cloned());
+    }
     (format!("{from} WHERE {}", conds.join(" AND ")), args)
 }
 
 /// Build the list statement and its parameters. `req` must be clamped.
-pub fn queue_sql(q: &QueueQuery, req: PageReq) -> (String, Vec<Value>) {
-    let (from_where, mut args) = from_where(q, true);
+pub fn queue_sql(q: &QueueQuery, cond: Option<&Cond>, req: PageReq) -> (String, Vec<Value>) {
+    let (from_where, mut args) = from_where(q, cond, true);
     let sql = match q.kind {
         QueueKind::Inbox => format!(
             "SELECT n.id, {INBOX_RANK}, n.issue_id, n.repo_id, r.owner || '/' || r.name, i.number, \
@@ -103,9 +120,9 @@ fn queue_row(r: &Row<'_>) -> rusqlite::Result<QueueRow> {
     })
 }
 
-pub fn page(conn: &Connection, q: &QueueQuery, req: PageReq) -> rusqlite::Result<Page<QueueRow>> {
+pub fn page(conn: &Connection, q: &QueueQuery, cond: Option<&Cond>, req: PageReq) -> rusqlite::Result<Page<QueueRow>> {
     let req = req.clamped();
-    let (sql, args) = queue_sql(q, req);
+    let (sql, args) = queue_sql(q, cond, req);
     let rows = conn
         .prepare_cached(&sql)?
         .query_map(params_from_iter(args), queue_row)?
@@ -114,8 +131,8 @@ pub fn page(conn: &Connection, q: &QueueQuery, req: PageReq) -> rusqlite::Result
 }
 
 /// Build the counts statement: rows of `(group rank, count)`.
-pub fn counts_sql(q: &QueueQuery) -> (String, Vec<Value>) {
-    let (from_where, args) = from_where(q, false);
+pub fn counts_sql(q: &QueueQuery, cond: Option<&Cond>) -> (String, Vec<Value>) {
+    let (from_where, args) = from_where(q, cond, false);
     let sql = match q.kind {
         QueueKind::Inbox => {
             format!("SELECT {INBOX_RANK}, COUNT(*) FROM {from_where} GROUP BY 1 ORDER BY 1")
@@ -129,8 +146,8 @@ pub fn counts_sql(q: &QueueQuery) -> (String, Vec<Value>) {
 }
 
 /// Rows per group, display order, groups with zero rows left out.
-pub fn counts(conn: &Connection, q: &QueueQuery) -> rusqlite::Result<Vec<(QueueGroup, u32)>> {
-    let (sql, args) = counts_sql(q);
+pub fn counts(conn: &Connection, q: &QueueQuery, cond: Option<&Cond>) -> rusqlite::Result<Vec<(QueueGroup, u32)>> {
+    let (sql, args) = counts_sql(q, cond);
     let rows = conn
         .prepare_cached(&sql)?
         .query_map(params_from_iter(args), |r| Ok((group_at(r.get(0)?), r.get::<_, u32>(1)?)))?

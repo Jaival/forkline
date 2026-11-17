@@ -176,8 +176,8 @@ can exceed 450; run the bench twice.
 ## GPUI G1 state
 
 Plan: `docs/design/ui-plan.md` (7 steps). Mockups: `docs/design/ui-mockups.html`
-(B = shell, D = PR Files tab). Steps 1-5 are done. PRs: #2 (G0 + steps 1-3, `gpui`), #3 (step 4,
-`gpui-step4`), step 5 on `gpui-step5` (stacked on `gpui-step4`).
+(B = shell, D = PR Files tab). Steps 1-6 are done. PRs: #2 (G0 + steps 1-3, `gpui`), #3 (step 4,
+`gpui-step4`), #4 (step 5, `gpui-step5`), step 6 on `gpui-step6` (stacked on `gpui-step5`).
 
 Done (steps 1 and 2):
 
@@ -386,8 +386,93 @@ emphasis, empty thread rail. Not checked by eye: Split mode, a collapsed
 viewed file, threads in the rail (fake data has none on that PR), light
 theme. Keys are covered by UI tests only.
 
-Next (new thread): step 6, palette and query bar (`Ctrl+K` commands, `/`
-filter with saved views, `fl-search`; bench `search_p95_ms`). Then step 7.
+Done (step 6, palette and query bar, 2026-11-17):
+
+- `/` query bar in every queue (`views/queue.rs`): a row under the header
+  with a gpui-component `Input`, a `Views` menu (saved views of this kind,
+  Clear filter) and, while a filter is set, `N results · X ms` and `Save
+  view`. Element ids `queue-*`.
+  - Data: `fl_search::queue_filter(conn, query)` turns the query into a
+    `fl_db::queries::queue::Cond`; `queue::page` / `counts` take
+    `Option<&Cond>`. Same operators as search (`is:`, `author:`, `label:`,
+    `repo:`, `assignee:`, `-` negation); every text term must hit the title,
+    body or a comment (last term as a prefix). Queue order is unchanged
+    (group, newest first), not rank. A term matching more than 2000 docs is
+    checked per row (`EXISTS` over `search_docs`), else as an id set: mapping
+    100k docs to issues was the cost (18 ms -> 6 ms for `fixture item`).
+  - A filter change selects no row, reads the first page in the background,
+    shows it, then reads the group counts in a second read (counts take up
+    to 30 ms on 20k issues). Header numbers are blank until then. Reload,
+    load-more and the repo filter keep the filter.
+  - Keys: `/` (`FocusFilter`, context `(Queue || Reading) && !Input`; the
+    `ListView` forwards it from the pane) focuses the input. In the input:
+    `Esc` clears a filter and returns to the list, `Enter` returns to the
+    list and keeps it. The list keys (`j` / `k` / arrows / `Enter`) are now
+    bound in `Queue && !Input`, so typing `j` in the bar types.
+  - Saved views: migration `0010_saved_views.sql` (`kind`, `name`, `query`,
+    unique per kind and name); `fl_db::queries::views::{list, save,
+    delete}`; `fl_types::SavedView`, `QueueKind::as_str/parse`. `SaveView`
+    saves the filter with its text as name. Scope `views` in `DataChanged`.
+- `Ctrl+K` palette (`palette.rs`, action `OpenPalette`): a gpui-component
+  `Command` in an overlay over the workspace (`deferred`, backdrop click
+  closes, `Ctrl+K` again closes). Groups: Actions (only those the focused
+  view can run when it opens: Approve, Reply, Mark done, Snooze, files keys,
+  Filter queue, Save filter as view), Go to (views and pinned repos'
+  Pulls / Issues), Saved views (`View: …` opens the list and sets the
+  filter; `Delete view: …`), Workspace (new / close tab, split, theme), then
+  up to 8 `fl_search::search` hits for the typed text and `Search for "…"`.
+  Own word filter (every word in the label). The palette never runs a
+  command itself: the workspace closes it, gives focus back, then runs it,
+  so actions reach the view. `Esc` clears the query, a second `Esc` closes.
+- `fl_search::fts_terms` keeps negated terms when there is no positive one
+  (`-word` alone now excludes; it used to be ignored).
+- Tests: 9 UI tests in `views/queue/tests.rs` (focus, filter, selection,
+  Esc, Enter, `/` from the pane, Save view, `set_filter`, reload keeps the
+  filter), 9 in `palette/tests.rs` (open / toggle, word filter, enter runs,
+  Esc twice and focus return, backdrop, actions follow focus, search hit
+  opens, saved view opens with its filter, delete view); 6
+  `queue_filter` tests in `fl-search` (incl. the broad per-row path);
+  `crates/fl-db/tests/views.rs`. Timing tool:
+  `cargo run -p fl-search --release --example queue_filter_bench -- fake-data/forkline.db`.
+- Bench: step `search_p95_ms` (Issues queue, the 20 queries of the Tauri
+  search bench, 11 rounds, first dropped; change -> first filtered page
+  painted, mark `filter_painted`). `bench::list_built` keeps the Issues list
+  view for it. `fl-bench gpui` now runs with no `--partial` gaps.
+
+Bench (2026-11-17, release, AC power, 240 Hz, warm runs 2-4; run 1 cold
+after the migration: `launch_ms` 647, `app_startup_ms` 136):
+`search_p95_ms` 11.4-11.5 (30), `open_cached_item_ms` 6.3 (30),
+`switch_tab_ms` 4.1-4.2 (8), `diff_scroll_fps` 239-240 (120), `launch_ms`
+379-399 (600), `app_startup_ms` 40-58 (60). Full `fl-bench gpui` (no
+`--partial`) passes.
+
+Checked by eye (PrintWindow, dark, fake data): Inbox with the empty query
+bar (`target/tmp/g1s6-inbox.png`); Issues filtered by `-is:pr fixture` with
+`11443 results · 3 ms`, Save view, group count (`target/tmp/g1s6-f2.2.png`,
+during a bench run). Not checked by eye: the palette (only keys open it;
+covered by UI tests), the Views menu, light theme.
+
+Open decisions (step 6):
+
+- A saved view's name is its query text; no rename. A name prompt is a
+  small add on Save view.
+- With a filter, an Inbox notification without a cached issue (release,
+  discussion) never matches: the filter reads issue columns.
+- The repo filter menu applies the `/` filter synchronously on the UI
+  thread (up to ~10 ms with a broad filter).
+- While a new filter's page loads, the old rows stay and the result line
+  says `Searching`; no spinner.
+- The palette reads saved views and pinned repos once when it opens. Item
+  actions show when the focused view handles them, not per item (e.g.
+  Approve shows on an Inbox tab with no row selected; it then does nothing).
+- Palette rows have no icons; the mockup's `>` prompt is a placeholder.
+- A failed Save view / Delete view write is silent.
+- The filter is not saved in the layout; a restored tab starts unfiltered.
+
+Next (new thread): step 7, remaining views (Repo, Repositories, Starred,
+Explore, Search, Home), then the parity check and removal of the Tauri app
+(ask first). The palette's `Go to: Search` and `Search for "…"` already open
+`ViewRef::Search { q }`, which is still a placeholder.
 
 Decided (2026-11-16):
 

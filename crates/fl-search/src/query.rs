@@ -102,16 +102,13 @@ pub fn parse(input: &str) -> Parsed {
 /// Build one FTS5 MATCH string per positive free-text term, plus one for the
 /// negated terms (joined with OR). Every term is a quoted string, so user text
 /// can never be read as FTS syntax. The last plain term matches as a prefix.
-/// An empty list means there is nothing searchable.
+/// An empty list means there is no positive term (negated ones may remain).
 pub fn fts_terms(terms: &[(String, bool, bool)]) -> (Vec<String>, Option<String>) {
     let quote = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
     // FTS5 splits on non-alphanumerics, so a term with none would be empty.
     let usable = |t: &str| t.chars().any(char::is_alphanumeric);
     let pos: Vec<_> = terms.iter().filter(|(t, _, n)| !n && usable(t)).collect();
-    if pos.is_empty() {
-        return (Vec::new(), None);
-    }
-    let last = pos.len() - 1;
+    let last = pos.len().saturating_sub(1);
     let positive = pos
         .iter()
         .enumerate()
@@ -174,7 +171,7 @@ mod tests {
         assert_eq!(m("foo -bar -baz"), (vec![r#""foo"*"#.into()], Some(r#""bar" OR "baz""#.into())));
         assert_eq!(m("NEAR(a b) OR AND *").0, vec![r#""NEAR(a""#, r#""b)""#, r#""OR""#, r#""AND"*"#]);
         assert!(m("*** ^ ()").0.is_empty());
-        assert!(m("-only").0.is_empty());
+        assert_eq!(m("-only"), (Vec::new(), Some(r#""only""#.into())));
         assert_eq!(m(r#"a"b"#).0, vec![r#""ab""#]);
     }
 }
