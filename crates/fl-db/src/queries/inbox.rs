@@ -6,10 +6,15 @@ use rusqlite::{Connection, params_from_iter};
 
 use super::page;
 
+/// Condition for a notification that is in the inbox (alias `n`): not done, not snoozed.
+pub const IN_INBOX: &str = "n.done = 0 \
+     AND (n.done_at IS NULL OR n.updated_at > n.done_at) \
+     AND (n.snoozed_until IS NULL OR n.snoozed_until <= CAST(strftime('%s','now') AS INTEGER))";
+
 /// `req` must be clamped.
 pub fn inbox_sql(f: &InboxFilter, req: PageReq) -> (String, Vec<Value>) {
     let mut args = Vec::<Value>::new();
-    let mut where_ = String::from("n.done = 0");
+    let mut where_ = String::from(IN_INBOX);
     if let Some(repo_id) = f.repo_id {
         where_.push_str(" AND n.repo_id = ?");
         args.push(repo_id.into());
@@ -63,9 +68,26 @@ pub fn list(conn: &Connection, f: &InboxFilter, req: PageReq) -> rusqlite::Resul
 /// Unread notifications in the inbox (the rail badge).
 pub fn unread_count(conn: &Connection) -> rusqlite::Result<u32> {
     conn.query_row(
-        "SELECT COUNT(*) FROM notifications n WHERE n.done = 0 AND n.unread = 1",
+        &format!("SELECT COUNT(*) FROM notifications n WHERE {IN_INBOX} AND n.unread = 1"),
         [],
         |r| r.get(0),
     )
 }
 
+/// Mark done locally; it returns only after a later update.
+pub fn set_done(conn: &Connection, id: &str, now: i64) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE notifications SET done_at = MAX(?2, updated_at), snoozed_until = NULL WHERE id = ?1",
+        rusqlite::params![id, now],
+    )?;
+    Ok(n > 0)
+}
+
+/// Hide until the unix time `until`.
+pub fn snooze(conn: &Connection, id: &str, until: i64) -> rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE notifications SET snoozed_until = ?2 WHERE id = ?1",
+        rusqlite::params![id, until],
+    )?;
+    Ok(n > 0)
+}

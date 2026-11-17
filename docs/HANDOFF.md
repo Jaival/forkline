@@ -176,7 +176,7 @@ can exceed 450; run the bench twice.
 ## GPUI G1 state
 
 Plan: `docs/design/ui-plan.md` (7 steps). Mockups: `docs/design/ui-mockups.html`
-(B = shell, D = PR Files tab). Steps 1-3 are done; nothing is committed.
+(B = shell, D = PR Files tab). Steps 1-4 are done; nothing is committed.
 
 Done (steps 1 and 2):
 
@@ -285,8 +285,56 @@ with markdown (inline code, quote, code block), review verbs; Files tab on
 the demo git repo. Not checked by eye: queue + pane side by side after `j`
 (keys cannot be sent; covered by UI tests), Commits / Checks tabs, light theme.
 
-Next: step 4, action bar and keys (`A` approve, `R` reply, `E` done, `H`
-snooze). Then steps 5-7.
+Done (step 4, action bar and keys, 2026-11-17):
+
+- `views/reading/action_bar.rs`: a bar under the header with the buttons
+  that apply to the item: Approve (open PR), Reply (any loaded item), Done and
+  Snooze (Inbox rows only). Each button shows its key. An action error
+  (e.g. the queue rejects it) shows in the bar. Element ids `action-*`,
+  `reply-send`.
+- Keys (`views::init`, context `(Queue || Reading) && !Input`): `a` approve,
+  `r` reply, `e` done, `h` snooze. `ListView` forwards them from the queue to
+  its pane, so they work while the queue holds the focus. `!Input`: the keys
+  type text in the reply box.
+  - `A`: `Action::SubmitReview { event: Approve }` through the action queue
+    (local review row at once).
+  - `R`: reply box (gpui-component `Textarea`) under the item, focused.
+    `Ctrl+Enter` (or the Comment button) queues `Action::Comment`; `Esc`
+    closes it. Focus returns to where `R` was pressed. Another item drops
+    the draft.
+  - `E` / `H`: local only, no action for GitHub. `E` sets `done_at`; `H` sets
+    `snoozed_until` = now + 1 day. Emits `inbox`.
+- Migration `0009_triage.sql`: `notifications.done_at`, `snoozed_until`.
+  `fl_db::queries::inbox::IN_INBOX` is the one "in the inbox" condition
+  (Inbox queue, Tauri inbox list, `unread_count`): not `done`, not updated
+  only before `done_at`, snooze over. `inbox::set_done` stores
+  `MAX(now, updated_at)` (fake data has future timestamps), and clears a
+  snooze; `inbox::snooze`.
+- Queue: when the selected row leaves on reload (Done, Snooze, sync), the row
+  that took its place is selected, so triage goes on. That row then counts as
+  viewed (and, unread, gets a `NotificationRead`), like any selection.
+- `ReadingPane::new(inbox, cx)`: `inbox` turns on Done / Snooze.
+- Tests: 7 UI tests in `views/reading/tests.rs` (approve, `a` on an issue,
+  reply send with the action letters typed, `Esc`, done selects the next
+  row, snooze for a day, no Done / Snooze in an item tab); 2 in
+  `crates/fl-db/tests/queue.rs` (done returns on a later update, snooze ends).
+
+Bench (2026-11-17, release, `--partial`, 5 warm runs, laptop ON BATTERY):
+`open_cached_item_ms` 16.2-17.0 (30), `switch_tab_ms` 9.6-9.8 (8, MISSED),
+`app_startup_ms` 43-52 (60), `launch_ms` 438-512 (600; the first, cold run
+843). Not caused by step 4: an A/B run with the action bar turned off gave
+the same numbers (16.4-16.6 / 9.7-9.8), and the tab switch path has no
+step-4 code. Both numbers look like whole frames at a lower refresh rate on
+battery. Re-run on AC power before step 5.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`):
+PR tab shows Approve A, Reply R; no Done / Snooze outside Inbox. Not
+checked by eye: the bar beside the Inbox queue, the reply box (keys cannot
+be sent; both covered by UI tests).
+
+Next (new thread): step 5, PR Files tab (D layout: file list, gpui-component
+`Diff`, thread rail, Viewed state; bench `diff_scroll_fps` >= 120). Then
+steps 6-7.
 
 Decided (2026-11-16):
 
@@ -307,3 +355,12 @@ Open decisions:
 - `fl-fake`: `pr_details.changed_files` disagrees with the demo git diff
   (PR #3: 2 vs 1). The Files tab label switches to git's count once loaded.
 - A failed `enqueue` of `NotificationRead` is dropped silently (detached task).
+- Snooze is a fixed day. A menu (later today / tomorrow / next week) is a
+  small add on the Snooze button.
+- An expired snooze shows again only at the next queue reload (any `inbox`,
+  `issues` or `pr` change); no timer.
+- Done / Snooze work on Inbox rows only. Pulls / Issues / Reviews rows are
+  issues, not notifications; triage there needs its own columns.
+- No undo for Done / Snooze yet.
+- Approve shows for any open PR, also the user's own (GitHub rejects that;
+  the action rolls back and the error shows in the bar).

@@ -19,6 +19,9 @@ pub struct Built {
     pub focus: FocusHandle,
 }
 
+/// Where the action keys of the reading pane work.
+const TRIAGE: &str = "(Queue || Reading) && !Input";
+
 /// Bind the keys of the views. Call once at startup.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -27,6 +30,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("k", queue::SelectPrev, Some("Queue")),
         KeyBinding::new("up", queue::SelectPrev, Some("Queue")),
         KeyBinding::new("enter", queue::OpenSelected, Some("Queue")),
+        // Not while typing: the reply box sits inside the reading pane.
+        KeyBinding::new("a", reading::Approve, Some(TRIAGE)),
+        KeyBinding::new("r", reading::Reply, Some(TRIAGE)),
+        KeyBinding::new("e", reading::Done, Some(TRIAGE)),
+        KeyBinding::new("h", reading::Snooze, Some(TRIAGE)),
+        KeyBinding::new("escape", reading::CancelReply, Some("Reply")),
     ]);
 }
 

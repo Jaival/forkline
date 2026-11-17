@@ -27,7 +27,7 @@ fn from_where(q: &QueueQuery, joins: bool) -> (String, Vec<Value>) {
             } else {
                 "notifications n"
             },
-            vec!["n.done = 0"],
+            vec![super::inbox::IN_INBOX],
             "n",
         ),
         kind => (

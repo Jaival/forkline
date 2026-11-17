@@ -5,6 +5,7 @@
 //! SQLite on a background thread. Opening an unread item sets
 //! `last_viewed_at`.
 
+mod action_bar;
 mod conversation;
 mod header;
 mod tabs;
@@ -17,12 +18,14 @@ use fl_db::queries::{issue, pr};
 use fl_types::{DataChanged, DiffFileSummary, IssueDetail, IssueId, IssueRow, IssueThread, PrDetail, QueueRow};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::input::TextareaState;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement,
+    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use rusqlite::Connection;
 
+pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze};
 use self::conversation::Conversation;
 use super::Built;
 use crate::bench;
@@ -96,12 +99,23 @@ pub struct ReadingPane {
     pub(super) files: FilesState,
     /// Bumped when a read in flight turns stale.
     generation: u32,
+    /// Beside the Inbox queue: the item is a notification, so Done and
+    /// Snooze apply.
+    inbox: bool,
+    /// The reply box, while open.
+    pub(super) reply: Option<Entity<TextareaState>>,
+    _reply_subscription: Option<Subscription>,
+    /// Focus before `R`; it returns there when the reply box closes.
+    return_focus: Option<FocusHandle>,
+    /// The last action error, shown in the action bar.
+    pub(super) notice: Option<SharedString>,
     pub focus: FocusHandle,
     _store: Subscription,
 }
 
 impl ReadingPane {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    /// `inbox`: the pane sits beside the Inbox queue.
+    pub fn new(inbox: bool, cx: &mut Context<Self>) -> Self {
         let subscription = cx.subscribe(&Store::global(cx), |this, _, ev: &DataChanged, cx| {
             if ev.scopes.iter().any(|s| matches!(s.as_str(), "issues" | "pr")) {
                 this.load(cx);
@@ -116,6 +130,11 @@ impl ReadingPane {
             conversation: Conversation::new(),
             files: FilesState::Idle,
             generation: 0,
+            inbox,
+            reply: None,
+            _reply_subscription: None,
+            return_focus: None,
+            notice: None,
             focus: cx.focus_handle(),
             _store: subscription,
         }
@@ -124,7 +143,7 @@ impl ReadingPane {
     /// The view of a `ViewRef::Issue` / `ViewRef::Pr` tab.
     pub fn build(id: IssueId, is_pr: bool, cx: &mut App) -> Built {
         let view = cx.new(|cx| {
-            let mut this = Self::new(cx);
+            let mut this = Self::new(false, cx);
             this.show(Some((id, is_pr)), cx);
             this
         });
@@ -145,6 +164,12 @@ impl ReadingPane {
             return;
         }
         self.target = target;
+        // A draft belongs to the item it was written for. The box held the
+        // focus only if the user clicked into the pane; then it stays there.
+        self.reply = None;
+        self._reply_subscription = None;
+        self.return_focus = None;
+        self.notice = None;
         self.detail = None;
         self.missing = false;
         self.tab = PaneTab::Conversation;
@@ -267,11 +292,17 @@ impl Render for ReadingPane {
         let root = v_flex()
             .key_context("Reading")
             .track_focus(&self.focus)
+            .on_action(cx.listener(Self::approve))
+            .on_action(cx.listener(Self::reply))
+            .on_action(cx.listener(Self::done))
+            .on_action(cx.listener(Self::snooze))
             .size_full();
         if self.item.is_none() && self.target.is_none() {
             return root.child(self.message("Select an item", cx));
         }
-        let root = root.child(header::render(self.item.as_ref(), self.detail.as_ref(), cx));
+        let root = root
+            .child(header::render(self.item.as_ref(), self.detail.as_ref(), cx))
+            .children(self.action_bar(cx));
         let Some(detail) = &self.detail else {
             let text = match (self.target, self.missing) {
                 (None, _) => "This notification has no cached issue or pull request.",
@@ -290,5 +321,6 @@ impl Render for ReadingPane {
         };
         root.children(detail.pr().map(|pr| self.tab_bar(pr, cx)))
             .child(div().flex_1().min_h_0().child(body))
+            .children(self.reply_box(cx))
     }
 }
