@@ -59,3 +59,13 @@ pub fn list(conn: &Connection, f: &InboxFilter, req: PageReq) -> rusqlite::Resul
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(page(rows, req))
 }
+
+/// Unread notifications in the inbox (the rail badge).
+pub fn unread_count(conn: &Connection) -> rusqlite::Result<u32> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM notifications n WHERE n.done = 0 AND n.unread = 1",
+        [],
+        |r| r.get(0),
+    )
+}
+

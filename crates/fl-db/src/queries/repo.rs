@@ -55,7 +55,7 @@ pub const LIST_SQL_ALL: &str = "SELECT r.id, r.owner, r.name, r.description, r.l
        (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.is_pr = 1 AND i.state = 'open'),
        (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.is_pr = 0 AND i.state = 'open')
      FROM repos r
-     WHERE (r.owner || '/' || r.name) LIKE ?1 ESCAPE '\\'
+     WHERE r.explore_only = 0 AND (r.owner || '/' || r.name) LIKE ?1 ESCAPE '\\'
      ORDER BY r.owner, r.name LIMIT ?2 OFFSET ?3";
 
 /// All known repos (or only starred ones), filtered by name, ordered by owner / name.

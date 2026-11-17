@@ -1,3 +1,5 @@
+mod explore;
+mod git;
 mod lists;
 mod pr;
 mod repo;
@@ -7,8 +9,9 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 use fl_db::{Db, db_path};
 
-const REPO_COUNT: i64 = 100;
-const ISSUES_PER_REPO: i64 = 100;
+// 50 x 400 = 20,000 issues and PRs (ADR 0001).
+const REPO_COUNT: i64 = 50;
+const ISSUES_PER_REPO: i64 = 400;
 const NOW: i64 = 1_798_000_000;
 
 fn main() -> anyhow::Result<()> {
@@ -21,11 +24,13 @@ fn main() -> anyhow::Result<()> {
         }
     }
     std::fs::create_dir_all(&data_dir)?;
+    let fixture = git::build(&data_dir).context("build the fixture git repository")?;
     let db = Db::open(&db_path(&data_dir)).context("open fake database")?;
     db.write(|conn| {
         let tx = conn.transaction()?;
         // Cascades to issues and search_docs; the search_docs trigger clears search_fts.
         tx.execute("DELETE FROM repos", [])?;
+        tx.execute("DELETE FROM following", [])?;
         tx.execute("INSERT OR IGNORE INTO users(id,login,name) VALUES (1,'octocat','Mona')", [])?;
         for repo_id in 1..=REPO_COUNT {
             tx.execute(
@@ -57,6 +62,8 @@ fn main() -> anyhow::Result<()> {
         repo::seed(&tx)?;
         lists::seed(&tx)?;
         pr::seed(&tx)?;
+        explore::seed(&tx, NOW)?;
+        git::seed(&tx, &fixture)?;
         // Index after all seed modules, so comments they add are searchable too.
         let ids = tx.prepare("SELECT id FROM issues")?.query_map([], |r| r.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
         for id in ids {
@@ -64,8 +71,9 @@ fn main() -> anyhow::Result<()> {
         }
         tx.commit()
     })?;
+    let comments: i64 = db.read(|c| c.query_row("SELECT count(*) FROM comments", [], |r| r.get(0)))?;
     println!(
-        "Generated {} issues across {REPO_COUNT} repositories at {}",
+        "Generated {} issues, {comments} comments across {REPO_COUNT} repositories at {}",
         REPO_COUNT * ISSUES_PER_REPO,
         db_path(&data_dir).display()
     );

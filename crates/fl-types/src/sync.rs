@@ -2,11 +2,11 @@
 //! Other agents: do not edit; ask the owner.
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 
 use crate::{ActionId, Timestamp};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct AuthState {
     pub signed_in: bool,
     /// Viewer login, once known.
@@ -19,7 +19,8 @@ pub struct AuthState {
 }
 
 /// Device-flow code to show the user. The device code itself stays in Rust.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DeviceCode {
     pub user_code: String,
     pub verification_uri: String,
@@ -28,7 +29,8 @@ pub struct DeviceCode {
     pub interval: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum AuthPoll {
     /// Not approved yet; poll again after `interval` seconds.
@@ -39,7 +41,8 @@ pub enum AuthPoll {
 }
 
 /// A write action that failed for good. Its optimistic change was rolled back.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct FailedAction {
     pub id: ActionId,
     /// Short human text, e.g. "Comment on owner/repo#12".

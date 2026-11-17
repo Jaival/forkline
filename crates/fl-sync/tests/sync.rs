@@ -252,7 +252,11 @@ async fn deep_sync_writes_issues_prs_and_keeps_pending_fields() {
     assert_eq!(env.q::<i64>("SELECT count(*) FROM checks"), 1);
     assert_eq!(env.q::<i64>("SELECT count(*) FROM pr_commits WHERE pr_id = 2"), 1);
     // Overview.
-    assert_eq!(env.q::<String>("SELECT languages_json FROM repos WHERE id = 1"), r#"[{"bytes":99,"name":"Rust"}]"#);
+    // Compare as JSON: key order depends on serde_json's `preserve_order`,
+    // which GPUI's dependencies turn on for the whole workspace.
+    let languages: serde_json::Value =
+        serde_json::from_str(&env.q::<String>("SELECT languages_json FROM repos WHERE id = 1")).unwrap();
+    assert_eq!(languages, serde_json::json!([{"name": "Rust", "bytes": 99}]));
     assert_eq!(env.q::<i64>("SELECT on_default_branch FROM commits WHERE oid = 'c1'"), 1);
     assert_eq!(env.q::<String>("SELECT tag FROM releases"), "v1");
     // Cursors for the next incremental run.

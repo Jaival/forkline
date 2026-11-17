@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_lists_inbox_issue.sql"),
     include_str!("../migrations/0006_pr.sql"),
     include_str!("../migrations/0007_review_body_md.sql"),
+    include_str!("../migrations/0008_explore.sql"),
 ];
 
 pub const LATEST: i64 = MIGRATIONS.len() as i64;

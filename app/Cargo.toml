@@ -16,7 +16,7 @@ path = "src/main.rs"
 tauri-build.workspace = true
 
 [dependencies]
-fl-types.workspace = true
+fl-types = { workspace = true, features = ["specta"] }
 fl-db.workspace = true
 fl-sync.workspace = true
 fl-git.workspace = true

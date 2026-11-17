@@ -2,12 +2,12 @@
 //! Other agents: do not edit; ask the owner.
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 
 use crate::{RepoId, Timestamp};
 
 /// One row in the Repositories and Starred views.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RepoRow {
     pub id: RepoId,
     pub owner: String,
@@ -22,19 +22,22 @@ pub struct RepoRow {
 }
 
 /// Filter for `repos_list`. `query` matches `owner/name` (case-insensitive substring).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RepoFilter {
     pub query: String,
     pub starred_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct LanguageShare {
     pub name: String,
     pub bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct CommitRow {
     pub oid: String,
     pub headline: String,
@@ -44,27 +47,31 @@ pub struct CommitRow {
     pub check_state: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ReleaseRow {
     pub tag: String,
     pub name: Option<String>,
     pub published_at: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ContributorRow {
     pub login: String,
     pub contributions: u32,
 }
 
 /// Star count on one day (`day` = unix seconds / 86400).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct StarPoint {
     pub day: i64,
     pub stars: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RepoOverview {
     pub id: RepoId,
     pub owner: String,

@@ -1,6 +1,6 @@
 use fl_db::rusqlite::types::Value;
 use fl_db::{Db, migrate, queries};
-use fl_types::{InboxFilter, IssueFilter, IssueState, PageReq};
+use fl_types::{InboxFilter, IssueFilter, IssueState, PageReq, QueueKind, QueueQuery};
 
 fn fresh() -> (tempfile::TempDir, Db) {
     let dir = tempfile::tempdir().unwrap();
@@ -174,6 +174,13 @@ fn query_plans_use_indexes() {
         for repo_id in [None, Some(1)] {
             let f = InboxFilter { repo_id, unread_only: true, grouped };
             queries.push(queries::inbox::inbox_sql(&f, req));
+        }
+    }
+    for kind in [QueueKind::Inbox, QueueKind::Pulls, QueueKind::Issues, QueueKind::Reviews] {
+        for repo_id in [None, Some(1)] {
+            let q = QueueQuery { kind, repo_id };
+            queries.push(queries::queue::queue_sql(&q, req));
+            queries.push(queries::queue::counts_sql(&q));
         }
     }
     for (q, args) in queries {

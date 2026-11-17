@@ -1,0 +1,25 @@
+[package]
+name = "fl-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+fl-types.workspace = true
+fl-db.workspace = true
+fl-sync.workspace = true
+fl-git.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+gpui-kit.workspace = true
+async-channel = "2"
+tokio = { version = "1.54.1", features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile = "3"

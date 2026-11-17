@@ -80,7 +80,7 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
            WHERE a.is_pr = 0 AND b.is_pr = 1 AND a.number % 4 = 1;",
     )?;
 
-    // Richer bodies, comments, timeline events for the first 30 repos.
+    // Richer bodies, comments (0-9 each, about 90k), timeline events for every item.
     let mut body = tx.prepare("UPDATE issues SET body_md = ?2 WHERE id = ?1")?;
     let mut comment = tx.prepare(
         "INSERT INTO comments(id, issue_id, author_id, body_md, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?5)",
@@ -90,13 +90,13 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
     )?;
     let mut comment_id = 0_i64;
     let mut event_id = 0_i64;
-    let mut stmt = tx.prepare("SELECT id, created_at, updated_at FROM issues WHERE id <= 3000")?;
+    let mut stmt = tx.prepare("SELECT id, created_at, updated_at FROM issues")?;
     let items = stmt
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?
         .collect::<Result<Vec<_>>>()?;
     for (id, created, updated) in items {
         body.execute(params![id, BODY_TEMPLATES[(id % 4) as usize]])?;
-        let n_comments = id % 4;
+        let n_comments = id % 10;
         for c in 0..n_comments {
             comment_id += 1;
             let at = created + (c + 1) * (updated - created) / (n_comments + 1);
@@ -127,7 +127,7 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "INSERT INTO notifications(id, repo_id, subject_type, issue_id, title, reason, unread, done, updated_at)
          SELECT 'n' || id, repo_id, CASE WHEN is_pr = 1 THEN 'PullRequest' ELSE 'Issue' END, id, title,
-                CASE id % 5 WHEN 0 THEN 'review_requested' WHEN 1 THEN 'mention' WHEN 2 THEN 'author'
+                CASE (id / 25) % 5 WHEN 0 THEN 'review_requested' WHEN 1 THEN 'mention' WHEN 2 THEN 'author'
                             WHEN 3 THEN 'assign' ELSE 'subscribed' END,
                 id % 3 <> 0, id % 50 = 0, updated_at
          FROM issues WHERE id % 25 = 0;

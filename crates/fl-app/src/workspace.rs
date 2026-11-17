@@ -1,0 +1,446 @@
+//! The main window: rail, dock (tabs + split panes), footer.
+
+use std::time::Duration;
+
+use fl_db::queries::{inbox, layout, repo};
+use fl_types::{DataChanged, RepoSummary};
+use gpui_kit::base::Placement;
+use gpui_kit::component::dock::{
+    ClosePanel, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
+    InsertTarget, NodeId, PaneRef, PanelId, panel_handle,
+};
+use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode, h_flex, v_flex};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
+    ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions, div,
+};
+
+use crate::footer::Footer;
+use crate::panel::ViewPanel;
+use crate::rail;
+use crate::store::Store;
+use crate::view_ref::ViewRef;
+
+actions!(forkline, [NewTab, SplitRight, ToggleTheme]);
+
+/// Ask the workspace to show a view, so child views need no workspace handle.
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct OpenView(pub ViewRef);
+
+/// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
+/// to the Tauri app until it is removed (ADR 0001).
+const LAYOUT_KEY: &str = "gpui_layout";
+/// Bump when the default layout changes in a way old saved layouts break.
+const LAYOUT_VERSION: usize = 2;
+const SAVE_DELAY: Duration = Duration::from_secs(2);
+
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("ctrl-t", NewTab, None),
+        KeyBinding::new("ctrl-w", ClosePanel, None),
+        KeyBinding::new("ctrl-\\", SplitRight, None),
+    ]);
+}
+
+pub struct Workspace {
+    dock: Entity<DockArea>,
+    footer: Entity<Footer>,
+    pinned: Vec<RepoSummary>,
+    inbox_unread: u32,
+    /// False in a bench run: it neither loads nor overwrites the user's layout.
+    save_layout: bool,
+    _save_task: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl Workspace {
+    pub fn new(save_layout: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::bench::mark("workspace_new", cx);
+        let (dock, _skin) = DockSkin::dock_area("main", Some(LAYOUT_VERSION), window, cx);
+        let store = Store::global(cx);
+
+        // Read synchronously: one small row, and it decides the first frame.
+        // A bench run starts from the default layout.
+        let saved = save_layout
+            .then(|| store.read(cx).db().read(|c| layout::setting(c, LAYOUT_KEY)).ok().flatten())
+            .flatten();
+        let restored = saved
+            .and_then(|json| serde_json::from_str::<DockAreaState>(&json).ok())
+            .filter(|state| state.version == Some(LAYOUT_VERSION))
+            .is_some_and(|state| dock.update(cx, |dock, cx| dock.load(state, window, cx).is_ok()));
+        if !restored {
+            let home = panel_handle(ViewPanel::new(ViewRef::Inbox, window, cx));
+            let center = DockLayout::v_split().child(DockLayout::tabs().panel_view(home, cx), None);
+            dock.update(cx, |dock, cx| dock.set_center(center, window, cx));
+        }
+
+        let subscriptions = vec![
+            cx.subscribe_in(&dock, window, |this, _, ev: &DockEvent, window, cx| {
+                if matches!(ev, DockEvent::LayoutChanged) {
+                    this.schedule_save(window, cx);
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&store, |this, _, ev: &DataChanged, cx| {
+                if ev.scopes.iter().any(|s| s == "repos" || s == "issues") {
+                    this.load_pinned(cx);
+                }
+                if ev.scopes.iter().any(|s| s == "inbox") {
+                    this.load_inbox_unread(cx);
+                }
+            }),
+        ];
+
+        let mut this = Self {
+            dock,
+            footer: cx.new(Footer::new),
+            pinned: Vec::new(),
+            inbox_unread: 0,
+            save_layout,
+            _save_task: None,
+            _subscriptions: subscriptions,
+        };
+        this.load_pinned(cx);
+        this.load_inbox_unread(cx);
+        crate::bench::mark("workspace_built", cx);
+        // Keys need a focused element; start on the active tab.
+        cx.defer_in(window, |this, window, cx| {
+            if let Some((_, id)) = this.focused_group(window, cx) {
+                this.focus_panel(id, window, cx);
+            }
+        });
+        this
+    }
+
+    /// Show `view_ref`: select its tab if one is open, else open it in the
+    /// focused pane.
+    pub fn open(&mut self, view_ref: ViewRef, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.find(&view_ref, cx) {
+            self.dock.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+            self.focus_panel(id, window, cx);
+            return;
+        }
+        let target = self.focused_group(window, cx);
+        let panel = panel_handle(ViewPanel::new(view_ref, window, cx));
+        let id = panel.panel_id(cx);
+        self.dock.update(cx, |dock, cx| {
+            dock.add_panel_view(panel, DockPlacement::Center, None, window, cx);
+            if let Some((node, _)) = target {
+                dock.move_panel(id, InsertTarget::Tabs { node, ix: None, activate: true }, window, cx);
+            }
+        });
+        self.focus_panel(id, window, cx);
+    }
+
+    fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = panel_handle(ViewPanel::new(ViewRef::Inbox, window, cx));
+        let id = panel.panel_id(cx);
+        let target = self.focused_group(window, cx);
+        self.dock.update(cx, |dock, cx| {
+            dock.add_panel_view(panel, DockPlacement::Center, None, window, cx);
+            if let Some((node, _)) = target {
+                dock.move_panel(id, InsertTarget::Tabs { node, ix: None, activate: true }, window, cx);
+            }
+        });
+        self.focus_panel(id, window, cx);
+    }
+
+    /// Open the focused tab's view again in a new pane on the right.
+    fn on_split_right(&mut self, _: &SplitRight, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((node, active)) = self.focused_group(window, cx) else { return };
+        let Some(view_ref) = self.view_ref_of(active, cx) else { return };
+        let panel = panel_handle(ViewPanel::new(view_ref, window, cx));
+        let id = panel.panel_id(cx);
+        self.dock.update(cx, |dock, cx| {
+            dock.add_panel_view(panel, DockPlacement::Center, None, window, cx);
+            dock.move_panel(id, InsertTarget::Split { node, placement: Placement::Right, size: None }, window, cx);
+        });
+        self.focus_panel(id, window, cx);
+    }
+
+    fn on_open_view(&mut self, action: &OpenView, window: &mut Window, cx: &mut Context<Self>) {
+        self.open(action.0.clone(), window, cx);
+    }
+
+    fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_theme(window, cx);
+    }
+
+    pub(crate) fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = if cx.theme().is_dark() { ThemeMode::Light } else { ThemeMode::Dark };
+        Theme::change(mode, Some(window), cx);
+        let value = if mode.is_dark() { "\"dark\"" } else { "\"light\"" };
+        let db = Store::global(cx).read(cx).db().clone();
+        cx.background_spawn(async move {
+            let _ = db.write(|c| layout::set_setting(c, "theme", value));
+        })
+        .detach();
+    }
+
+    /// Tab group holding the focused tab (or the first group), and its active panel.
+    fn focused_group(&self, window: &Window, cx: &App) -> Option<(NodeId, PanelId)> {
+        let dock = self.dock.read(cx);
+        let mut first = None;
+        let mut focused = None;
+        dock.layout(DockPlacement::Center)?.root().walk(&mut |node| {
+            if let PaneRef::Tabs { panels, active_ix } = node.kind() {
+                let Some(&active) = panels.get(active_ix) else { return };
+                first.get_or_insert((node.id(), active));
+                let has_focus = panels.iter().any(|id| {
+                    dock.panel(*id).is_some_and(|p| p.focus_handle(cx).contains_focused(window, cx))
+                });
+                if has_focus {
+                    focused = Some((node.id(), active));
+                }
+            }
+        });
+        focused.or(first)
+    }
+
+    /// Open tab showing `view_ref`, if any.
+    fn find(&self, view_ref: &ViewRef, cx: &App) -> Option<PanelId> {
+        let mut found = None;
+        self.dock.read(cx).layout(DockPlacement::Center)?.root().walk(&mut |node| {
+            if let PaneRef::Tabs { panels, .. } = node.kind() {
+                for id in panels {
+                    if found.is_none() && self.view_ref_of(*id, cx).as_ref() == Some(view_ref) {
+                        found = Some(*id);
+                    }
+                }
+            }
+        });
+        found
+    }
+
+    /// The content view of the focused tab.
+    #[cfg(test)]
+    pub(crate) fn active_view(&self, window: &Window, cx: &App) -> Option<gpui_kit::AnyView> {
+        let (_, id) = self.focused_group(window, cx)?;
+        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
+        Some(panel.read(cx).content().clone())
+    }
+
+    /// Tab groups in the center, each as its list of views (active one marked `*`).
+    #[cfg(test)]
+    pub(crate) fn tab_groups(&self, cx: &App) -> Vec<Vec<String>> {
+        let mut out = Vec::new();
+        self.dock.read(cx).layout(DockPlacement::Center).unwrap().root().walk(&mut |node| {
+            if let PaneRef::Tabs { panels, active_ix } = node.kind() {
+                out.push(
+                    panels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| {
+                            let title = self.view_ref_of(*id, cx).unwrap().title().to_string();
+                            if i == active_ix { format!("*{title}") } else { title }
+                        })
+                        .collect(),
+                );
+            }
+        });
+        out
+    }
+
+    fn view_ref_of(&self, id: PanelId, cx: &App) -> Option<ViewRef> {
+        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
+        Some(panel.read(cx).view_ref().clone())
+    }
+
+    fn focus_panel(&self, id: PanelId, window: &mut Window, cx: &mut App) {
+        if let Some(panel) = self.dock.read(cx).panel(id) {
+            window.focus(&panel.focus_handle(cx), cx);
+        }
+    }
+
+    fn load_pinned(&mut self, cx: &mut Context<Self>) {
+        let task = Store::global(cx).read(cx).read(cx, repo::pinned);
+        cx.spawn(async move |this, cx| {
+            if let Ok(pinned) = task.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.pinned = pinned;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn load_inbox_unread(&mut self, cx: &mut Context<Self>) {
+        let task = Store::global(cx).read(cx).read(cx, inbox::unread_count);
+        cx.spawn(async move |this, cx| {
+            if let Ok(count) = task.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.inbox_unread = count;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Save the layout a moment after the last change (tab drags fire many).
+    fn schedule_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.save_layout {
+            return;
+        }
+        let dock = self.dock.clone();
+        self._save_task = Some(cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor().timer(SAVE_DELAY).await;
+            let Ok(json) = cx.update(|_, cx| serde_json::to_string(&dock.read(cx).dump(cx))) else {
+                return;
+            };
+            let Ok(json) = json else { return };
+            let Ok(db) = cx.update(|_, cx| Store::global(cx).read(cx).db().clone()) else { return };
+            cx.background_executor()
+                .spawn(async move {
+                    let _ = db.write(|c| layout::set_setting(c, LAYOUT_KEY, &json));
+                })
+                .await;
+        }));
+    }
+}
+
+impl Render for Workspace {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.focused_group(window, cx).and_then(|(_, id)| self.view_ref_of(id, cx));
+        let rail = rail::render(&cx.entity(), active.as_ref(), self.inbox_unread, &self.pinned, cx);
+        v_flex()
+            .id("workspace")
+            .key_context("Workspace")
+            .on_action(cx.listener(Self::on_new_tab))
+            .on_action(cx.listener(Self::on_split_right))
+            .on_action(cx.listener(Self::on_toggle_theme))
+            .on_action(cx.listener(Self::on_open_view))
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_start()
+                    .child(rail)
+                    .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
+            )
+            .child(self.footer.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{TestAppContext, WindowOptions};
+
+    use super::*;
+
+    use crate::test_support::open;
+
+    fn groups(ws: &Workspace, cx: &App) -> Vec<Vec<String>> {
+        ws.tab_groups(cx)
+    }
+
+    #[gpui_kit::test]
+    fn keys_open_tabs_and_split_panes(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["*Inbox"]]));
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("ctrl-t", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Inbox"]]));
+
+        cx.update_window(handle, |_, window, cx| window.press("ctrl-\\", cx)).unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [vec!["Inbox", "*Inbox"], vec!["*Inbox"]]));
+    }
+
+    #[gpui_kit::test]
+    fn open_selects_an_existing_tab(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.open(ViewRef::Home, window, cx);
+                ws.open(ViewRef::Inbox, window, cx);
+                ws.open(ViewRef::Home, window, cx);
+            });
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Home"]]));
+    }
+
+    #[gpui_kit::test]
+    fn saved_layout_restores_tabs(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        let json = cx
+            .update_window(handle, |_, window, cx| {
+                ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id: 7 }, window, cx));
+                serde_json::to_string(&ws.read(cx).dock.read(cx).dump(cx)).unwrap()
+            })
+            .unwrap();
+        cx.update(|cx| {
+            let db = Store::global(cx).read(cx).db().clone();
+            db.write(|c| layout::set_setting(c, LAYOUT_KEY, &json)).unwrap();
+            let options = WindowOptions::default();
+            let (_, ws2) =
+                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
+                    .unwrap();
+            assert_eq!(groups(ws2.read(cx), cx), [["Inbox", "*Pull request 7"]]);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn rail_opens_views(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("rail-pulls", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Pull requests"]]));
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("rail-inbox", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["*Inbox", "Pull requests"]]));
+    }
+
+    #[gpui_kit::test]
+    fn open_view_action_opens_a_tab(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.dispatch_action(Box::new(OpenView(ViewRef::Pr { id: 7 })), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Pull request 7"]]));
+    }
+
+    #[gpui_kit::test]
+    fn keys_reach_the_content_view(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let (_, id) = ws.read(cx).focused_group(window, cx).unwrap();
+            let focus = ws.read(cx).dock.read(cx).panel(id).unwrap().focus_handle(cx);
+            assert!(focus.is_focused(window));
+        })
+        .unwrap();
+    }
+}

@@ -26,6 +26,9 @@ tauri-build = { version = "2", features = [] }
 tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
 tauri-plugin-opener = "2"
 
+# GPUI stack. gpui-kit pins the exact gpui-pre snapshot; bump only together (ADR 0001).
+gpui-kit = "=0.9.0"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
