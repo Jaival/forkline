@@ -105,11 +105,25 @@ impl Store {
         Self::global(cx).update(cx, |_, cx| cx.emit(DataChanged { scopes }));
     }
 
-    /// Changed files of a PR, from the local clone. Online, missing commits
-    /// are fetched first; offline, a PR without a local clone is an error.
-    pub fn diff_summary(&self, cx: &App, pr_id: IssueId) -> Task<Result<DiffSummary, String>> {
-        let (db, git, sync, offline) = (self.db.clone(), self.git.clone(), self.sync.clone(), self.offline);
+    /// Changed files and the whole unified patch of a PR (input of
+    /// gpui-component's `DiffFile::parse`), from the local clone. Online,
+    /// missing commits are fetched first; offline, a PR without a local clone
+    /// is an error.
+    pub fn diff_patch(&self, cx: &App, pr_id: IssueId) -> Task<Result<(DiffSummary, String), String>> {
+        let git = self.git.clone();
+        let resolve = self.resolve_clone(pr_id);
         cx.background_spawn(async move {
+            let (clone, target) = resolve()?;
+            git.diff_patch(&clone, &target.base_oid, &target.head_oid).map_err(|e| e.to_string())
+        })
+    }
+
+    /// A blocking closure that finds the diff target of a PR and its clone
+    /// path. Online, missing commits are fetched; offline, the clone path is
+    /// only computed.
+    fn resolve_clone(&self, pr_id: IssueId) -> impl FnOnce() -> Result<(std::path::PathBuf, pr::DiffTarget), String> + Send + 'static {
+        let (db, git, sync, offline) = (self.db.clone(), self.git.clone(), self.sync.clone(), self.offline);
+        move || {
             let target = db
                 .read(|c| pr::diff_target(c, pr_id))
                 .map_err(|e| e.to_string())?
@@ -121,8 +135,8 @@ impl Store {
                 git.ensure_commits(&target.owner, &target.name, sync.token().as_deref(), &oids)
                     .map_err(|e| e.to_string())?
             };
-            git.diff_summary(&clone, &target.base_oid, &target.head_oid).map_err(|e| e.to_string())
-        })
+            Ok((clone, target))
+        }
     }
 
     /// Run `f` on a reader connection, on a background thread.

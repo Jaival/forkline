@@ -14,7 +14,7 @@ use crate::workspace::Workspace;
 // Inbox order: 101 review request (PR 3), 102 mention (issue 1), 103 mention
 // (read), 104 subscribed (issue 1), 105 release (no item), 106 PR 5 without
 // `pr_details`. Thread ids are numeric, like GitHub's: the action queue parses them.
-const SEED: &str = "
+pub(super) const SEED: &str = "
     INSERT INTO users(id, login) VALUES (1, 'me'), (2, 'bob');
     INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);
     INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at) VALUES
@@ -37,26 +37,26 @@ const SEED: &str = "
       ('105',2,'Release',NULL,'t','subscribed',1,0,10),
       ('106',2,'PullRequest',5,'t','subscribed',1,0,5);";
 
-fn start(cx: &mut TestAppContext, dir: &std::path::Path) -> (AnyWindowHandle, Entity<Workspace>) {
+pub(super) fn start(cx: &mut TestAppContext, dir: &std::path::Path) -> (AnyWindowHandle, Entity<Workspace>) {
     let (handle, ws) = open_seeded(cx, dir, SEED);
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx)).unwrap();
     (handle, ws)
 }
 
-fn list(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<ListView> {
+pub(super) fn list(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<ListView> {
     cx.update_window(handle, |_, window, cx| {
         ws.read(cx).active_view(window, cx).unwrap().downcast::<ListView>().ok().unwrap()
     })
     .unwrap()
 }
 
-fn panes(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> (Entity<Queue>, Entity<ReadingPane>) {
+pub(super) fn panes(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> (Entity<Queue>, Entity<ReadingPane>) {
     let list = list(cx, handle, ws);
     cx.read(|cx| (list.read(cx).queue.clone(), list.read(cx).reading.clone()))
 }
 
-fn press(cx: &mut TestAppContext, handle: AnyWindowHandle, key: &str) {
+pub(super) fn press(cx: &mut TestAppContext, handle: AnyWindowHandle, key: &str) {
     cx.update_window(handle, |_, window, cx| {
         window.press(key, cx);
         window.render_frame(cx);
@@ -65,7 +65,7 @@ fn press(cx: &mut TestAppContext, handle: AnyWindowHandle, key: &str) {
 }
 
 /// Press `j` until the queue selects `key`.
-fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &Entity<Queue>, key: &str) {
+pub(super) fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &Entity<Queue>, key: &str) {
     for _ in 0..10 {
         press(cx, handle, "j");
         if cx.read(|cx| queue.read(cx).selected_key() == Some(key)) {
@@ -77,7 +77,7 @@ fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &Entity<Queue
 
 /// Park until `done` holds. Work on the tokio runtime ends on another thread,
 /// so one park may return before it lands.
-fn wait_for(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
+pub(super) fn wait_for(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
     let start = Instant::now();
     loop {
         cx.run_until_parked();
@@ -89,7 +89,7 @@ fn wait_for(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppConte
     }
 }
 
-fn read_db<T>(cx: &mut TestAppContext, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> T {
+pub(super) fn read_db<T>(cx: &mut TestAppContext, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> T {
     cx.update(|cx| Store::global(cx).read(cx).db().read(f).unwrap())
 }
 
@@ -105,11 +105,11 @@ fn actions(cx: &mut TestAppContext) -> Vec<(String, String)> {
     })
 }
 
-fn detail_id(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Option<i64> {
+pub(super) fn detail_id(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Option<i64> {
     cx.read(|cx| reading.read(cx).detail.as_ref().map(|d| d.row().id))
 }
 
-fn is_pr_detail(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> bool {
+pub(super) fn is_pr_detail(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> bool {
     cx.read(|cx| matches!(reading.read(cx).detail, Some(Detail::Pr(_))))
 }
 
@@ -120,7 +120,7 @@ fn comment_count(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Opti
     })
 }
 
-fn active_pane(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<ReadingPane> {
+pub(super) fn active_pane(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<ReadingPane> {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         ws.read(cx).active_view(window, cx).unwrap().downcast::<ReadingPane>().ok().unwrap()
@@ -303,7 +303,12 @@ fn files_of_a_pull_request_without_a_clone_fail(cx: &mut TestAppContext) {
     select(cx, handle, &queue, "101");
     wait_for(cx, "PR detail", |cx| is_pr_detail(cx, &reading));
     reading.update(cx, |pane, cx| pane.set_tab(PaneTab::Files, cx));
-    wait_for(cx, "files failed", |cx| cx.read(|cx| matches!(reading.read(cx).files, FilesState::Failed(_))));
+    wait_for(cx, "files failed", |cx| {
+        cx.read(|cx| {
+            let files = reading.read(cx).files.clone();
+            files.is_some_and(|f| matches!(f.read(cx).load, files::Load::Failed(_)))
+        })
+    });
 }
 
 #[gpui_kit::test]

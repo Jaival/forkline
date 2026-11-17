@@ -6,6 +6,7 @@ mod queue;
 mod reading;
 
 pub use queue::SelectNext;
+pub use reading::ShowFiles;
 
 use fl_types::{QueueKind, QueueQuery};
 use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window};
@@ -35,6 +36,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("r", reading::Reply, Some(TRIAGE)),
         KeyBinding::new("e", reading::Done, Some(TRIAGE)),
         KeyBinding::new("h", reading::Snooze, Some(TRIAGE)),
+        // Files tab of a PR: act only while it is on show.
+        KeyBinding::new("]", reading::NextFile, Some(TRIAGE)),
+        KeyBinding::new("[", reading::PrevFile, Some(TRIAGE)),
+        KeyBinding::new("v", reading::ToggleViewed, Some(TRIAGE)),
         KeyBinding::new("escape", reading::CancelReply, Some("Reply")),
     ]);
 }

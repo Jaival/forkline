@@ -7,26 +7,26 @@
 
 mod action_bar;
 mod conversation;
+mod files;
 mod header;
 mod tabs;
 #[cfg(test)]
 mod tests;
 
-use std::rc::Rc;
-
 use fl_db::queries::{issue, pr};
-use fl_types::{DataChanged, DiffFileSummary, IssueDetail, IssueId, IssueRow, IssueThread, PrDetail, QueueRow};
+use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, PrDetail, QueueRow};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, actions, div, px,
 };
 use rusqlite::Connection;
 
 pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze};
 use self::conversation::Conversation;
+use self::files::FilesTab;
 use super::Built;
 use crate::bench;
 use crate::store::Store;
@@ -77,13 +77,7 @@ impl PaneTab {
     const ALL: [Self; 4] = [Self::Conversation, Self::Files, Self::Commits, Self::Checks];
 }
 
-/// Changed files of the pull request; read from git when the Files tab opens.
-pub(super) enum FilesState {
-    Idle,
-    Loading,
-    Ready(Rc<Vec<DiffFileSummary>>),
-    Failed(SharedString),
-}
+actions!(reading, [NextFile, PrevFile, ToggleViewed, ShowFiles]);
 
 pub struct ReadingPane {
     /// The selected queue row: the header until the details arrive, and all
@@ -96,7 +90,8 @@ pub struct ReadingPane {
     missing: bool,
     pub(super) tab: PaneTab,
     conversation: Conversation,
-    pub(super) files: FilesState,
+    /// The Files tab of the PR on show; built when the tab first opens.
+    pub(super) files: Option<Entity<FilesTab>>,
     /// Bumped when a read in flight turns stale.
     generation: u32,
     /// Beside the Inbox queue: the item is a notification, so Done and
@@ -128,7 +123,7 @@ impl ReadingPane {
             missing: false,
             tab: PaneTab::Conversation,
             conversation: Conversation::new(),
-            files: FilesState::Idle,
+            files: None,
             generation: 0,
             inbox,
             reply: None,
@@ -173,7 +168,7 @@ impl ReadingPane {
         self.detail = None;
         self.missing = false;
         self.tab = PaneTab::Conversation;
-        self.files = FilesState::Idle;
+        self.files = None;
         self.conversation.clear();
         self.generation += 1;
         self.load(cx);
@@ -195,6 +190,10 @@ impl ReadingPane {
                 this.missing = detail.is_none();
                 if let Some(detail) = &detail {
                     this.conversation.set(detail, cx);
+                    if let (Some(files), Some(pr)) = (&this.files, detail.pr()) {
+                        let checks = pr.checks.clone();
+                        files.update(cx, |files, cx| files.set_checks(checks, cx));
+                    }
                     if detail.row().unread {
                         this.mark_viewed(id, is_pr, cx);
                     }
@@ -227,42 +226,56 @@ impl ReadingPane {
         .detach();
     }
 
-    fn set_tab(&mut self, tab: PaneTab, cx: &mut Context<Self>) {
+    pub(super) fn set_tab(&mut self, tab: PaneTab, cx: &mut Context<Self>) {
         self.tab = tab;
-        if tab == PaneTab::Files && matches!(self.files, FilesState::Idle) {
-            self.load_files(cx);
+        if tab == PaneTab::Files
+            && self.files.is_none()
+            && let Some(pr) = self.detail.as_ref().and_then(Detail::pr)
+        {
+            let (id, checks) = (pr.row.id, pr.checks.clone());
+            self.files = Some(cx.new(|cx| FilesTab::new(id, checks, cx)));
         }
         cx.notify();
     }
 
-    fn load_files(&mut self, cx: &mut Context<Self>) {
-        let Some((id, true)) = self.target else { return };
-        self.files = FilesState::Loading;
-        let task = Store::global(cx).read(cx).diff_summary(cx, id);
-        cx.spawn(async move |this, cx| {
-            let summary = task.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.target != Some((id, true)) {
-                    return;
-                }
-                this.files = match summary {
-                    Ok(summary) => FilesState::Ready(Rc::new(summary.files)),
-                    Err(e) => FilesState::Failed(e.into()),
-                };
-                cx.notify();
-            });
-        })
-        .detach();
+    /// The Files tab, while it is on show.
+    fn files_on_show(&self) -> Option<Entity<FilesTab>> {
+        (self.tab == PaneTab::Files).then(|| self.files.clone()).flatten()
+    }
+
+    pub(crate) fn next_file(&mut self, _: &NextFile, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(files) = self.files_on_show() {
+            files.update(cx, |files, cx| files.step(true, cx));
+        }
+    }
+
+    pub(crate) fn prev_file(&mut self, _: &PrevFile, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(files) = self.files_on_show() {
+            files.update(cx, |files, cx| files.step(false, cx));
+        }
+    }
+
+    pub(crate) fn toggle_viewed(&mut self, _: &ToggleViewed, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(files) = self.files_on_show() {
+            files.update(cx, |files, cx| files.toggle_current(cx));
+        }
+    }
+
+    /// Open the Files tab of the PR on show (no key yet; the bench uses it).
+    pub(crate) fn show_files(&mut self, _: &ShowFiles, _: &mut Window, cx: &mut Context<Self>) {
+        if self.detail.as_ref().and_then(Detail::pr).is_some() {
+            self.set_tab(PaneTab::Files, cx);
+        }
     }
 
     fn tab_bar(&self, pr: &PrDetail, cx: &Context<Self>) -> impl IntoElement + use<> {
         let labels = [
             "Conversation".to_owned(),
             // Git's count once read; GitHub's until then.
-            format!("Files {}", match &self.files {
-                FilesState::Ready(files) => files.len(),
-                _ => pr.changed_files as usize,
-            }),
+            format!(
+                "Files {}",
+                self.files.as_ref().and_then(|f| f.read(cx).file_count()).unwrap_or(pr.changed_files as usize)
+            ),
             format!("Commits {}", pr.commits.len()),
             format!("Checks {}", pr.checks.len()),
         ];
@@ -296,6 +309,10 @@ impl Render for ReadingPane {
             .on_action(cx.listener(Self::reply))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
+            .on_action(cx.listener(Self::next_file))
+            .on_action(cx.listener(Self::prev_file))
+            .on_action(cx.listener(Self::toggle_viewed))
+            .on_action(cx.listener(Self::show_files))
             .size_full();
         if self.item.is_none() && self.target.is_none() {
             return root.child(self.message("Select an item", cx));
@@ -314,7 +331,10 @@ impl Render for ReadingPane {
         };
         bench::ready("item", window, cx);
         let body = match (self.tab, detail.pr()) {
-            (PaneTab::Files, Some(pr)) => tabs::files(&self.files, pr, cx),
+            (PaneTab::Files, Some(_)) => match &self.files {
+                Some(files) => files.clone().into_any_element(),
+                None => self.message("", cx),
+            },
             (PaneTab::Commits, Some(pr)) => tabs::commits(pr, cx),
             (PaneTab::Checks, Some(pr)) => tabs::checks(pr, cx),
             _ => self.conversation.render(cx),

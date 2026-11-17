@@ -176,7 +176,8 @@ can exceed 450; run the bench twice.
 ## GPUI G1 state
 
 Plan: `docs/design/ui-plan.md` (7 steps). Mockups: `docs/design/ui-mockups.html`
-(B = shell, D = PR Files tab). Steps 1-4 are done; nothing is committed.
+(B = shell, D = PR Files tab). Steps 1-5 are done. PRs: #2 (G0 + steps 1-3, `gpui`), #3 (step 4,
+`gpui-step4`), step 5 on `gpui-step5` (stacked on `gpui-step4`).
 
 Done (steps 1 and 2):
 
@@ -258,7 +259,8 @@ Done (step 3, reading pane, 2026-11-17):
   an unread Inbox row also enqueues `Action::NotificationRead` (marks it read
   on GitHub through the action queue). Nothing is marked at launch.
 - `Store`: `emit_changed(scopes)` for local writes; `diff_summary(pr_id)`
-  (offline: local clone only; online: `ensure_commits` first); `read_only`
+  (offline: local clone only; online: `ensure_commits` first; replaced by
+  `diff_patch` in step 5); `read_only`
   (bench runs skip the writes opening an item makes). The action emitter now
   runs offline too, so a queued action refreshes the views.
 - `fl-app` depends on `fl-git`.
@@ -332,9 +334,60 @@ PR tab shows Approve A, Reply R; no Done / Snooze outside Inbox. Not
 checked by eye: the bar beside the Inbox queue, the reply box (keys cannot
 be sent; both covered by UI tests).
 
-Next (new thread): step 5, PR Files tab (D layout: file list, gpui-component
-`Diff`, thread rail, Viewed state; bench `diff_scroll_fps` >= 120). Then
-steps 6-7.
+Done (step 5, PR Files tab, 2026-11-17):
+
+- `views/reading/files.rs`: `FilesTab` entity, the Review desk (mockup D).
+  Built the first time the Files tab opens; dropped with the item.
+  - Left: changed files (status letter, Viewed check, `+n`), header
+    `Files · N of M viewed`. Click selects and scrolls to the file.
+  - Centre: toolbar (current path, `[ ] file` hint, Unified / Split toggle,
+    Viewed `V` button) and gpui-component `Diff` over one `DiffState` holding
+    every file of the PR (one virtualized list). Each file header has a
+    Viewed button. Lines with an open review thread are tinted.
+  - Right rail (240 px): review threads (open first; up to 3 comments each,
+    plain text; click scrolls to and selects the lines; outdated threads do
+    not scroll) and the head commit's checks.
+- Data: the whole patch from git (`GitStore::diff_patch`, `-M -U3`, same
+  range as `diff_summary`), parsed with `DiffFile::parse` on a background
+  thread. `Store::diff_patch` replaced `Store::diff_summary` (shared
+  `resolve_clone`). Threads: `pr::threads` (first 100; "More threads on
+  GitHub" past that). Viewed: existing `pr_viewed_files` (`pr::viewed_paths`,
+  `pr::set_viewed`), so no migration. Resets when the head commit changes.
+- Keys (context `(Queue || Reading) && !Input`, act only while the Files tab
+  is on show; `ListView` forwards them): `]` / `[` next / previous file
+  (wraps), `v` toggles Viewed on the current file. Marking viewed collapses
+  the file and moves to the next file not viewed. A failed write reverts.
+  Action `ShowFiles` opens the Files tab (no key yet; the bench uses it).
+  The `Diff` keeps its own keys (arrows, PageUp/Down, Home/End, Ctrl+C) once
+  clicked.
+- Tests: 6 UI tests in `views/reading/files/tests.rs` over a real git repo
+  built in the temp dir (load, `]` / `[` wrap, `v` on / off with the DB row,
+  all viewed, Viewed persists into a fresh tab, keys inert outside Files).
+  `fl-git`: `diff_patch` test in `crates/fl-git/tests/git.rs`.
+- Bench: step `diff_scroll_fps`. Opens the fake PR `tune-generated`
+  (`src/generated/big.rs`, 10k lines, every 10th changed: about 9k diff
+  rows, 1000 hunks) in a PR tab, `ShowFiles`, waits for `diff_painted`,
+  focuses the diff, then dispatches `diff::ScrollDown` (24 px) twice per
+  frame for 2 s and counts painted frames. `bench::diff_shown` hands the
+  `DiffState` to the bench.
+
+Bench (2026-11-17, release, `--partial`, 6 warm runs, ON AC POWER, display
+240 Hz): `diff_scroll_fps` 216-228 (min 120), `open_cached_item_ms` 6.0-6.6
+(30), `switch_tab_ms` 3.9-4.0 (8), `launch_ms` 525-568 (600; first run 801
+cold), `app_startup_ms` 49-55 in 4 runs, 61 and 89 in 2 (60). The misses sit
+between `store_ready` and `workspace_new` (window creation, no Forkline
+code), as noted in step 3. Step 4's battery numbers (9.7 / 16.5) are back to
+4.0 / 6.2 on AC, so they were power, not code.
+
+Checked by eye (PrintWindow during a bench run, dark, `--offline --bench`
+on `target/tmp/shot-data`; image `target/tmp/g1s5-files-a.png`): PR #12
+Files tab with file list, toolbar, hunks with +/- tint and inline change
+emphasis, empty thread rail. Not checked by eye: Split mode, a collapsed
+viewed file, threads in the rail (fake data has none on that PR), light
+theme. Keys are covered by UI tests only.
+
+Next (new thread): step 6, palette and query bar (`Ctrl+K` commands, `/`
+filter with saved views, `fl-search`; bench `search_p95_ms`). Then step 7.
 
 Decided (2026-11-16):
 
@@ -364,3 +417,19 @@ Open decisions:
 - No undo for Done / Snooze yet.
 - Approve shows for any open PR, also the user's own (GitHub rejects that;
   the action rolls back and the error shows in the bar).
+- Files tab (step 5):
+  - No syntax colours in the diff. `Diff::syntax_highlight` is on, but the
+    `DiffState` needs a highlighter (`with_syntax_highlighter`); wire
+    gpui-component's highlighter in the polish pass.
+  - The whole patch is read and parsed at once. A very large PR (tens of
+    MB) has no cap or per-file lazy load yet.
+  - Beside a queue the pane is narrow: list 220 + rail 240 leave little for
+    the diff. Options: hide the rail under a width, or a key to toggle it.
+  - The current file follows clicks and keys, not the scroll position
+    (`DiffState` exposes no scroll offset).
+  - No inline thread display in the diff (only a tint); threads are read
+    only (no reply / resolve from the rail yet). No comment-on-line.
+  - The mockup's bottom bar (Approve / Request changes / Comment) is not
+    repeated; the action bar above serves it. No Request changes action.
+  - The Files tab label uses `pr_details.changed_files` until the patch is
+    read, then the patch's count.
