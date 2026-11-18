@@ -8,7 +8,7 @@ mod query;
 #[cfg(test)]
 mod tests;
 
-use fl_types::{IssueId, IssueRow, Page, PageReq, SearchHit};
+use fl_types::{IssueId, IssueRow, Page, PageReq, QueueKind, SearchHit};
 use fl_db::queries::queue::Cond;
 use fl_db::queries::{ISSUE_ROW_COLS, issue_row, page};
 use query::{Filter, fts_terms, parse};
@@ -76,6 +76,7 @@ fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
               WHERE ia.issue_id = i.id AND au.login = {} COLLATE NOCASE)",
             bind(a)
         ),
+        Filter::Unread => "i.updated_at > COALESCE(i.last_viewed_at, 0)".into(),
     }
 }
 
@@ -88,7 +89,10 @@ fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
 /// docs to issues costs a lookup per doc, so a broad term (more than
 /// [`BROAD_DOCS`] docs) is checked per queue row instead: the doc ids are
 /// cheap to collect, and a page stops after its rows.
-pub fn queue_filter(conn: &Connection, query: &str) -> rusqlite::Result<Option<Cond>> {
+///
+/// `kind` picks what `is:unread` reads: the Inbox uses the notification's
+/// unread flag (the row's unread mark), the other queues the issue's.
+pub fn queue_filter(conn: &Connection, query: &str, kind: QueueKind) -> rusqlite::Result<Option<Cond>> {
     let parsed = parse(query);
     let (terms, neg) = fts_terms(&parsed.terms);
     let mut args: Vec<Value> = Vec::new();
@@ -96,10 +100,13 @@ pub fn queue_filter(conn: &Connection, query: &str) -> rusqlite::Result<Option<C
         .filters
         .iter()
         .map(|(f, neg)| {
-            let c = condition(f, &mut |v| {
-                args.push(Value::Text(v.to_owned()));
-                "?".to_owned()
-            });
+            let c = match f {
+                Filter::Unread if kind == QueueKind::Inbox => "n.unread = 1".to_owned(),
+                f => condition(f, &mut |v| {
+                    args.push(Value::Text(v.to_owned()));
+                    "?".to_owned()
+                }),
+            };
             if *neg { format!("NOT ({c})") } else { c }
         })
         .collect();

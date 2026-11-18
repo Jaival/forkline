@@ -35,6 +35,13 @@ pub async fn env() -> Env {
     let db = Arc::new(Db::open(&dir.path().join("t.db")).unwrap());
     db.write(|c| c.execute_batch(SEED)).unwrap();
     let server = MockServer::start().await;
+    // Explore runs on every repo tick; follow nobody unless a test says so.
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/user/following"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .with_priority(u8::MAX)
+        .mount(&server)
+        .await;
     let engine = Engine::new(db.clone(), Config::test(&server.uri()));
     engine.set_test_token(Some("test-token"));
     let emitted = Arc::new(Mutex::new(Vec::new()));

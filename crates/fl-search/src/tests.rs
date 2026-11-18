@@ -150,10 +150,10 @@ mod queue_filter {
 
     use super::*;
 
-    const ISSUES: QueueQuery = QueueQuery { kind: QueueKind::Issues, repo_id: None };
+    const ISSUES: QueueQuery = QueueQuery { kind: QueueKind::Issues, repo_id: None, flat: false };
 
     fn keys(c: &Connection, q: QueueQuery, filter: &str) -> Vec<String> {
-        let cond = crate::queue_filter(c, filter).unwrap();
+        let cond = crate::queue_filter(c, filter, q.kind).unwrap();
         let rows = queue::page(c, &q, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX }).unwrap().items;
         let total: u32 = queue::counts(c, &q, cond.as_ref()).unwrap().iter().map(|(_, n)| n).sum();
         assert_eq!(total as usize, rows.len(), "counts for {filter:?}");
@@ -163,8 +163,8 @@ mod queue_filter {
     #[test]
     fn empty_query_filters_nothing() {
         let c = seeded();
-        assert!(crate::queue_filter(&c, "").unwrap().is_none());
-        assert!(crate::queue_filter(&c, "   ").unwrap().is_none());
+        assert!(crate::queue_filter(&c, "", QueueKind::Issues).unwrap().is_none());
+        assert!(crate::queue_filter(&c, "   ", QueueKind::Issues).unwrap().is_none());
         assert_eq!(keys(&c, ISSUES, ""), ["4", "1"]);
     }
 
@@ -188,8 +188,29 @@ mod queue_filter {
         assert_eq!(keys(&c, ISSUES, "repo:acme/api"), ["4"]);
         assert_eq!(keys(&c, ISSUES, "assignee:hubot crash"), ["1"]);
         assert!(keys(&c, ISSUES, "is:pr").is_empty());
-        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None };
+        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None, flat: false };
         assert!(keys(&c, pulls, "").is_empty(), "the only PR is merged");
+    }
+
+    #[test]
+    fn unread_reads_the_issue_or_the_notification() {
+        let c = seeded();
+        // Issue 1 was opened after its last update; issue 4 was not.
+        c.execute_batch(
+            "UPDATE issues SET last_viewed_at = 150 WHERE id = 1;
+             INSERT INTO notifications(id,repo_id,subject_type,issue_id,title,reason,unread,done,updated_at) VALUES
+               ('11',1,'Issue',1,'t','mention',1,0,100),
+               ('14',2,'Issue',4,'t','mention',0,0,400);",
+        )
+        .unwrap();
+        assert_eq!(keys(&c, ISSUES, "is:unread"), ["4"]);
+        assert_eq!(keys(&c, ISSUES, "-is:unread"), ["1"]);
+        // The Inbox follows the notification's flag, like its unread mark.
+        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None, flat: false };
+        assert_eq!(keys(&c, inbox, "is:unread"), ["11"]);
+        assert_eq!(keys(&c, inbox, "-is:unread"), ["14"]);
+        // Search: every issue but the one opened since its update.
+        assert_eq!(ids(&c, "is:unread"), [4, 3, 2]);
     }
 
     #[test]
@@ -206,10 +227,10 @@ mod queue_filter {
         for id in 100..=2200 {
             index_issue(&c, id).unwrap();
         }
-        let cond = crate::queue_filter(&c, "common").unwrap().unwrap();
+        let cond = crate::queue_filter(&c, "common", QueueKind::Issues).unwrap().unwrap();
         assert!(cond.sql.contains("EXISTS"), "{}", cond.sql);
         let both = |q: &str| {
-            let cond = crate::queue_filter(&c, q).unwrap();
+            let cond = crate::queue_filter(&c, q, QueueKind::Issues).unwrap();
             let total: u32 = queue::counts(&c, &ISSUES, cond.as_ref()).unwrap().iter().map(|(_, n)| n).sum();
             total
         };
@@ -217,7 +238,7 @@ mod queue_filter {
         assert_eq!(both("common rare"), 300);
         assert_eq!(both("common -rare"), 1801);
         assert_eq!(keys(&c, ISSUES, "comm crash").len(), 0);
-        let cond = crate::queue_filter(&c, "rare common").unwrap();
+        let cond = crate::queue_filter(&c, "rare common", QueueKind::Issues).unwrap();
         let page = queue::page(&c, &ISSUES, cond.as_ref(), PageReq { offset: 0, limit: 2 }).unwrap();
         let first: Vec<_> = page.items.iter().map(|r| r.key.as_str()).collect();
         assert_eq!(first, ["2198", "2191"]);
@@ -241,11 +262,11 @@ mod queue_filter {
                ('3',1,'Release',NULL,'crash release','subscribed',1,0,30);",
         )
         .unwrap();
-        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None };
+        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None, flat: false };
         assert_eq!(keys(&c, inbox, ""), ["2", "1", "3"]);
         assert_eq!(keys(&c, inbox, "crash"), ["1"]);
         assert_eq!(keys(&c, inbox, "repo:acme/api"), ["2"]);
-        let in_api = QueueQuery { kind: QueueKind::Inbox, repo_id: Some(2) };
+        let in_api = QueueQuery { kind: QueueKind::Inbox, repo_id: Some(2), flat: false };
         assert!(keys(&c, in_api, "crash").is_empty());
     }
 }

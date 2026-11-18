@@ -1,4 +1,4 @@
-//! The work queue: one grouped, virtualized list behind Inbox, Pull requests,
+//! The work queue: one grouped (or flat), virtualized list behind Inbox, Pull requests,
 //! Issues and Review requests.
 
 use std::rc::Rc;
@@ -15,7 +15,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme, h_flex, v_flex, v_virtual_list};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, Theme, h_flex, v_flex, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
@@ -26,11 +26,12 @@ use gpui_kit::{
 use rusqlite::Connection;
 
 use crate::bench;
+use crate::drafts::Drafts;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
-use crate::workspace::{OpenView, SetViewRef};
+use crate::workspace::{OpenView, SaveLayout, SetViewRef};
 
-actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView]);
+actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView, ToggleGrouped]);
 
 const HEADER_HEIGHT: f32 = 26.;
 const ROW_HEIGHT: f32 = 46.;
@@ -48,8 +49,12 @@ enum Item {
     Row(usize),
 }
 
-/// One header before the first row of each group. Rows arrive ordered by group.
-fn flatten(rows: &[QueueRow]) -> Vec<Item> {
+/// One header before the first row of each group. Rows arrive ordered by
+/// group. `flat`: rows only, no headers.
+fn flatten(rows: &[QueueRow], flat: bool) -> Vec<Item> {
+    if flat {
+        return (0..rows.len()).map(Item::Row).collect();
+    }
     let mut items = Vec::with_capacity(rows.len() + QueueGroup::ALL.len());
     let mut group = None;
     for (ix, row) in rows.iter().enumerate() {
@@ -82,7 +87,7 @@ struct Snapshot {
 
 /// The first `pages` pages and the group counts, under the `/` filter text.
 fn snapshot(conn: &Connection, query: &QueueQuery, filter: &str, pages: usize) -> rusqlite::Result<Snapshot> {
-    let cond = fl_search::queue_filter(conn, filter)?;
+    let cond = fl_search::queue_filter(conn, filter, query.kind)?;
     let mut rows = Vec::new();
     let mut offset = 0;
     let mut next = None;
@@ -128,6 +133,8 @@ pub struct Queue {
     views: Vec<SavedView>,
     _store: Subscription,
     _input: Subscription,
+    /// Rows mark PRs with unsent inline drafts.
+    _drafts: Subscription,
 }
 
 impl EventEmitter<QueueEvent> for Queue {}
@@ -182,6 +189,7 @@ impl Queue {
             views: saved,
             _store: subscription,
             _input: input_subscription,
+            _drafts: cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify()),
         };
         if let Some(snap) = snap {
             this.rows = snap.rows;
@@ -194,7 +202,7 @@ impl Queue {
     }
 
     fn rebuild(&mut self) {
-        self.items = flatten(&self.rows);
+        self.items = flatten(&self.rows, self.query.flat);
         let sizes = self.items.iter().map(|item| {
             let height = if matches!(item, Item::Header(_)) { HEADER_HEIGHT } else { ROW_HEIGHT };
             size(px(0.), px(height))
@@ -277,10 +285,29 @@ impl Queue {
         cx.notify();
     }
 
+    pub(super) fn flat(&self) -> bool {
+        self.query.flat
+    }
+
+    /// `g`, the Grouped button, the palette: show the groups or one list,
+    /// newest first. Reads again like a repo change; the tab saves it.
+    pub(super) fn toggle_grouped(&mut self, _: &ToggleGrouped, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.flat = !self.query.flat;
+        let repo_id = self.query.repo_id;
+        self.set_repo(repo_id, cx);
+        window.dispatch_action(Box::new(SaveLayout), cx);
+    }
+
     /// Show `text` in the query bar and filter by it.
     pub(super) fn set_filter_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
         self.change_filter(text.to_owned(), cx);
+    }
+
+    /// The Unread button: add or remove `is:unread` in the filter text.
+    fn toggle_unread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = toggle_term(&self.filter, UNREAD);
+        self.set_filter_text(&text, window, cx);
     }
 
     /// Filter by `filter`: read its first page in the background, then the
@@ -298,7 +325,7 @@ impl Queue {
         let text = self.filter.clone();
         let store = Store::global(cx).read(cx);
         let task = store.read(cx, move |c| {
-            let cond = fl_search::queue_filter(c, &text)?;
+            let cond = fl_search::queue_filter(c, &text, query.kind)?;
             queue::page(c, &query, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX })
         });
         cx.spawn(async move |this, cx| {
@@ -326,7 +353,7 @@ impl Queue {
         let query = self.query;
         let text = self.filter.clone();
         let task = Store::global(cx).read(cx).read(cx, move |c| {
-            let cond = fl_search::queue_filter(c, &text)?;
+            let cond = fl_search::queue_filter(c, &text, query.kind)?;
             queue::counts(c, &query, cond.as_ref())
         });
         cx.spawn(async move |this, cx| {
@@ -389,7 +416,7 @@ impl Queue {
         let query = self.query;
         let filter = self.filter.clone();
         let task = Store::global(cx).read(cx).read(cx, move |c| {
-            let cond = fl_search::queue_filter(c, &filter)?;
+            let cond = fl_search::queue_filter(c, &filter, query.kind)?;
             queue::page(c, &query, cond.as_ref(), PageReq { offset, limit: PAGE_MAX })
         });
         cx.spawn(async move |this, cx| {
@@ -488,6 +515,7 @@ impl Queue {
         if let Some(author) = &row.author {
             sub.push_str(&format!(" \u{b7} {author}"));
         }
+        let drafts = row.issue_id.filter(|_| row.is_pr).is_some_and(|id| Drafts::global(cx).read(cx).count(id) > 0);
         let check = row.checks.map(|state| match state {
             CheckState::Success => (IconName::Check, theme.success),
             CheckState::Failure => (IconName::X, theme.danger),
@@ -551,6 +579,20 @@ impl Queue {
                     .items_center()
                     .text_xs()
                     .text_color(theme.muted_foreground)
+                    .when(drafts, |d| {
+                        d.child(
+                            div()
+                                .id(("queue-drafts", row_ix))
+                                .test_support()
+                                .px(px(5.))
+                                .rounded(px(3.))
+                                .border_1()
+                                .border_dashed()
+                                .border_color(theme.warning)
+                                .text_color(theme.warning)
+                                .child("drafts"),
+                        )
+                    })
                     .when(row.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.primary)))
                     .child(age(fl_sync::now(), row.updated_at)),
             )
@@ -590,6 +632,7 @@ impl Queue {
         let saved = self.kind_views().any(|v| v.query == text);
         let views: Vec<String> = self.kind_views().map(|v| v.query.clone()).collect();
         let queue = cx.weak_entity();
+        let unread = has_term(&self.filter, UNREAD);
         let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
         let result = match (self.counts_ready, self.filter_ms) {
             (true, Some(ms)) => format!("{total} results \u{b7} {ms:.0} ms"),
@@ -610,6 +653,22 @@ impl Queue {
                     .items_center()
                     .child(div().text_color(theme.muted_foreground).child("/"))
                     .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
+                    .child(
+                        Button::new("queue-grouped")
+                            .ghost()
+                            .small()
+                            .label("Grouped")
+                            .selected(!self.query.flat)
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle_grouped(&ToggleGrouped, window, cx))),
+                    )
+                    .child(
+                        Button::new("queue-unread")
+                            .ghost()
+                            .small()
+                            .label("Unread")
+                            .selected(unread)
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle_unread(window, cx))),
+                    )
                     .child(Button::new("queue-views").ghost().small().label("Views").dropdown_caret(true).dropdown_menu(
                         move |mut menu, _, _| {
                             for query in &views {
@@ -670,6 +729,11 @@ impl Queue {
     #[cfg(test)]
     pub(super) fn view_queries(&self) -> Vec<&str> {
         self.views.iter().map(|v| v.query.as_str()).collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn headers(&self) -> usize {
+        self.items.iter().filter(|item| matches!(item, Item::Header(_))).count()
     }
 
     #[cfg(test)]
@@ -771,10 +835,31 @@ impl Render for Queue {
             .on_action(cx.listener(Self::open_selected))
             .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::save_view))
+            .on_action(cx.listener(Self::toggle_grouped))
             .size_full()
             .child(header)
             .child(self.query_bar(cx))
             .child(body)
+    }
+}
+
+/// The filter term the Unread button sets.
+const UNREAD: &str = "is:unread";
+
+/// `term` is one of the words of `filter` (any case).
+fn has_term(filter: &str, term: &str) -> bool {
+    filter.split_whitespace().any(|w| w.eq_ignore_ascii_case(term))
+}
+
+/// `filter` with `term` removed when present, else appended.
+fn toggle_term(filter: &str, term: &str) -> String {
+    if has_term(filter, term) {
+        let words: Vec<&str> = filter.split_whitespace().filter(|w| !w.eq_ignore_ascii_case(term)).collect();
+        words.join(" ")
+    } else if filter.trim().is_empty() {
+        term.to_owned()
+    } else {
+        format!("{} {term}", filter.trim_end())
     }
 }
 

@@ -1,5 +1,7 @@
 //! The main window: rail, dock (tabs + split panes), footer.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use fl_db::queries::{inbox, layout, repo, views};
@@ -12,18 +14,23 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
-    FocusHandle, MouseButton, ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions,
+    FocusHandle, MouseButton, ParentElement as _, PromptLevel, Render, Styled as _, Subscription, Task, Window, actions,
     deferred, div, px,
 };
 
-use crate::footer::Footer;
+use crate::drafts::{self, Drafts};
+use crate::footer::{Footer, FooterEvent};
 use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
 use crate::rail;
+use crate::signin::{SignIn, SignInEvent};
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, NextTab, PrevTab]);
+
+// A tab's view changed state the saved layout holds (e.g. a queue went flat).
+actions!(forkline, [SaveLayout]);
 
 /// Ask the workspace to show a view, so child views need no workspace handle.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
@@ -42,8 +49,14 @@ pub struct GoTo(pub ViewRef);
 #[action(namespace = forkline, no_json)]
 pub struct SetViewRef(pub ViewRef);
 
-/// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
-/// to the Tauri app until it is removed (ADR 0001).
+/// Remove the tab of this `ViewPanel` entity, past its `closable` (the PR
+/// tab sends it after its drafts warning).
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct RemoveTab(pub gpui_kit::EntityId);
+
+/// Settings key of the saved dock layout. Not `ui_layout`: that row was the
+/// removed Tauri app's layout.
 const LAYOUT_KEY: &str = "gpui_layout";
 /// Bump when the default layout changes in a way old saved layouts break.
 const LAYOUT_VERSION: usize = 2;
@@ -55,6 +68,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-w", ClosePanel, None),
         KeyBinding::new("ctrl-\\", SplitRight, None),
         KeyBinding::new("ctrl-k", OpenPalette, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PrevTab, None),
     ]);
 }
 
@@ -69,6 +84,10 @@ pub struct Workspace {
     palette: Option<Entity<Palette>>,
     palette_return: Option<FocusHandle>,
     _palette_subscription: Option<Subscription>,
+    /// The sign-in dialog, while open, and the focus it came from.
+    sign_in: Option<Entity<SignIn>>,
+    sign_in_return: Option<FocusHandle>,
+    _sign_in_subscription: Option<Subscription>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -94,13 +113,19 @@ impl Workspace {
             dock.update(cx, |dock, cx| dock.set_center(center, window, cx));
         }
 
+        let footer = cx.new(Footer::new);
         let subscriptions = vec![
+            cx.subscribe_in(&footer, window, |this, _, ev: &FooterEvent, window, cx| match ev {
+                FooterEvent::SignIn => this.open_sign_in(window, cx),
+            }),
             cx.subscribe_in(&dock, window, |this, _, ev: &DockEvent, window, cx| {
                 if matches!(ev, DockEvent::LayoutChanged) {
                     this.schedule_save(window, cx);
                     cx.notify();
                 }
             }),
+            // A PR tab with drafts draws its own close button: redraw the tab bars.
+            cx.observe(&Drafts::global(cx), |this, _, cx| this.dock.update(cx, |_, cx| cx.notify())),
             cx.subscribe(&store, |this, _, ev: &DataChanged, cx| {
                 if ev.scopes.iter().any(|s| s == "repos" || s == "issues") {
                     this.load_pinned(cx);
@@ -113,18 +138,22 @@ impl Workspace {
 
         let mut this = Self {
             dock,
-            footer: cx.new(Footer::new),
+            footer,
             pinned: Vec::new(),
             inbox_unread: 0,
             save_layout,
             palette: None,
             palette_return: None,
             _palette_subscription: None,
+            sign_in: None,
+            sign_in_return: None,
+            _sign_in_subscription: None,
             _save_task: None,
             _subscriptions: subscriptions,
         };
         this.load_pinned(cx);
         this.load_inbox_unread(cx);
+        warn_on_quit(window, cx);
         crate::bench::mark("workspace_built", cx);
         // Keys need a focused element; start on the active tab.
         cx.defer_in(window, |this, window, cx| {
@@ -174,6 +203,34 @@ impl Workspace {
         self.go_to(action.0.clone(), window, cx);
     }
 
+    fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_tab(1, window, cx);
+    }
+
+    fn on_prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_tab(-1, window, cx);
+    }
+
+    /// Select and focus the tab `step` away in the focused pane (wraps).
+    fn cycle_tab(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((node_id, _)) = self.focused_group(window, cx) else { return };
+        let mut next = None;
+        if let Some(layout) = self.dock.read(cx).layout(DockPlacement::Center) {
+            layout.root().walk(&mut |node| {
+                if let PaneRef::Tabs { panels, active_ix } = node.kind()
+                    && node.id() == node_id
+                    && !panels.is_empty()
+                {
+                    let ix = (active_ix as isize + step).rem_euclid(panels.len() as isize) as usize;
+                    next = Some(panels[ix]);
+                }
+            });
+        }
+        let Some(id) = next else { return };
+        self.dock.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+        self.focus_panel(id, window, cx);
+    }
+
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let panel = panel_handle(ViewPanel::new(ViewRef::Inbox, window, cx));
         let id = panel.panel_id(cx);
@@ -211,6 +268,15 @@ impl Workspace {
         cx.notify();
     }
 
+    fn on_save_layout(&mut self, _: &SaveLayout, window: &mut Window, cx: &mut Context<Self>) {
+        self.schedule_save(window, cx);
+    }
+
+    fn on_remove_tab(&mut self, action: &RemoveTab, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.panel(PanelId::from(action.0), cx) else { return };
+        self.dock.update(cx, |dock, cx| dock.remove_panel(panel, window, cx));
+    }
+
     fn on_open_palette(&mut self, _: &OpenPalette, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.is_some() {
             self.close_palette(window, cx);
@@ -220,6 +286,42 @@ impl Workspace {
         let palette = cx.new(|cx| Palette::new(&self.pinned, window, cx));
         self._palette_subscription = Some(cx.subscribe_in(&palette, window, Self::on_palette_event));
         self.palette = Some(palette);
+        cx.notify();
+    }
+
+    fn on_open_sign_in(&mut self, _: &OpenSignIn, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_sign_in(window, cx);
+    }
+
+    /// Show the sign-in dialog (once the footer has read the sign-in state).
+    fn open_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(auth) = self.footer.read(cx).auth().cloned() else { return };
+        if self.sign_in.is_some() {
+            return;
+        }
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+        }
+        self.sign_in_return = window.focused(cx);
+        let dialog = cx.new(|cx| SignIn::new(auth, window, cx));
+        self._sign_in_subscription = Some(cx.subscribe_in(&dialog, window, |this, _, _: &SignInEvent, window, cx| {
+            this.close_sign_in(window, cx);
+        }));
+        self.sign_in = Some(dialog);
+        cx.notify();
+    }
+
+    fn close_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sign_in = None;
+        self._sign_in_subscription = None;
+        match self.sign_in_return.take() {
+            Some(focus) => window.focus(&focus, cx),
+            None => {
+                if let Some((_, id)) = self.focused_group(window, cx) {
+                    self.focus_panel(id, window, cx);
+                }
+            }
+        }
         cx.notify();
     }
 
@@ -353,6 +455,17 @@ impl Workspace {
         Some(self.panel(id, cx)?.read(cx).content().clone())
     }
 
+    #[cfg(test)]
+    pub(crate) fn footer(&self) -> &Entity<Footer> {
+        &self.footer
+    }
+
+    /// The open sign-in dialog, if any.
+    #[cfg(test)]
+    pub(crate) fn sign_in(&self) -> Option<&Entity<SignIn>> {
+        self.sign_in.as_ref()
+    }
+
     /// The open command palette, if any.
     #[cfg(test)]
     pub(crate) fn palette(&self) -> Option<&Entity<Palette>> {
@@ -442,6 +555,36 @@ impl Workspace {
     }
 }
 
+/// Closing the window with unsent inline drafts asks first: they live in
+/// memory only. "Quit" closes the window (the app quits with its last one).
+fn warn_on_quit(window: &mut Window, cx: &App) {
+    let prompting = Rc::new(Cell::new(false));
+    let confirmed = Rc::new(Cell::new(false));
+    window.on_window_should_close(cx, move |window, cx| {
+        let (prs, n) = Drafts::global(cx).read(cx).totals();
+        if n == 0 || confirmed.get() {
+            return true;
+        }
+        if !prompting.get() {
+            prompting.set(true);
+            let detail = format!("{}. Quitting drops them.", drafts::warning(prs, n));
+            let answer =
+                window.prompt(PromptLevel::Warning, "Quit Forkline?", Some(&detail), &["Quit", "Cancel"], cx);
+            let (prompting, confirmed) = (prompting.clone(), confirmed.clone());
+            window
+                .spawn(cx, async move |cx| {
+                    prompting.set(false);
+                    if answer.await == Ok(0) {
+                        confirmed.set(true);
+                        let _ = cx.update(|window, _| window.remove_window());
+                    }
+                })
+                .detach();
+        }
+        false
+    });
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.focused_group(window, cx).and_then(|(_, id)| self.view_ref_of(id, cx));
@@ -455,7 +598,12 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_view))
             .on_action(cx.listener(Self::on_go_to))
             .on_action(cx.listener(Self::on_set_view_ref))
+            .on_action(cx.listener(Self::on_save_layout))
+            .on_action(cx.listener(Self::on_remove_tab))
             .on_action(cx.listener(Self::on_open_palette))
+            .on_action(cx.listener(Self::on_open_sign_in))
+            .on_action(cx.listener(Self::on_next_tab))
+            .on_action(cx.listener(Self::on_prev_tab))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -491,6 +639,24 @@ impl Render for Workspace {
                 )
                 .with_priority(1)
             }))
+            .children(self.sign_in.clone().map(|dialog| {
+                // Modal: the backdrop takes clicks but does not close it.
+                deferred(
+                    div()
+                        .id("signin-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .bg(gpui_kit::black().opacity(0.4))
+                        .flex()
+                        .justify_center()
+                        .pt(px(120.))
+                        .child(div().child(dialog)),
+                )
+                .with_priority(2)
+            }))
     }
 }
 
@@ -523,6 +689,43 @@ mod tests {
 
         cx.update_window(handle, |_, window, cx| window.press("ctrl-\\", cx)).unwrap();
         cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [vec!["Inbox", "*Inbox"], vec!["*Inbox"]]));
+    }
+
+    #[gpui_kit::test]
+    fn ctrl_tab_cycles_the_focused_pane(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.open(ViewRef::Home, window, cx);
+                ws.open(ViewRef::Repos, window, cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "Home", "*Repositories"]]));
+        let press = |key: &str, cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.press(key, cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        // Wraps forward, then back.
+        press("ctrl-tab", cx);
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["*Inbox", "Home", "Repositories"]]));
+        press("ctrl-shift-tab", cx);
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "Home", "*Repositories"]]));
+        press("ctrl-shift-tab", cx);
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Home", "Repositories"]]));
+        // The new tab has the focus, so the next key acts on its pane.
+        let focused = cx
+            .update_window(handle, |_, window, cx| ws.read(cx).focused_group(window, cx).map(|(_, id)| id))
+            .unwrap();
+        let home = cx.read(|cx| ws.read(cx).find(&ViewRef::Home, cx));
+        assert_eq!(focused, home);
     }
 
     #[gpui_kit::test]
@@ -560,6 +763,41 @@ mod tests {
                 gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
                     .unwrap();
             assert_eq!(groups(ws2.read(cx), cx), [["Inbox", "*Pull request 7"]]);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_flat_queue_tab_restores_flat(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("g", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let json = cx
+            .update_window(handle, |_, window, cx| {
+                let view = ws.read(cx).active_view(window, cx).unwrap();
+                assert_eq!(crate::views::flat_of(&view, cx), Some(true));
+                serde_json::to_string(&ws.read(cx).dock.read(cx).dump(cx)).unwrap()
+            })
+            .unwrap();
+        assert!(json.contains(r#""kind":"inbox","flat":true"#), "{json}");
+        cx.update(|cx| {
+            let db = Store::global(cx).read(cx).db().clone();
+            db.write(|c| layout::set_setting(c, LAYOUT_KEY, &json)).unwrap();
+            let options = WindowOptions::default();
+            let (handle2, ws2) =
+                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
+                    .unwrap();
+            handle2
+                .update(cx, |_, window, cx| {
+                    let view = ws2.read(cx).active_view(window, cx).unwrap();
+                    assert_eq!(crate::views::flat_of(&view, cx), Some(true));
+                })
+                .unwrap();
         });
     }
 

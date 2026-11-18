@@ -1,35 +1,41 @@
 # Forkline
 
-Forkline is a local-first GitHub client for Windows 11. Its Rust/Tauri backend
-will sync GitHub data into SQLite so the interface can read from a local cache.
+Forkline is a local-first GitHub client for Windows 11. It syncs GitHub data
+into SQLite and reads from that local cache. The UI is GPUI (Zed's UI
+framework) with gpui-component, in the same Rust process as the backend.
 
 ## Development
 
-Requirements: Rust, Bun, Git, and the Windows WebView2 runtime.
+Requirements: Rust and Git for Windows on PATH (used for diffs).
 
 ```powershell
-bun install
-bun run dev
+cargo run -p fl-app --release
 ```
 
 The default database lives under `%LOCALAPPDATA%\Forkline`. Use a separate
-directory for generated data, for example `bun run fake -- --data-dir fake-data`;
-generated databases and `fake-data/` are ignored by Git.
-
-Useful commands:
+directory for generated data:
 
 ```powershell
-bun run typecheck
-bun run lint
-bun run test
-cargo test --workspace
-bun run bindings
+cargo run -p fl-fake --release -- --data-dir fake-data
+cargo run -p fl-app --release -- --offline --data-dir fake-data
 ```
 
-For a local fixture launch, seed the isolated database with `bun run fake`, then
-start the app with `--data-dir fake-data`. The benchmark report produced by
-`--bench <report.json>` can be checked with
-`cargo run -p fl-bench --release -- <report.json> bench/budgets.json`.
+Generated databases and `fake-data/` are ignored by Git. `--offline` starts
+the app without the sync engine.
 
-Requires Git for Windows on PATH (used for diffs). Sign in from the footer, or
-set `FORKLINE_GITHUB_TOKEN` in dev. See `docs/HANDOFF.md` for the current state.
+Checks:
+
+```powershell
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Bench (release, fake data):
+
+```powershell
+cargo build --release -p fl-app -p fl-bench
+target/release/fl-bench gpui
+```
+
+Sign in from the footer, or set `FORKLINE_GITHUB_TOKEN` in dev. See
+`docs/HANDOFF.md` for the current state.

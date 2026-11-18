@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum FileStatus {
     Added,
@@ -18,7 +17,6 @@ pub enum FileStatus {
 
 /// One changed file, without its hunks (file tree / list).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DiffFileSummary {
     pub path: String,
     /// Previous path for renames.
@@ -31,7 +29,6 @@ pub struct DiffFileSummary {
 
 /// List of changed files for a PR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DiffSummary {
     pub merge_base_oid: String,
     pub head_oid: String,
@@ -39,7 +36,6 @@ pub struct DiffSummary {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum LineKind {
     Context,
@@ -48,7 +44,6 @@ pub enum LineKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DiffLine {
     pub kind: LineKind,
     /// Line number in the old file (`None` for added lines).
@@ -60,7 +55,6 @@ pub struct DiffLine {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DiffHunk {
     pub old_start: u32,
     pub old_lines: u32,
@@ -73,7 +67,6 @@ pub struct DiffHunk {
 
 /// Full diff of one file. Binary files have no hunks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DiffFile {
     pub summary: DiffFileSummary,
     pub hunks: Vec<DiffHunk>,

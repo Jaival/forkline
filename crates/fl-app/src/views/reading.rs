@@ -9,12 +9,13 @@ mod action_bar;
 mod conversation;
 mod files;
 mod header;
+mod pickers;
 mod tabs;
 #[cfg(test)]
 mod tests;
 
-use fl_db::queries::{issue, pr};
-use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, PrDetail, QueueRow};
+use fl_db::queries::{issue, pr, repo};
+use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, MergeMethod, PrDetail, QueueRow, User};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::component::input::TextareaState;
@@ -24,11 +25,13 @@ use gpui_kit::{
 };
 use rusqlite::Connection;
 
-pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze};
+pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze, ToggleState};
+pub use self::pickers::{ClosePicker, EditAssignees, EditLabels};
 use self::conversation::Conversation;
 use self::files::FilesTab;
 use super::Built;
 use crate::bench;
+use crate::drafts::Drafts;
 use crate::store::Store;
 
 /// Everything the pane shows for one item.
@@ -54,14 +57,26 @@ impl Detail {
     }
 }
 
-fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<Option<Detail>> {
+/// The item, its assignees, and for a PR the merge method last sent in its
+/// repository.
+type Read = (Detail, Vec<User>, Option<MergeMethod>);
+
+fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<Option<Read>> {
     // A pull request without `pr_details` (not synced in depth yet) shows as
     // its conversation alone.
-    if is_pr && let Some(pr) = pr::get(conn, id)? {
-        return Ok(Some(Detail::Pr(pr)));
-    }
-    let Some(detail) = issue::get(conn, id)? else { return Ok(None) };
-    Ok(Some(Detail::Issue { detail, thread: issue::thread(conn, id)? }))
+    let pr = if is_pr { pr::get(conn, id)? } else { None };
+    let detail = match pr {
+        Some(pr) => Detail::Pr(pr),
+        None => {
+            let Some(detail) = issue::get(conn, id)? else { return Ok(None) };
+            Detail::Issue { detail, thread: issue::thread(conn, id)? }
+        }
+    };
+    let merge_method = match &detail {
+        Detail::Pr(pr) => repo::merge_method(conn, pr.row.repo_id)?,
+        Detail::Issue { .. } => None,
+    };
+    Ok(Some((detail, issue::assignees(conn, id)?, merge_method)))
 }
 
 /// Tabs of a pull request. An issue shows the conversation only.
@@ -86,6 +101,10 @@ pub struct ReadingPane {
     /// `(issue id, is_pr)` of the item on show.
     target: Option<(IssueId, bool)>,
     pub(super) detail: Option<Detail>,
+    /// Assignees of the item on show.
+    pub(super) assignees: Vec<User>,
+    /// The label or assignee picker, while open.
+    picker: Option<pickers::Picker>,
     /// The target is not in the local database.
     missing: bool,
     pub(super) tab: PaneTab,
@@ -104,8 +123,15 @@ pub struct ReadingPane {
     return_focus: Option<FocusHandle>,
     /// The last action error, shown in the action bar.
     pub(super) notice: Option<SharedString>,
+    /// The merge method picked, waiting for Confirm.
+    pub(super) merge_confirm: Option<MergeMethod>,
+    /// What the Merge button offers: the method last sent in the PR's repo,
+    /// else a merge commit.
+    pub(super) merge_method: MergeMethod,
     pub focus: FocusHandle,
     _store: Subscription,
+    /// The Files tab label and the composer count the PR's drafts.
+    _drafts: Subscription,
 }
 
 impl ReadingPane {
@@ -120,6 +146,8 @@ impl ReadingPane {
             item: None,
             target: None,
             detail: None,
+            assignees: Vec::new(),
+            picker: None,
             missing: false,
             tab: PaneTab::Conversation,
             conversation: Conversation::new(),
@@ -130,8 +158,11 @@ impl ReadingPane {
             _reply_subscription: None,
             return_focus: None,
             notice: None,
+            merge_confirm: None,
+            merge_method: MergeMethod::Merge,
             focus: cx.focus_handle(),
             _store: subscription,
+            _drafts: cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify()),
         }
     }
 
@@ -165,7 +196,10 @@ impl ReadingPane {
         self._reply_subscription = None;
         self.return_focus = None;
         self.notice = None;
+        self.merge_confirm = None;
+        self.picker = None;
         self.detail = None;
+        self.assignees.clear();
         self.missing = false;
         self.tab = PaneTab::Conversation;
         self.files = None;
@@ -187,6 +221,12 @@ impl ReadingPane {
                     return;
                 }
                 let Ok(detail) = detail else { return };
+                let (detail, assignees, merge_method) = match detail {
+                    Some((detail, assignees, method)) => (Some(detail), assignees, method),
+                    None => (None, Vec::new(), None),
+                };
+                this.assignees = assignees;
+                this.merge_method = merge_method.unwrap_or(MergeMethod::Merge);
                 this.missing = detail.is_none();
                 if let Some(detail) = &detail {
                     this.conversation.set(detail, cx);
@@ -273,8 +313,12 @@ impl ReadingPane {
             "Conversation".to_owned(),
             // Git's count once read; GitHub's until then.
             format!(
-                "Files {}",
-                self.files.as_ref().and_then(|f| f.read(cx).file_count()).unwrap_or(pr.changed_files as usize)
+                "Files {}{}",
+                self.files.as_ref().and_then(|f| f.read(cx).file_count()).unwrap_or(pr.changed_files as usize),
+                match self.draft_count(cx) {
+                    0 => String::new(),
+                    n => format!(" \u{b7} {n} pending"),
+                }
             ),
             format!("Commits {}", pr.commits.len()),
             format!("Checks {}", pr.checks.len()),
@@ -286,6 +330,14 @@ impl ReadingPane {
             .selected_index(selected)
             .children(labels.map(|label| Tab::new().label(label)))
             .on_click(cx.listener(|this, ix: &usize, _, cx| this.set_tab(PaneTab::ALL[*ix], cx)))
+    }
+
+    fn header_extra(&self) -> header::Extra<'_> {
+        header::Extra {
+            assignees: &self.assignees,
+            labels_pending: self.field_pending(pickers::PickerKind::Labels),
+            assignees_pending: self.field_pending(pickers::PickerKind::Assignees),
+        }
     }
 
     fn message(&self, text: &'static str, cx: &App) -> AnyElement {
@@ -307,6 +359,9 @@ impl Render for ReadingPane {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::approve))
             .on_action(cx.listener(Self::reply))
+            .on_action(cx.listener(Self::toggle_state))
+            .on_action(cx.listener(Self::edit_labels))
+            .on_action(cx.listener(Self::edit_assignees))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
             .on_action(cx.listener(Self::next_file))
@@ -318,8 +373,9 @@ impl Render for ReadingPane {
             return root.child(self.message("Select an item", cx));
         }
         let root = root
-            .child(header::render(self.item.as_ref(), self.detail.as_ref(), cx))
-            .children(self.action_bar(cx));
+            .child(header::render(self.item.as_ref(), self.detail.as_ref(), self.header_extra(), cx))
+            .children(self.action_bar(cx))
+            .children(self.picker_box(cx));
         let Some(detail) = &self.detail else {
             let text = match (self.target, self.missing) {
                 (None, _) => "This notification has no cached issue or pull request.",

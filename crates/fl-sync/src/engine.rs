@@ -1,6 +1,6 @@
 //! Background sync and action worker. The app creates one `Engine`, sets
 //! the `data-changed` emitter, and spawns `run_sync` and `run_actions` on
-//! the Tauri (tokio) runtime. Commands call the other methods.
+//! a tokio runtime. The UI calls the other methods.
 
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -306,7 +306,8 @@ impl Engine {
         if !has_viewer {
             sync::viewer(&self.gh, &token, &self.db).await?;
         }
-        if repos + REPOS_EVERY <= now {
+        let repos_due = repos + REPOS_EVERY <= now;
+        if repos_due {
             sync::repos(&self.gh, &token, &self.db, now, &emit).await?;
         }
         if notes <= now {
@@ -327,6 +328,15 @@ impl Engine {
                     })
                     .await?;
                 }
+            }
+        }
+        // Explore goes last on the repo tick: it is the first thing to skip
+        // when the budget is low.
+        if repos_due && !self.gh.rate().is_some_and(|(remaining, _)| remaining < LOW_REMAINING) {
+            match sync::explore(&self.gh, &token, &self.db, now, &emit).await {
+                Ok(()) => {}
+                Err(e @ (Error::RateLimited { .. } | Error::Unauthorized | Error::Network(_) | Error::Db(_))) => return Err(e),
+                Err(e) => repo_error = repo_error.or(Some(format!("Explore: {e}"))),
             }
         }
         match repo_error {
@@ -375,6 +385,23 @@ impl Engine {
             rt.device = matches!(poll, AuthPoll::Pending { .. }).then_some(device);
             return Ok(poll);
         };
+        let login = self.finish_sign_in(token).await?;
+        Ok(AuthPoll::Done { login })
+    }
+
+    /// Sign in with a personal access token the user pasted. GitHub must
+    /// accept it (`GET /user`); it is then stored like a device-flow token.
+    /// Returns the viewer login; a rejected token is `Error::Unauthorized`.
+    pub async fn sign_in_with_token(&self, token: &str) -> Result<String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(Error::Invalid("Paste a token first.".into()));
+        }
+        self.finish_sign_in(token.to_owned()).await
+    }
+
+    /// Read the viewer with `token`, store the token, and wake sync.
+    async fn finish_sign_in(&self, token: String) -> Result<String> {
         let login = sync::viewer(&self.gh, &token, &self.db).await?;
         if self.cfg.use_keyring {
             auth::store_token(&token)?;
@@ -391,7 +418,7 @@ impl Engine {
         self.wake();
         self.wake_actions.notify_one();
         self.emit(&["sync"]);
-        Ok(AuthPoll::Done { login })
+        Ok(login)
     }
 
     /// Delete the stored token. Cached data stays.

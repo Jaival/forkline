@@ -81,12 +81,11 @@ impl Github {
         } else {
             format!("{}{path_or_url}", self.api)
         };
-        let mut req = self
-            .http
-            .request(method, url)
-            .bearer_auth(token)
-            .header(header::ACCEPT, "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
+        let mut req = self.http.request(method, url).bearer_auth(token).header("X-GitHub-Api-Version", "2022-11-28");
+        // An Accept in `extra` (a media type such as star+json) replaces the default.
+        if !extra.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept")) {
+            req = req.header(header::ACCEPT, "application/vnd.github+json");
+        }
         for (k, v) in extra {
             req = req.header(*k, *v);
         }

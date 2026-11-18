@@ -55,3 +55,28 @@ fn unfollowing_drops_the_stars() {
     assert_eq!(page.items[1].starred_by_count, 4);
     assert_eq!(page.items[1].last_starred_at, 40);
 }
+
+#[test]
+fn pinning_an_explore_only_repo_syncs_it() {
+    let (_d, db) = seeded();
+    db.write(|c| c.execute("UPDATE repos SET sync_enabled = 0 WHERE explore_only = 1", [])).unwrap();
+    db.write(|c| fl_db::queries::repo::set_pinned(c, 1, true)).unwrap();
+    let flags = |id: i64| {
+        db.read(|c| {
+            c.query_row("SELECT pinned, explore_only, sync_enabled FROM repos WHERE id = ?1", [id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            })
+        })
+        .unwrap()
+    };
+    assert_eq!(flags(1), (1, 0, 1));
+    let page = db.read(|c| explore::feed(c, PageReq { offset: 0, limit: 10 })).unwrap();
+    assert!(page.items.iter().find(|r| r.repo_id == 1).unwrap().pinned);
+    // Unpinning leaves the flags to sync.
+    db.write(|c| fl_db::queries::repo::set_pinned(c, 1, false)).unwrap();
+    assert_eq!(flags(1), (0, 0, 1));
+    // A repo the user turned sync off for keeps it off when pinned.
+    db.write(|c| c.execute("UPDATE repos SET sync_enabled = 0 WHERE id = 2", [])).unwrap();
+    db.write(|c| fl_db::queries::repo::set_pinned(c, 2, true)).unwrap();
+    assert_eq!(flags(2), (1, 0, 0));
+}

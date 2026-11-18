@@ -5,25 +5,20 @@
 - `crates/fl-types`: shared DTOs and command errors.
 - `crates/fl-db`: SQLite connection setup, migration 1, query modules.
 - `crates/fl-sync`: GitHub auth (token order: `FORKLINE_GITHUB_TOKEN`, saved
-  token in Windows Credential Manager, `gh auth token`; device flow until the
-  Tauri app goes), REST/GraphQL client, sync engine, optimistic action queue.
+  token in Windows Credential Manager, `gh auth token`; device flow from the
+  sign-in dialog), REST/GraphQL client, sync engine, optimistic action queue.
 - `crates/fl-git`: `GitStore` over the `git` CLI (bare blobless clones, diffs).
 - `crates/fl-search`: FTS5 indexing (`index_issue`) and query parser (`search`).
 - `crates/fl-fake`: isolated deterministic fixture data generator.
 - `crates/fl-bench`: budget checker (`fl-bench gpui` for the GPUI app).
-- `crates/fl-app`: the GPUI app (binary `fl-app`; renamed `forkline` at parity).
-- `app`: Tauri startup, typed command registration, and event boundary.
-- `ui`: React shell, generated Tauri bindings, and client-side layout state.
+- `crates/fl-app`: the GPUI app (binary `forkline`).
 
 ## Shared rules
 
-- The UI moves to GPUI + gpui-component on branch `gpui`; see
-  `docs/adr/0001-gpui.md` for the stack, pins and changed decisions. The
-  Tauri + React app (`app/`, `ui/`) stays until GPUI parity, then is deleted.
-  Do not change the stack without asking.
-- Keep each feature's backend implementation in its matching command/query
-  module. Register commands centrally in `app/src/lib.rs`.
-- Regenerate `ui/src/bindings.ts` with `bun run bindings`; do not hand edit it.
+- The UI is GPUI + gpui-component; see `docs/adr/0001-gpui.md` for the
+  stack, pins and changed decisions. The Tauri + React app (`app/`, `ui/`)
+  was deleted on 2026-11-18. Do not change the stack without asking.
+- Keep each feature's backend implementation in its matching query module.
 - Keep fake fixtures and all SQLite database files out of Git. Use `--data-dir`
   to isolate fixture databases from the real user database.
 - UI commands must page collections and return no more than 100 rows per call.
@@ -139,13 +134,12 @@ Done:
   (system / light / dark, setting `theme`, `ToggleTheme` action), sidebar
   (nav + pinned repos with open PR / issue counts), dock with tabs and split
   panes, footer with sync status. Layout saved under settings key
-  `gpui_layout` (not `ui_layout`, which the Tauri app still owns).
+  `gpui_layout` (not `ui_layout`, the removed Tauri app's row).
 - Keys: `Ctrl+T` new tab, `Ctrl+W` close tab, `Ctrl+\` split right.
   Covered by UI tests in `crates/fl-app/src/workspace.rs`.
 - `Store` global (`crates/fl-app/src/store.rs`): `read` runs SQLite on a
   background thread, `run` runs engine futures on the tokio runtime, and the
   store emits `DataChanged { scopes }` for sync and action changes.
-- `fl-types`: specta derives behind the `specta` feature (Tauri app only).
 - Migration 0008: `following`, `explore_stars`, `repos.explore_only`. The
   Repositories list hides explore-only repos.
 - `fl-fake`: 50 repos, 20,000 issues and PRs, about 97k comments, Explore
@@ -620,10 +614,438 @@ and their `*/tests.rs`, `views/mod.rs`, `views/queue.rs` (test accessor),
 `crates/fl-types/src/repo.rs`; `crates/fl-bench/src/main.rs`;
 `docs/design/gpui-parity.md`, `docs/design/ui-plan.md`.
 
-Next (new thread): the parity gaps (sign-in and Retry / Discard first),
-then Explore sync (plan above), then the PR / issue writes. The Tauri app
-stays until the gaps in `docs/design/gpui-parity.md` are closed (user,
-2026-11-18).
+Done (parity gaps 8 and 9, sign-in and failed actions, 2026-11-18, branch
+`gpui-parity`):
+
+- `signin.rs`: `SignIn` dialog, an overlay like the palette (priority 2,
+  dimmed modal backdrop; a backdrop click does not close it). Element ids
+  `signin-*`.
+  - Device flow: "Sign in with GitHub" (only with a build-time client ID)
+    calls `Engine::auth_start`, opens `verification_uri`, shows the code
+    (Copy, "Open the page again") and polls `auth_poll` at the server's
+    interval. Expired / denied / errors show under the body and return to
+    the start.
+  - PAT paste (new; the Tauri dialog had none): masked `Input` with
+    Save token (Enter too) and a "Create one on GitHub" link
+    (classic token, scopes `repo,read:org,notifications`). New
+    `Engine::sign_in_with_token` (trims, checks `GET /user`, stores the token
+    like the device flow through the shared `finish_sign_in`). A 401 shows
+    "GitHub rejected this token."
+  - `FORKLINE_GITHUB_TOKEN` set but rejected: only a note (the env token
+    comes first, a pasted one would not be used).
+  - `Esc` (key context `SignIn`, and `Escape` from the input), Not now /
+    Cancel close it; focus goes back. The dialog emits `SignInEvent`; the
+    workspace closes it.
+- When it opens: the footer now reads `auth_state` with the status (on
+  `sync` and every 10 s) and emits `FooterEvent::SignIn` when it first reads
+  "signed out" and on every signed-in -> signed-out change. A GitHub 401 in
+  sync or the action worker sets `token_rejected` and emits `sync`, so this
+  is the `Unauthorized` reopen. Dismissed, it stays closed until that change
+  again. Also: footer "Sign in to sync" link, palette "Sign in to GitHub"
+  (`workspace::OpenSignIn`). Never in a bench run (`read_only`; no
+  `auth_state`, no `gh` start).
+- Footer (`footer.rs`): `N failed` opens the failed list (summary, error,
+  Retry / Discard per row; `engine.retry` / `discard`); it closes when none
+  is left. `@login` opens the account box: Sign out, or the env-override
+  note. A failed Retry / Discard / Sign out shows in the footer.
+- `Store::init` takes the `fl_sync::Config`. Tests use
+  `Config::test(NO_GITHUB)` with an in-memory token, so they never read the
+  real env / credential store / `gh`. `test_support::open_with(cx, dir, sql,
+  api, token)` (mock GitHub, signed out with `None`) and `wait_for` (moved
+  from the reading tests). `wiremock` is an fl-app dev-dependency.
+- Tests: `signin/tests.rs` 7 (no dialog when signed in, opens signed out and
+  stays dismissed, Esc and palette, pasted token signs in, rejected token
+  error, rejected token reopens, device flow code then sign-in), footer
+  `retry_and_discard_failed_actions`, fl-sync
+  `a_pasted_token_signs_in_once_github_accepts_it`. `cargo test -p fl-app`:
+  119 pass. Workspace clippy and tests pass.
+
+Bench (2026-11-18, release, AC power, fake data; run 1 cold: `launch_ms`
+607, `app_startup_ms` 66.5, 204 ms before `main`; warm runs 2-3):
+`launch_ms` 442-444 (600), `app_startup_ms` 47-50 (60), `switch_tab_ms`
+4.1-4.2 (8), `open_cached_item_ms` 5.9 (30), `search_p95_ms` 11.7-14.5 (30),
+`diff_scroll_fps` 240 (120). No new code on the launch path but one
+background `status` + `auth_state` read, skipped in bench.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`
+with `gh` removed from PATH so the app reads "signed out"; script
+`target/tmp/shot-signin.ps1`, image `target/tmp/g1p-signin.png`): dialog
+with the no-client-ID note, token box focused, footer "Sign in to sync".
+Signed in, the footer shows `@octocat`. Not checked by eye: the device code
+screen (needs a client ID), the failed list and account box (need a click),
+light theme.
+
+Open decisions (gaps 8 / 9):
+
+- A git 401 (`GitError::Unauthorized`, Files tab) does not reopen the
+  dialog: the engine still holds the token as good. The Tauri app behaves
+  the same (its dialog only shows while signed out).
+- Sign out deletes the stored token only; with `gh` signed in the app stays
+  signed in through `gh auth token` (Tauri: same).
+- The pasted token's scopes are not checked; a token without
+  `notifications` signs in and the inbox sync then fails with an error in
+  the footer.
+- While the dialog is open, workspace keys (`Ctrl+T`, `Ctrl+K`) still work
+  under it.
+- Signing in under `--offline` stores the token but starts no sync.
+
+Changed files (gaps 8 / 9): `crates/fl-app/src/{signin.rs, signin/tests.rs,
+footer.rs, workspace.rs, store.rs, main.rs, palette.rs, test_support.rs}`,
+`views/reading/tests.rs`, `crates/fl-app/Cargo.toml`;
+`crates/fl-sync/src/engine.rs`, `crates/fl-sync/tests/sync.rs`;
+`docs/design/gpui-parity.md`.
+
+Order of the remaining gaps agreed by the user on 2026-11-18 (see
+`docs/design/gpui-parity.md`), and gap 7: `E` sends `NotificationDone`.
+
+Done (parity step 1, small writes and keys, 2026-11-18, branch
+`gpui-parity`):
+
+- Close / Reopen (gap 1): action-bar button `action-close` /
+  `action-reopen` and key `X` (`reading::ToggleState`, context
+  `(Queue || Reading) && !Input`, forwarded by `ListView`; palette "Close or
+  reopen"). `Action::SetState` through the queue; a merged PR has neither.
+  A second `X` before the first is sent supersedes it (`pending_fields`).
+- Merge (gap 3): `action-merge` menu (Merge commit / Squash and merge /
+  Rebase and merge), then `action-merge-confirm` / `action-merge-cancel`
+  in the bar; no key. Disabled with the reason for a draft, a conflict
+  (`mergeable = CONFLICTING`) or a pending change on the PR (the Tauri
+  checks). Confirm re-checks; another item drops the pick
+  (`ReadingPane::merge_confirm`). `Action::Merge` sets `state = merged` at
+  once.
+- `E` (gap 7) keeps the local `done_at` and also queues
+  `Action::NotificationDone` (GitHub "done", `DELETE
+  /notifications/threads/{id}`). Sync clears `done` on new activity, as
+  `done_at` does.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` (gap 10): `workspace::NextTab` /
+  `PrevTab` select and focus the next / previous tab of the focused pane
+  (wraps). Palette "Next tab" / "Previous tab".
+- Unread (gap 11): `is:unread` in `fl_search` (`Filter::Unread`). Queues
+  other than the Inbox and Search read `updated_at > last_viewed_at`; the
+  Inbox reads `notifications.unread` (its row mark), also for a
+  notification without a cached issue. `queue_filter` now takes the
+  `QueueKind`. Every queue's `/` bar has an `Unread` toggle
+  (`queue-unread`) that adds or removes the word `is:unread`; saved views
+  can hold it. Search help lists it.
+- Not done from gap 11: the Tauri grouped / flat toggle. GPUI queues are
+  always grouped; ask if flat is wanted.
+- Tests: reading `x_closes_then_reopens_the_item`,
+  `merge_waits_for_the_confirm`, `merge_cancel_and_other_items_drop_the_pick`,
+  `merge_is_blocked_for_a_draft_or_a_conflict`, the `E` test now checks
+  `notification_done`; queue `the_unread_button_keeps_unread_notifications`,
+  `toggle_term_adds_and_removes_one_word`; workspace
+  `ctrl_tab_cycles_the_focused_pane`; fl-search
+  `unread_reads_the_issue_or_the_notification`. `cargo test -p fl-app`: 126
+  pass. Workspace clippy and tests pass.
+
+Bench (2026-11-18, release, fake data, ON BATTERY: the laptop came off AC
+during the run; 3 runs, run 1 cold): `launch_ms` 374-400 warm (600),
+`app_startup_ms` 47-52 warm (60), `search_p95_ms` 18.6 (30),
+`open_cached_item_ms` 17.1 (30), `switch_tab_ms` 9.7-9.8 (8, MISSED),
+`diff_scroll_fps` 102 (120, MISSED). The same whole-frame pattern as the
+step-4 battery runs (9.7 / 16.5, back to 4.0 / 6.2 on AC). Re-run on AC
+power before shipping.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`,
+image `target/tmp/g1p-actions.png`): PR #3 action bar with Approve A,
+Reply R, Close X, Merge menu button. Not checked by eye: the open menu,
+the confirm row, a blocked Merge, Reopen, the Unread toggle (needs a click
+or the Inbox tab on show), light theme.
+
+Step-1 decisions (settled 2026-11-18, see "Decided (2026-11-18, steps 1-5)"):
+
+- `X` closes without a confirm (Reopen undoes it). Merge has a confirm and
+  no key.
+- Merge does not wait for checks or reviews (GitHub refuses; the action
+  rolls back and shows in the failed list).
+- The default merge method is not remembered; the menu asks each time.
+
+Changed files (step 1): `crates/fl-search/src/{lib,query,tests}.rs`,
+`crates/fl-search/examples/queue_filter_bench.rs`;
+`crates/fl-app/src/views/{queue.rs, queue/tests.rs, reading.rs,
+reading/action_bar.rs, reading/tests.rs, list_view.rs, mod.rs, search.rs}`,
+`crates/fl-app/src/{workspace,palette}.rs`.
+
+Done (parity step 2, review composer, 2026-11-18, branch `gpui-parity`):
+
+- Gap 4: on an open PR the `R` box is the review composer. Buttons
+  `reply-send` (Comment, `Ctrl+Enter`), `review-approve`,
+  `review-request-changes` (disabled while the box is empty; GitHub rejects
+  an empty request). Approve and Request changes send
+  `Action::SubmitReview` with the text as the body; the local review row
+  shows at once. An issue or a closed PR keeps the plain reply box. `A`
+  still approves with no body.
+- Comment without inline drafts stays a plain PR comment
+  (`Action::Comment`), not a `COMMENT` review. Step 5 sends a `COMMENT`
+  review when drafts exist.
+- Tests: reading `request_changes_sends_the_body_as_a_review`,
+  `approve_from_the_composer_keeps_the_body`,
+  `request_changes_needs_a_body`, `an_issue_reply_has_no_review_buttons`.
+
+Done (parity step 3, labels and assignees, 2026-11-18):
+
+- Gap 2: `reading/pickers.rs`. `L` or the bar button `action-labels` opens
+  the label picker; `action-assignees` the assignee picker (no key: `A` is
+  Approve). Palette "Edit labels" / "Edit assignees". The picker sits under
+  the action bar (inline, not floating): a search box (case-insensitive
+  substring; Enter toggles the first match) and rows `("pick", id)` with a
+  check mark and the label colour. Esc (context `Picker`) closes it and
+  focus returns. Another item drops it.
+- Each click sends the whole set (`SetLabels` / `SetAssignees`), as the
+  Tauri view does; a newer set supersedes one not sent yet. The picker keeps
+  its own set, so fast clicks do not read a stale reload. Works on issues
+  and PRs.
+- Header: `Assigned: a, b`, and `labels pending` / `assignees pending`
+  pills (`labels-pending`, `assignees-pending`) from `pending_fields`.
+- `fl_db::queries::issue::assignees` (new, used by `thread` and the pane).
+  The pane reads assignees for PRs too (`PrDetail` has none; the DTO is
+  unchanged, so the Tauri bindings stay as they are).
+- Choices: `issue::edit_options` (Tauri parity): the repo's labels, and the
+  first 100 known users by login. A user past 100 cannot be picked yet.
+- Tests: reading `l_opens_the_labels_of_the_repo_and_a_click_sends_the_set`,
+  `the_assignee_search_and_enter_pick_the_first_match`,
+  `escape_closes_the_picker_and_another_item_drops_it`.
+
+Done (parity step 4, threads, 2026-11-18):
+
+- Gap 6: Files rail cards (`reading/files.rs`) have `("thread-reply", ix)`
+  and `("thread-resolve", ix)` (Resolve / Unresolve). Reply opens one box
+  under the card (`Ctrl+Enter` or `thread-reply-send`; Esc or
+  `thread-reply-cancel`; focus returns). `Action::ReplyThread` /
+  `Action::ResolveThread` through the queue; a second Resolve click
+  supersedes one not sent yet.
+- The tab now subscribes to `DataChanged`: a `pr` change re-reads the
+  threads (not the patch). Cards keep their order; new threads go last.
+- Cards show every comment of an open thread (before: 3) and the first
+  comment of a resolved one, as GitHub does; a local reply shows `sending`,
+  a queued resolve `syncing`. Errors show at the top of the rail
+  (`files-notice`). Only the header part of a card scrolls the diff.
+- Tauri parity: no reply on a resolved thread.
+- Tests: files `resolve_then_unresolve_a_thread`,
+  `reply_in_a_thread_with_ctrl_enter`, `escape_cancels_a_thread_reply`.
+
+Done (parity step 5, inline review comments, 2026-11-18):
+
+- Gap 5: the pinned gpui-component `Diff` has what it needs:
+  `on_add_annotation` (an add button beside the hovered line and at the end
+  of a line-number selection), `annotations` + `render_annotation` (content
+  under a line). No fork or workaround.
+- Select lines by a click or drag on the line numbers; then the add button
+  at the end of the selection, or the toolbar `files-comment` (Comment),
+  opens the box. The add button is not shown on hover without a selection:
+  with `on_add_annotation` set, the `Diff` builds a hidden button (with a
+  formatted label) on every visible line each frame, and
+  `diff_scroll_fps` fell from 240 to 72-77. It is set only while
+  `selected_lines()` is some (a `DiffEvent` subscription re-renders).
+- `reading/files.rs`: the add button opens a box under the line
+  (`draft-composer`; `Ctrl+Enter` or `draft-add` "Add to review"; Esc or
+  `draft-cancel`). A draft is a dashed card under its line with
+  `("draft-remove", ix)`. Drafts live in the Files tab (`FilesTab::drafts`)
+  and are dropped when another item shows (as in Tauri, where they are
+  component state). The Files tab label reads `Files 3 · 2 pending`.
+- Range rules (`draft_for`): a range on one side is a multi-line comment
+  (`start_line` < `line`, any drag order); a Unified range across removed
+  and added lines is a comment on its last line.
+- Sending: the `R` composer says `N inline comments go with it`
+  (`review-drafts`). With drafts, Comment (`Ctrl+Enter`, empty text allowed)
+  sends a `COMMENT` review; Approve, Request changes and `A` carry them too.
+  The drafts leave the tab when queued; a rejected review puts them back.
+  Local apply turns them into threads; the rail reloads on `pr`.
+- Known gap stays: a range across two hunks is sent as is; GitHub rejects
+  it and the review rolls back.
+- Tests: files `a_range_on_one_side_is_a_multi_line_draft`,
+  `drafts_go_with_the_next_review`, `approve_takes_the_drafts_too`,
+  `escape_cancels_the_box_and_remove_drops_a_draft`.
+  `cargo test -p fl-app`: 140 pass. Workspace clippy and tests pass.
+
+Done (Explore sync, 2026-11-18, the plan above):
+
+- `fl_sync::sync::explore`, last on the 30-min repo tick (engine
+  `try_sync`), skipped when REST remaining < `LOW_REMAINING`; the per-user
+  loop also stops there (no error; the next tick goes on).
+  `GET /user/following` (ETag, `list_cached`, at most `MAX_FOLLOWING` = 200)
+  replaces `following` (unfollow cascades the stars). Per followed user:
+  first page of `/users/{login}/starred?per_page=30`, Accept
+  `application/vnd.github.star+json`, ETag in `sync_state`
+  `explore:{user_id}`; a 200 replaces that user's `explore_stars`, stars
+  older than `EXPLORE_DAYS` (90) are skipped and pruned.
+- A repo first seen there gets `explore_only = 1`, `sync_enabled = 0`.
+  `sync::repos` clears `explore_only` for repos in the user's own or
+  starred lists. Explore-only, unpinned repos no star, notification or
+  issue references are deleted at the end of the run.
+- `Github::rest`: an `Accept` in `extra` replaces the default media type.
+- `repo::set_pinned`: pinning sets `explore_only = 0` and turns sync on for
+  an Explore-only repo (a normal repo keeps its `sync_enabled`). Unpin
+  leaves the flags.
+- Explore view: `p` and `("explore-pin", ix)` Pin / Unpin per row, pin
+  icon. `ExploreRow.pinned` (new field; no Tauri binding uses the type).
+- Explore errors other than rate limit / auth / network / db show in the
+  footer status (`Explore: ...`) and do not stop the rest of the tick.
+- Tests: fl-sync `explore_reads_following_and_their_recent_stars`,
+  `explore_sends_the_star_etag_and_a_listed_repo_clears_explore_only`
+  (common env mounts an empty `/user/following` at the lowest priority);
+  fl-db `pinning_an_explore_only_repo_syncs_it`; fl-app explore
+  `p_pins_an_explore_repo_and_so_syncs_it`, `the_pin_button_pins_its_row`.
+
+Bench after Explore sync and the add-button fix (AC power, 5 runs, run 1
+cold): `diff_scroll_fps` 240, `switch_tab_ms` 4.0-4.1, `search_p95_ms`
+14.6-14.9, `app_startup_ms` 47-48, warm `launch_ms` 498-556 (600). The
+launch rise over the run below is platform start (`main` to
+`run_callback` 410-470 ms), before Forkline code runs.
+
+Bench (2026-11-18, after parity steps 2-5, release, fake data, ON AC
+POWER, `PowerOnline` True; 3 runs, run 1 cold): warm `launch_ms` 400-421
+(600), `app_startup_ms` 40-42 (60), `switch_tab_ms` 4.1-4.2 (8),
+`diff_scroll_fps` 240 (120), `search_p95_ms` 11.4-11.5 (30),
+`open_cached_item_ms` 5.8-5.9 (30). Run 1 (first start after the build)
+missed launch at 713 ms: `main` came 355 ms after spawn (exe load), as in
+earlier cold runs. The step-1 battery misses are gone on AC.
+
+Not checked by eye (parity steps 2-5): the composer buttons, the pickers,
+the thread buttons, draft cards. Opening them needs a click or a key in the
+running app; covered by UI tests only.
+
+Decided (2026-11-18, steps 1-5, with the user):
+
+- `X` closes with no confirm (Reopen undoes it).
+- Merge sends at once; no wait for checks or reviews (GitHub branch
+  protection refuses; the failed action shows the error). Show the check
+  state beside the Merge button (add it if it is not there).
+- Remember the merge method per repo: local state, migration 0011. Before
+  the first merge in a repo the method is merge commit. Save the method
+  when the merge is sent (not on GitHub confirm).
+- Comment without inline drafts stays a plain PR comment.
+- Assignee picker: first 100 known users, no server search.
+- Pickers stay inline under the action bar.
+- No key for assignees.
+- The add button shows only while lines are selected (scroll fps).
+- Drafts: keep them in memory per PR for the session (no DB). A "drafts"
+  mark shows on the PR's list row. A warning shows on app quit and on
+  reading-tab close when drafts are not sent; no dialog on item switch.
+  Drafts do not move when the PR gets new commits; if GitHub rejects them,
+  show the error and keep them (the existing restore path).
+- Gap 11 rest, grouped / flat toggle: in every queue that groups now (like
+  Unread). Default grouped. "Grouped" button, `g` key (do not make `g` a
+  prefix key later) and a palette entry. Saved per queue tab in the layout
+  state; `LAYOUT_VERSION` stays 2. Flat rows show the repo name. (Tauri:
+  Inbox only, default flat, not saved.)
+
+Done (G1 parts 1-3, 2026-11-18, branch `gpui-parity`, not committed):
+
+1. Grouped / flat (gap 11 rest). Every queue has a `queue-grouped` button
+   ("Grouped", on when grouped), `g` (`queue::ToggleGrouped`, context
+   `(Queue || Reading) && !Input`, forwarded by `ListView`) and palette
+   "Grouped or flat". Default grouped. `QueueQuery.flat` (new,
+   `#[serde(default)]`): the Inbox reads `ORDER BY updated_at DESC` with no
+   group first; Pulls / Issues / Reviews keep their order and lose their one
+   header. Toggling reads again like a repo change (selection drops) and
+   keeps the `/` filter. Saved per tab: `ViewPanel::dump` adds `"flat": true`
+   beside the `ViewRef` fields (`ViewRef` unchanged, it ignores the key);
+   `LAYOUT_VERSION` stays 2. New `workspace::SaveLayout` action. Rows already
+   show `owner/name #n` in both modes.
+2. Drafts per PR for the session: `crates/fl-app/src/drafts.rs` (global
+   `Drafts` entity, `HashMap<pr id, Vec<DraftReviewComment>>`, memory only).
+   The Files tab, the Files label count, the `R` composer and `A` read it, so
+   drafts outlive an item switch (no dialog) and a closed tab. Queue rows of
+   a PR with drafts show a dashed `drafts` mark (`("queue-drafts", ix)`). A
+   PR tab with drafts reports `closable = false` (the dock draws no X and
+   ignores `Ctrl+W`), draws its own `tab-close-drafts` button, and `Ctrl+W`
+   or that button asks "Close this tab?" (platform prompt); "Close tab" sends
+   `workspace::RemoveTab`. Window close with drafts asks "Quit Forkline?"
+   (`on_window_should_close`). New commits leave drafts as they are. A
+   review the queue rejects puts its drafts back (`Drafts::restore`); a
+   review GitHub rejects later rolls back and stays in the failed list
+   (Retry resends the same comments), as before.
+3. Merge method per repo: migration 0011 `repo_merge_methods` (repo_id PK,
+   cascade on repo delete); `repo::merge_method` / `set_merge_method`;
+   `MergeMethod::as_str` / `parse`. The bar shows `action-merge` labelled with
+   the repo's method (merge commit before the first merge) and
+   `action-merge-method` (caret menu, current method checked); both go to the
+   confirm row. Confirm saves the method at once, then queues the merge.
+   `merge-checks` beside Merge (also when blocked): Checks pass / fail /
+   running from `pr_details.check_state`; nothing when it is NULL.
+
+Tests: queue `g_and_the_grouped_button_switch_to_one_list`,
+`g_works_from_the_reading_pane_and_keeps_the_filter`; workspace
+`a_flat_queue_tab_restores_flat`; fl-db `flat_inbox_is_newest_first`,
+`merge_method_is_kept_per_repo` (schema plan test covers flat queries);
+files `drafts_stay_with_the_pr_across_an_item_switch`,
+`closing_a_pr_tab_with_drafts_asks_first`,
+`a_pr_tab_without_drafts_closes_at_once`, `quit_with_drafts_asks_first`;
+reading `the_merge_button_offers_the_method_last_sent_in_the_repo`,
+`the_check_state_shows_beside_merge`. `cargo test -p fl-app`: 152 pass.
+Workspace clippy (`-D warnings`) and tests pass.
+
+Bench (2026-11-18, release, fake data, AC power, `PowerOnline` True). The
+machine was noisy (single runs of both builds missed launch, diff fps and
+search at random), so HEAD `88dcf10` was built in a temp worktree and run
+interleaved with this build, 7 pairs. Warm runs, base vs new: `launch_ms`
+447-539 vs 476-518 (600), `app_startup_ms` 50.6-63.9 vs 51.2-58.2 (60),
+`switch_tab_ms` 3.9-4.2 vs 3.9-4.2, `search_p95_ms` 14.6-14.9 vs 14.6-14.8
+(one 62 ms outlier each), `open_cached_item_ms` 6.1-9.1 vs 6.0-9.5,
+`diff_scroll_fps` 240 in most runs of both (81 / 74 / 155 / 177 outliers in
+both). No difference between the builds within noise.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-g1`,
+image `target/tmp/g1-grouped.png`): Inbox with the Grouped button on and the
+group headers. The `/` placeholder is cut shorter now ("Filter: is:open
+aut").
+
+Manual pass (2026-11-18, by the user, release, `--offline` on a copy of
+fake data): flat mode (`g`, button, palette), flat saved per tab across a
+restart, the drafts mark, drafts kept across an item switch, the PR tab
+close button and `Ctrl+W` prompt, the quit prompt, the split Merge button
+with the repo's method, the check state. All work.
+
+Open decisions (G1 parts 1-3):
+
+- Only `ViewRef::Pr` tabs warn on close. A queue tab whose reading pane
+  shows a PR with drafts closes at once (the drafts stay in memory).
+- While a PR tab has drafts the dock's own X is replaced by the tab's
+  button, drawn in the tab title.
+
+Tauri removal (2026-11-18, with the user): deleted `app/`, `ui/`, the Bun /
+Vite / ESLint / TypeScript config, `bench/budgets.json`, the `specta`
+feature of `fl-types` and the Tauri / specta workspace dependencies.
+`fl-bench` checks only the GPUI app (`gpui` is optional). The `fl-app`
+package keeps its name; its binary is `forkline` (ADR 0001), so the app is
+`target/release/forkline.exe`. The device flow stays: the GPUI sign-in
+dialog uses it. The `ui_layout` settings row of old databases is left
+unused. Cargo.lock lost 167 packages; no kept package changed version.
+
+Bench after the removal (release, fake data, AC power): 3 single runs missed
+at random (`search_p95_ms` 62-64, `diff_scroll_fps` 30, one `launch_ms` 659,
+one `app_startup_ms` 60.6). An interleaved A/B with the pre-removal
+`fl-app.exe` (3 pairs) gave the same numbers in each pair: `launch_ms`
+427-486 vs 435-492, `app_startup_ms` 45-47 vs 46-50, `search_p95_ms`
+12-24 vs 12-32, `diff_scroll_fps` 240 / 86 / 79 vs 204 / 85 / 82,
+`switch_tab_ms` about 4 in both. Machine noise, not the removal.
+
+Smooth wheel scroll (2026-11-18, found in the manual pass: the Conversation
+tab "moves in jumps" with a mouse wheel):
+
+- Cause: frames are fast (a frame log of a real scroll: 3.4 ms p50, 4.5 ms
+  p99 from render to painted; an idle pane renders 0 times a second). GPUI
+  on Windows turns a wheel notch into 3 lines, and `list` moves all 60 px
+  in one frame. GPUI and gpui-component have no smooth wheel scroll.
+- Fix: `crates/fl-app/src/smooth_scroll.rs` (`SmoothWheel`). A canvas
+  under the list takes line-based wheel events in the capture phase and
+  plays the distance over about 100 ms (ease-out, time constant 35 ms). A
+  turn the other way drops the rest. Pixel deltas (touchpads) and
+  horizontal scrolls go to the list as before. Used by the Conversation
+  tab only.
+- Test: `a_wheel_notch_scrolls_the_conversation_smoothly` (red without the
+  fix: "the notch landed in one frame: 60").
+- Bench: new steps `conversation_scroll_fps` (PR tab of the fake PR with
+  the most comments) and `inbox_conversation_scroll_fps` (Inbox reading
+  pane), 40 px a frame down and back up for 2 s; no budget. 132-240 fps.
+  They call `ListState::scroll_by`, so they measure drawing, not the wheel.
+- Not done (the user: "not for now"): the same smooth scroll for the queue
+  lists and the Files diff, which still jump one notch at a time. About 5
+  lines per list.
+
+Next: register the GitHub OAuth App, then the manual pass against a real
+account (see "Next" near the top).
 
 Decided (2026-11-16):
 

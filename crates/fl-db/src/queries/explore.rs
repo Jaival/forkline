@@ -12,7 +12,7 @@ const STARRED_BY: u32 = 3;
 /// `following` row (cascade), so every star here is from a followed user.
 /// Reads every `explore_stars` row (covering index) and sorts the groups:
 /// the table holds only recent stars of followed users (fake data: 500).
-pub const FEED_SQL: &str = "SELECT r.id, r.owner, r.name, r.description, r.language, r.stars, r.starred, s.last, s.n
+pub const FEED_SQL: &str = "SELECT r.id, r.owner, r.name, r.description, r.language, r.stars, r.starred, s.last, s.n, r.pinned
      FROM (SELECT repo_id, max(starred_at) AS last, count(*) AS n FROM explore_stars GROUP BY repo_id) s
      JOIN repos r ON r.id = s.repo_id
      ORDER BY s.last DESC, r.id LIMIT ?1 OFFSET ?2";
@@ -37,6 +37,7 @@ pub fn feed(conn: &Connection, req: PageReq) -> rusqlite::Result<Page<ExploreRow
                 starred_by: Vec::new(),
                 last_starred_at: r.get(7)?,
                 starred_by_count: r.get(8)?,
+                pinned: r.get(9)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

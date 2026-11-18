@@ -318,6 +318,36 @@ async fn device_flow_signs_in_and_writes_viewer() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_pasted_token_signs_in_once_github_accepts_it() {
+    let env = common::env().await;
+    env.engine.set_test_token(None);
+    env.db.write(|c| c.execute("DELETE FROM settings", [])).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(header("authorization", "Bearer ghp_bad"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({ "message": "Bad credentials" })))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(header("authorization", "Bearer ghp_good"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 42, "login": "octo" })))
+        .mount(&env.server)
+        .await;
+
+    assert!(matches!(env.engine.sign_in_with_token("  ").await, Err(fl_sync::Error::Invalid(_))));
+    assert!(matches!(env.engine.sign_in_with_token("ghp_bad").await, Err(fl_sync::Error::Unauthorized)));
+    assert!(!env.engine.auth_state().await.unwrap().signed_in);
+
+    // Pasted text often has a trailing newline.
+    assert_eq!(env.engine.sign_in_with_token("ghp_good\n").await.unwrap(), "octo");
+    let state = env.engine.auth_state().await.unwrap();
+    assert!(state.signed_in);
+    assert_eq!(state.login.as_deref(), Some("octo"));
+    assert_eq!(env.engine.token().as_deref(), Some("ghp_good"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn missing_client_id_explains_the_dev_override() {
     let env = common::env().await;
     let mut cfg = fl_sync::Config::test(&env.server.uri());
@@ -486,4 +516,137 @@ async fn star_history_gets_one_snapshot_per_day() {
     assert_eq!(env.q::<i64>("SELECT day FROM star_history WHERE repo_id = 1"), fl_sync::now() / 86400);
     // Repo 2 was not part of the response: no snapshot.
     assert_eq!(env.q::<i64>("SELECT count(*) FROM star_history WHERE repo_id = 2"), 0);
+}
+
+fn star(at: &str, repo: Value) -> Value {
+    json!({ "starred_at": at, "repo": repo })
+}
+
+async fn mount_repo_lists(env: &common::Env) {
+    for p in ["/user/repos", "/user/starred"] {
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&env.server)
+            .await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explore_reads_following_and_their_recent_stars() {
+    let env = common::env().await;
+    only_repos(&env).await;
+    mount_repo_lists(&env).await;
+    let recent = rfc3339(fl_sync::now() - 86_400);
+    Mock::given(method("GET"))
+        .and(path("/user/following"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": 11, "login": "alice" }, { "id": 12, "login": "bob" }
+        ])))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/alice/starred"))
+        .and(header("accept", "application/vnd.github.star+json"))
+        .respond_with(ResponseTemplate::new(200).insert_header("etag", "\"a1\"").set_body_json(json!([
+            star(&recent, repo_json(5000, "cool")),
+            star("2000-01-01T00:00:00Z", repo_json(5001, "old")),
+        ])))
+        .up_to_n_times(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/bob/starred"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([star(&recent, repo_json(1, "r"))])))
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM following"), 2);
+    assert_eq!(env.q::<String>("SELECT login FROM users WHERE id = 12"), "bob");
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM explore_stars"), 2);
+    // New from Explore: not synced, hidden from Repositories.
+    assert_eq!(env.q::<i64>("SELECT explore_only * 10 + sync_enabled FROM repos WHERE id = 5000"), 10);
+    // Older than 90 days: not stored at all.
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM repos WHERE id = 5001"), 0);
+    // A repo already known stays a normal repo.
+    assert_eq!(env.q::<i64>("SELECT explore_only * 10 + sync_enabled FROM repos WHERE id = 1"), 1);
+    assert_eq!(env.q::<String>("SELECT etag FROM sync_state WHERE key = 'explore:11'"), "\"a1\"");
+    assert!(env.emitted.lock().unwrap().contains(&"repos".to_owned()));
+
+    // Next repo tick: nobody followed any more. The stars cascade away and
+    // the Explore-only repo goes with them.
+    env.db.write(|c| c.execute("UPDATE sync_state SET last_synced_at = 0 WHERE key = 'repos'", [])).unwrap();
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM following"), 0);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM explore_stars"), 0);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM repos WHERE id = 5000"), 0);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM repos WHERE id = 1"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explore_sends_the_star_etag_and_a_listed_repo_clears_explore_only() {
+    let env = common::env().await;
+    only_repos(&env).await;
+    env.db
+        .write(|c| {
+            c.execute_batch(
+                r#"INSERT INTO following (user_id) VALUES (11);
+                 INSERT INTO sync_state (key, etag) VALUES ('following', '"f1"'), ('explore:11', '"a1"');
+                 INSERT INTO repos (id, node_id, owner, name, updated_at, explore_only, sync_enabled)
+                   VALUES (6000, 'R6', 'o', 'mine-now', 0, 1, 0);
+                 INSERT INTO explore_stars (user_id, repo_id, starred_at) VALUES (11, 6000, 4102444800);"#,
+            )
+        })
+        .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/user/repos"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([repo_json(6000, "mine-now")])))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/starred"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user/following"))
+        .and(header("If-None-Match", "\"f1\""))
+        .respond_with(ResponseTemplate::new(304))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/users/alice/starred"))
+        .and(header("If-None-Match", "\"a1\""))
+        .respond_with(ResponseTemplate::new(304))
+        .expect(1)
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    // 304s keep what is stored.
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM explore_stars"), 1);
+    assert_eq!(env.q::<i64>("SELECT explore_only FROM repos WHERE id = 6000"), 0);
+}
+
+/// RFC 3339 for a unix time (UTC), as GitHub sends it.
+fn rfc3339(t: i64) -> String {
+    let (days, secs) = (t.div_euclid(86_400), t.rem_euclid(86_400));
+    // Civil date from days since 1970 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs % 3600 / 60, secs % 60)
 }

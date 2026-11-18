@@ -93,3 +93,18 @@ fn list_plans_do_not_scan_issues() {
         }
     }
 }
+
+#[test]
+fn merge_method_is_kept_per_repo() {
+    use fl_types::MergeMethod;
+    let (_d, db) = seeded();
+    assert_eq!(db.read(|c| repo::merge_method(c, 1)).unwrap(), None);
+    db.write(|c| repo::set_merge_method(c, 1, MergeMethod::Squash)).unwrap();
+    db.write(|c| repo::set_merge_method(c, 1, MergeMethod::Rebase)).unwrap();
+    db.write(|c| repo::set_merge_method(c, 2, MergeMethod::Squash)).unwrap();
+    assert_eq!(db.read(|c| repo::merge_method(c, 1)).unwrap(), Some(MergeMethod::Rebase));
+    assert_eq!(db.read(|c| repo::merge_method(c, 2)).unwrap(), Some(MergeMethod::Squash));
+    // Gone with its repo.
+    db.write(|c| c.execute("DELETE FROM repos WHERE id = 2", [])).unwrap();
+    assert_eq!(db.read(|c| repo::merge_method(c, 2)).unwrap(), None);
+}

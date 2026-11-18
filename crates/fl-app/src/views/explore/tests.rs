@@ -1,7 +1,8 @@
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::TestAppContext;
 
 use super::*;
-use crate::test_support::{active, press, start_on, tabs, write};
+use crate::test_support::{active, press, query_i64, start_on, tabs, write};
 
 const SEED: &str = "
     INSERT INTO users (id, login) VALUES (1, 'ann'), (2, 'bob');
@@ -19,6 +20,7 @@ fn row(by: &[&str], count: u32) -> ExploreRow {
         language: None,
         stars: 0,
         starred: false,
+        pinned: false,
         starred_by: by.iter().map(|s| (*s).to_owned()).collect(),
         starred_by_count: count,
         last_starred_at: 0,
@@ -66,4 +68,27 @@ fn no_follows_shows_the_empty_state(cx: &mut TestAppContext) {
     press(cx, handle, "j");
     press(cx, handle, "enter");
     assert_eq!(tabs(cx, &ws), ["Inbox", "*Explore"]);
+}
+
+#[gpui_kit::test]
+fn p_pins_an_explore_repo_and_so_syncs_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start_on(cx, dir.path(), SEED, ViewRef::Explore);
+    let view = active::<ExploreView>(cx, handle, &ws);
+    write(cx, "UPDATE repos SET sync_enabled = 0", &[]);
+    press(cx, handle, "j");
+    press(cx, handle, "p");
+    assert_eq!(query_i64(cx, "SELECT pinned * 100 + explore_only * 10 + sync_enabled FROM repos WHERE id = 8"), 101);
+    cx.read(|cx| assert!(view.read(cx).rows.selected_row().unwrap().pinned));
+    press(cx, handle, "p");
+    assert_eq!(query_i64(cx, "SELECT pinned FROM repos WHERE id = 8"), 0);
+}
+
+#[gpui_kit::test]
+fn the_pin_button_pins_its_row(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, _ws) = start_on(cx, dir.path(), SEED, ViewRef::Explore);
+    cx.update_window(handle, |_, window, cx| window.click(("explore-pin", 1usize), cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(query_i64(cx, "SELECT pinned FROM repos WHERE id = 7"), 1);
 }

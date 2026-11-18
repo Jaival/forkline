@@ -79,7 +79,7 @@ fn flatten_puts_one_header_per_group() {
     use QueueGroup::*;
     let rows = [row("a", ReviewRequested), row("b", ReviewRequested), row("c", Mentioned), row("d", Other)];
     assert_eq!(
-        flatten(&rows),
+        flatten(&rows, false),
         [
             Item::Header(ReviewRequested),
             Item::Row(0),
@@ -90,7 +90,7 @@ fn flatten_puts_one_header_per_group() {
             Item::Row(3),
         ]
     );
-    assert!(flatten(&[]).is_empty());
+    assert!(flatten(&[], false).is_empty());
 }
 
 #[test]
@@ -468,5 +468,99 @@ fn a_data_change_reload_keeps_the_filter(cx: &mut TestAppContext) {
         assert_eq!(queue.read(cx).filter(), "issue");
         assert_eq!(queue.read(cx).keys(), ["men1", "men2", "sub"]);
         assert!(queue.read(cx).counts_ready);
+    });
+}
+
+#[test]
+fn toggle_term_adds_and_removes_one_word() {
+    assert_eq!(toggle_term("", UNREAD), "is:unread");
+    assert_eq!(toggle_term("bug ", UNREAD), "bug is:unread");
+    assert_eq!(toggle_term("bug is:unread label:x", UNREAD), "bug label:x");
+    assert_eq!(toggle_term("IS:UNREAD", UNREAD), "");
+    // `-is:unread` is another word: the button adds the positive one.
+    assert_eq!(toggle_term("-is:unread", UNREAD), "-is:unread is:unread");
+}
+
+#[gpui_kit::test]
+fn the_unread_button_keeps_unread_notifications(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    let click = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.click("queue-unread", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    click(cx);
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "is:unread");
+        assert_eq!(queue.read(cx).input().read(cx).value(), "is:unread");
+        // `men2` is read; `rel` has no cached issue but its flag still counts.
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "sub", "rel"]);
+    });
+    click(cx);
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "");
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "men2", "sub", "rel"]);
+    });
+}
+
+#[gpui_kit::test]
+fn g_and_the_grouped_button_switch_to_one_list(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    cx.read(|cx| {
+        assert!(!queue.read(cx).flat());
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "men2", "sub", "rel"]);
+        assert_eq!(queue.read(cx).headers(), 3);
+    });
+    press(cx, handle, "g");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(queue.read(cx).flat());
+        // Newest first, no group headers.
+        assert_eq!(queue.read(cx).keys(), ["sub", "men1", "men2", "rev", "rel"]);
+        assert_eq!(queue.read(cx).headers(), 0);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("queue-grouped", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(!queue.read(cx).flat());
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "men2", "sub", "rel"]);
+    });
+}
+
+#[gpui_kit::test]
+fn g_works_from_the_reading_pane_and_keeps_the_filter(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    let list = list(cx, handle, &ws);
+    cx.update_window(handle, |_, window, cx| {
+        queue.update(cx, |q, cx| q.set_filter_text("is:unread", window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Focus in the reading pane: the list view forwards `g` to the queue.
+    cx.update_window(handle, |_, window, cx| {
+        let focus = list.read(cx).reading.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    press(cx, handle, "g");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(queue.read(cx).flat());
+        assert_eq!(queue.read(cx).filter(), "is:unread");
+        assert_eq!(queue.read(cx).keys(), ["sub", "men1", "rev", "rel"]);
     });
 }

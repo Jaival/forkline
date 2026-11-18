@@ -229,3 +229,321 @@ fn file_keys_do_nothing_outside_the_files_tab(cx: &mut TestAppContext) {
     assert!(!is_viewed(cx, &tab, "a.txt"));
     assert!(viewed_rows(cx).is_empty());
 }
+
+// ---- threads (parity step 4) -----------------------------------------------
+
+fn thread(cx: &mut TestAppContext, tab: &Entity<FilesTab>) -> (bool, usize) {
+    cx.read(|cx| {
+        let t = &tab.read(cx).threads[0];
+        (t.is_resolved, t.comments.len())
+    })
+}
+
+fn kinds(cx: &mut TestAppContext) -> Vec<(String, String)> {
+    read_db(cx, |c| {
+        c.prepare("SELECT kind, payload_json FROM action_queue ORDER BY id")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect()
+    })
+}
+
+fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: impl Into<gpui_kit::ElementId>) {
+    let id = id.into();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn resolve_then_unresolve_a_thread(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    click(cx, handle, ("thread-resolve", 0usize));
+    // Applied at once; the rail reloads on `pr`.
+    wait_for(cx, "resolved", |cx| thread(cx, &tab).0);
+    let resolve: Vec<String> =
+        kinds(cx).into_iter().filter(|(k, _)| k == "resolve_thread").map(|(_, p)| p).collect();
+    assert!(resolve.last().is_some_and(|p| p.contains("true")), "{resolve:?}");
+    click(cx, handle, ("thread-resolve", 0usize));
+    wait_for(cx, "open again", |cx| !thread(cx, &tab).0);
+    let pending: i64 = read_db(cx, |c| {
+        c.query_row("SELECT COUNT(*) FROM pending_fields WHERE table_name = 'review_threads'", [], |r| r.get(0))
+    });
+    assert_eq!(pending, 1, "the unresolve supersedes the resolve");
+}
+
+#[gpui_kit::test]
+fn reply_in_a_thread_with_ctrl_enter(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    click(cx, handle, ("thread-reply", 0usize));
+    cx.read(|cx| assert!(tab.read(cx).reply.is_some()));
+    // Keys type into the box: `v` and `]` do not act.
+    cx.update_window(handle, |_, window, cx| window.input("fixed in v2]", cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+    cx.read(|cx| assert!(tab.read(cx).reply.is_none()));
+    wait_for(cx, "reply shown", |cx| thread(cx, &tab).1 == 2);
+    let reply = kinds(cx).into_iter().find(|(k, _)| k == "reply_thread").unwrap().1;
+    assert!(reply.contains("fixed in v2]"), "payload: {reply}");
+    assert_eq!(current(cx, &tab), Some(0));
+    assert!(!is_viewed(cx, &tab, "a.txt"));
+}
+
+#[gpui_kit::test]
+fn escape_cancels_a_thread_reply(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    click(cx, handle, ("thread-reply", 0usize));
+    cx.update_window(handle, |_, window, cx| window.input("draft", cx)).unwrap();
+    press(cx, handle, "escape");
+    cx.read(|cx| assert!(tab.read(cx).reply.is_none()));
+    cx.run_until_parked();
+    assert!(kinds(cx).iter().all(|(k, _)| k != "reply_thread"));
+}
+
+// ---- inline review comments (parity step 5) --------------------------------
+
+use gpui_kit::component::diff::{DiffLineRange, DiffSide};
+
+fn open_composer(cx: &mut TestAppContext, handle: AnyWindowHandle, tab: &Entity<FilesTab>, range: DiffLineRange) {
+    cx.update_window(handle, |_, window, cx| {
+        tab.update(cx, |tab, cx| tab.open_composer(range, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+fn drafts(cx: &mut TestAppContext, tab: &Entity<FilesTab>) -> Vec<fl_types::DraftReviewComment> {
+    cx.read(|cx| tab.read(cx).drafts(cx).to_vec())
+}
+
+#[test]
+fn a_range_on_one_side_is_a_multi_line_draft() {
+    let d = super::draft_for(&DiffLineRange::new("a.txt", DiffSide::Modified, 4, 2), "x".into());
+    assert_eq!((d.side, d.line, d.start_line), (fl_types::DiffSide::Right, 4, Some(2)));
+    let one = super::draft_for(&DiffLineRange::new("a.txt", DiffSide::Original, 3, 3), "x".into());
+    assert_eq!((one.side, one.line, one.start_line), (fl_types::DiffSide::Left, 3, None));
+    // Across sides: a comment on the last line.
+    let cross = super::draft_for(
+        &DiffLineRange::new("a.txt", DiffSide::Original, 2, 3).with_end_side(DiffSide::Modified),
+        "x".into(),
+    );
+    assert_eq!((cross.side, cross.line, cross.start_line), (fl_types::DiffSide::Right, 3, None));
+}
+
+#[gpui_kit::test]
+fn drafts_go_with_the_next_review(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (reading, tab) = open_files(cx, handle, &ws);
+    open_composer(cx, handle, &tab, DiffLineRange::new("b.txt", DiffSide::Modified, 2, 2));
+    // Keys type into the box: `v` and `]` do not act.
+    cx.update_window(handle, |_, window, cx| window.input("nit: v]", cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+    let d = drafts(cx, &tab);
+    assert_eq!(d.len(), 1);
+    assert_eq!((d[0].path.as_str(), d[0].line, d[0].body_md.as_str()), ("b.txt", 2, "nit: v]"));
+    cx.read(|cx| assert!(tab.read(cx).composer.is_none()));
+    assert!(!is_viewed(cx, &tab, "a.txt"));
+    assert!(kinds(cx).iter().all(|(k, _)| k != "submit_review"), "a draft sends nothing");
+
+    // `R`, then Ctrl+Enter with no text: a COMMENT review with the draft.
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find_all("review-drafts").len(), 1);
+    })
+    .unwrap();
+    press(cx, handle, "ctrl-enter");
+    wait_for(cx, "review queued", |cx| kinds(cx).iter().any(|(k, _)| k == "submit_review"));
+    let review = kinds(cx).into_iter().find(|(k, _)| k == "submit_review").unwrap().1;
+    assert!(review.contains("COMMENT") && review.contains("b.txt") && review.contains("nit: v]"), "payload: {review}");
+    assert!(kinds(cx).iter().all(|(k, _)| k != "comment"));
+    assert!(drafts(cx, &tab).is_empty());
+    // Applied at once: the draft is a thread in the rail now.
+    wait_for(cx, "new thread", |cx| cx.read(|cx| tab.read(cx).threads.iter().any(|t| t.path == "b.txt")));
+    cx.read(|cx| assert!(reading.read(cx).reply.is_none()));
+}
+
+#[gpui_kit::test]
+fn approve_takes_the_drafts_too(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    open_composer(cx, handle, &tab, DiffLineRange::new("a.txt", DiffSide::Modified, 2, 4));
+    cx.update_window(handle, |_, window, cx| window.input("these lines", cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+    press(cx, handle, "a");
+    wait_for(cx, "review queued", |cx| kinds(cx).iter().any(|(k, _)| k == "submit_review"));
+    let review = kinds(cx).into_iter().find(|(k, _)| k == "submit_review").unwrap().1;
+    assert!(review.contains("APPROVE") && review.contains("\"start_line\":2"), "payload: {review}");
+    assert!(drafts(cx, &tab).is_empty());
+}
+
+#[gpui_kit::test]
+fn escape_cancels_the_box_and_remove_drops_a_draft(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    open_composer(cx, handle, &tab, DiffLineRange::new("a.txt", DiffSide::Modified, 2, 2));
+    cx.update_window(handle, |_, window, cx| window.input("gone", cx)).unwrap();
+    press(cx, handle, "escape");
+    cx.read(|cx| assert!(tab.read(cx).composer.is_none()));
+    assert!(drafts(cx, &tab).is_empty());
+
+    open_composer(cx, handle, &tab, DiffLineRange::new("a.txt", DiffSide::Modified, 2, 2));
+    cx.update_window(handle, |_, window, cx| window.input("kept", cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+    assert_eq!(drafts(cx, &tab).len(), 1);
+    tab.update(cx, |tab, cx| tab.remove_draft(0, cx));
+    assert!(drafts(cx, &tab).is_empty());
+}
+
+#[gpui_kit::test]
+fn toolbar_comment_opens_the_box_for_the_selected_lines(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    // Nothing selected: the button does nothing.
+    click(cx, handle, "files-comment");
+    cx.read(|cx| assert!(tab.read(cx).composer.is_none()));
+    let diff = cx.read(|cx| tab.read(cx).diff.clone().unwrap());
+    diff.update(cx, |diff, cx| {
+        diff.set_selected_lines(Some(DiffLineRange::new("a.txt", DiffSide::Modified, 2, 3)), cx);
+    });
+    click(cx, handle, "files-comment");
+    cx.update_window(handle, |_, window, cx| window.input("two lines", cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+    let d = drafts(cx, &tab);
+    assert_eq!((d[0].path.as_str(), d[0].line, d[0].start_line), ("a.txt", 3, Some(2)));
+}
+
+// ---- drafts kept per PR for the session (parity G1 part 2) ------------------
+
+fn add_draft(cx: &mut TestAppContext, handle: AnyWindowHandle, tab: &Entity<FilesTab>, text: &str) {
+    open_composer(cx, handle, tab, DiffLineRange::new("b.txt", DiffSide::Modified, 2, 2));
+    cx.update_window(handle, |_, window, cx| window.input(text, cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+}
+
+fn store_count(cx: &mut TestAppContext, pr: i64) -> usize {
+    cx.read(|cx| crate::drafts::Drafts::global(cx).read(cx).count(pr))
+}
+
+#[gpui_kit::test]
+fn drafts_stay_with_the_pr_across_an_item_switch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (reading, tab) = open_files(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "keep me");
+    let (queue, _) = panes(cx, handle, &ws);
+    // The PR's row (Inbox row 0, `101`) carries the mark; the next does not.
+    let marks = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find_all(("queue-drafts", 1usize)).is_empty());
+            window.find_all(("queue-drafts", 0usize)).len()
+        })
+        .unwrap()
+    };
+    assert_eq!(marks(cx), 1);
+
+    // Another item: no dialog, the drafts stay in the store.
+    select(cx, handle, &queue, "102");
+    wait_for(cx, "issue detail", |cx| cx.read(|cx| reading.read(cx).files.is_none()));
+    assert_eq!(store_count(cx, 3), 1);
+    assert_eq!(marks(cx), 1);
+
+    // Back on the PR: the rebuilt Files tab shows the draft and the
+    // composer still sends it.
+    press(cx, handle, "k");
+    assert_eq!(cx.read(|cx| queue.read(cx).selected_key().map(str::to_owned)).as_deref(), Some("101"));
+    wait_for(cx, "PR detail", |cx| is_pr_detail(cx, &reading));
+    reading.update(cx, |pane, cx| pane.set_tab(PaneTab::Files, cx));
+    let tab = files_tab(cx, &reading);
+    wait_for(cx, "files ready", |cx| ready(cx, &tab));
+    assert_eq!(drafts(cx, &tab)[0].body_md, "keep me");
+    press(cx, handle, "a");
+    wait_for(cx, "review queued", |cx| kinds(cx).iter().any(|(k, _)| k == "submit_review"));
+    assert!(kinds(cx).into_iter().any(|(k, p)| k == "submit_review" && p.contains("keep me")));
+    assert_eq!(store_count(cx, 3), 0);
+    assert_eq!(marks(cx), 0);
+}
+
+/// Open PR 3 in its own tab and show its Files tab once loaded.
+fn open_pr_tab(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<FilesTab> {
+    cx.update_window(handle, |_, window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id: 3 }, window, cx)))
+        .unwrap();
+    let reading = active_pane(cx, handle, ws);
+    wait_for(cx, "PR detail", |cx| is_pr_detail(cx, &reading));
+    reading.update(cx, |pane, cx| pane.set_tab(PaneTab::Files, cx));
+    let tab = files_tab(cx, &reading);
+    wait_for(cx, "files ready", |cx| ready(cx, &tab));
+    tab
+}
+
+fn tab_titles(cx: &mut TestAppContext, ws: &Entity<Workspace>) -> Vec<String> {
+    cx.read(|cx| ws.read(cx).tab_groups(cx).into_iter().flatten().collect())
+}
+
+#[gpui_kit::test]
+fn closing_a_pr_tab_with_drafts_asks_first(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let tab = open_pr_tab(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "unsent");
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+
+    // Ctrl+W asks; Cancel keeps the tab.
+    press(cx, handle, "ctrl-w");
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+
+    // The tab's own close button asks too; Close tab closes it. The
+    // drafts stay for the session.
+    click(cx, handle, "tab-close-drafts");
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Close tab");
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["*Inbox"]);
+    assert_eq!(store_count(cx, 3), 1);
+}
+
+#[gpui_kit::test]
+fn a_pr_tab_without_drafts_closes_at_once(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    open_pr_tab(cx, handle, &ws);
+    press(cx, handle, "ctrl-w");
+    assert!(!cx.has_pending_prompt());
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["*Inbox"]);
+}
+
+#[gpui_kit::test]
+fn quit_with_drafts_asks_first(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "unsent");
+    let mut window = gpui_kit::VisualTestContext::from_window(handle, cx);
+
+    assert!(!window.simulate_close());
+    assert!(window.has_pending_prompt());
+    window.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+    assert!(!window.simulate_close());
+    window.simulate_prompt_answer("Quit");
+    cx.run_until_parked();
+    assert!(cx.update(|cx| cx.windows().is_empty()));
+}

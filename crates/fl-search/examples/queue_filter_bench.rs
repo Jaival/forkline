@@ -19,13 +19,13 @@ fn main() -> anyhow::Result<()> {
     let path = std::env::args().nth(1).unwrap_or_else(|| "fake-data/forkline.db".into());
     let conn = fl_db::open_conn(std::path::Path::new(&path))?;
     for kind in QueueKind::ALL {
-        let q = QueueQuery { kind, repo_id: None };
+        let q = QueueQuery { kind, repo_id: None, flat: false };
         let mut ms = Vec::new();
         let mut with_counts = Vec::new();
         for round in 0..11 {
             for text in QUERIES {
                 let t = Instant::now();
-                let cond = fl_search::queue_filter(&conn, text)?;
+                let cond = fl_search::queue_filter(&conn, text, kind)?;
                 let page = queue::page(&conn, &q, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX })?;
                 let first = t.elapsed().as_secs_f64() * 1000.0;
                 let counts = queue::counts(&conn, &q, cond.as_ref())?;

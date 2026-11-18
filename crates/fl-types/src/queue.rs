@@ -51,6 +51,10 @@ pub struct QueueQuery {
     pub kind: QueueKind,
     /// Only this repository; `None` means all.
     pub repo_id: Option<RepoId>,
+    /// One list, newest first, no group headers. Only the Inbox has more
+    /// than one group, so only its order changes.
+    #[serde(default)]
+    pub flat: bool,
 }
 
 /// Section of a queue. Declaration order is display order; a query returns

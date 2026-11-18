@@ -42,10 +42,16 @@ impl Store {
     /// Open the database in `data_dir`, set the store as a global, and (unless
     /// `offline`) start the sync engine and action worker. `read_only` (a
     /// bench run): views skip the writes that opening an item makes.
-    pub fn init(data_dir: std::path::PathBuf, offline: bool, read_only: bool, cx: &mut App) -> anyhow::Result<()> {
+    pub fn init(
+        data_dir: std::path::PathBuf,
+        sync_config: fl_sync::Config,
+        offline: bool,
+        read_only: bool,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
         std::fs::create_dir_all(&data_dir)?;
         let db = Arc::new(Db::open(&fl_db::db_path(&data_dir))?);
-        let sync = Engine::new(db.clone(), fl_sync::Config::github());
+        let sync = Engine::new(db.clone(), sync_config);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("fl-sync")

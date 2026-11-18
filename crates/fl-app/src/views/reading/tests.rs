@@ -1,7 +1,6 @@
-use std::time::{Duration, Instant};
-
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
+use fl_types::{CheckState, IssueState, ReviewEvent};
 use rusqlite::Connection;
 
 use super::*;
@@ -77,17 +76,7 @@ pub(super) fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &E
 
 /// Park until `done` holds. Work on the tokio runtime ends on another thread,
 /// so one park may return before it lands.
-pub(super) fn wait_for(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let start = Instant::now();
-    loop {
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        assert!(start.elapsed() < Duration::from_secs(2), "timed out waiting for: {what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
+pub(super) use crate::test_support::wait_for;
 
 pub(super) fn read_db<T>(cx: &mut TestAppContext, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> T {
     cx.update(|cx| Store::global(cx).read(cx).db().read(f).unwrap())
@@ -419,8 +408,10 @@ fn e_marks_the_row_done_and_selects_the_next(cx: &mut TestAppContext) {
     press(cx, handle, "e");
     wait_for(cx, "row gone", |cx| cx.read(|cx| !queue.read(cx).keys().contains(&"102")));
     assert!(notification::<Option<i64>>(cx, "102", "done_at").is_some());
-    // Done is local: nothing for GitHub beyond the read marks.
-    assert!(kinds(cx).iter().all(|k| k == "notification_read"), "{:?}", kinds(cx));
+    // Done goes to GitHub too, for this thread.
+    wait_for(cx, "done queued", |cx| kinds(cx).contains(&"notification_done".to_owned()));
+    let done = actions(cx).into_iter().find(|(kind, _)| kind == "notification_done").unwrap().1;
+    assert!(done.contains("\"102\""), "payload: {done}");
     // `103` took its place.
     cx.read(|cx| {
         assert_eq!(queue.read(cx).selected_key(), Some("103"));
@@ -457,4 +448,368 @@ fn done_and_snooze_need_an_inbox_row(cx: &mut TestAppContext) {
         c.query_row("SELECT COUNT(*) FROM notifications WHERE done_at IS NOT NULL OR snoozed_until IS NOT NULL", [], |r| r.get(0))
     });
     assert_eq!(marked, 0);
+}
+
+/// Open `view` in a tab and wait for its detail.
+fn open_item(cx: &mut TestAppContext, view: ViewRef, id: i64) -> (AnyWindowHandle, Entity<ReadingPane>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(view, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let reading = active_pane(cx, handle, &ws);
+    wait_for(cx, "detail", |cx| detail_id(cx, &reading) == Some(id));
+    (handle, reading, dir)
+}
+
+fn issue_state(cx: &mut TestAppContext, id: i64) -> String {
+    read_db(cx, |c| c.query_row("SELECT state FROM issues WHERE id = ?1", [id], |r| r.get(0)))
+}
+
+fn shown_state(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Option<IssueState> {
+    cx.read(|cx| reading.read(cx).detail.as_ref().map(|d| d.row().state))
+}
+
+#[gpui_kit::test]
+fn x_closes_then_reopens_the_item(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    press(cx, handle, "x");
+    // Applied at once; the pane reloads on `issues` and offers Reopen.
+    wait_for(cx, "closed", |cx| shown_state(cx, &reading) == Some(IssueState::Closed));
+    assert_eq!(issue_state(cx, 1), "closed");
+    let shown = cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find_all("action-reopen").len()
+    });
+    assert_eq!(shown.unwrap(), 1);
+    press(cx, handle, "x");
+    wait_for(cx, "open", |cx| shown_state(cx, &reading) == Some(IssueState::Open));
+    assert_eq!(issue_state(cx, 1), "open");
+    let states: Vec<String> =
+        actions(cx).into_iter().filter(|(kind, _)| kind == "set_state").map(|(_, payload)| payload).collect();
+    // The reopen supersedes the close that was never sent.
+    assert!(states.last().is_some_and(|p| p.contains("open")), "{states:?}");
+}
+
+#[gpui_kit::test]
+fn merge_waits_for_the_confirm(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_state(), action_bar::MergeState::Ready));
+    reading.update(cx, |pane, cx| pane.pick_merge(fl_types::MergeMethod::Squash, cx));
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx)).unwrap();
+    assert!(!kinds(cx).contains(&"merge".to_owned()), "picking a method sends nothing");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("action-merge-confirm", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    wait_for(cx, "merge queued", |cx| kinds(cx).contains(&"merge".to_owned()));
+    let merge = actions(cx).into_iter().find(|(kind, _)| kind == "merge").unwrap().1;
+    assert!(merge.contains("squash"), "payload: {merge}");
+    assert_eq!(issue_state(cx, 3), "merged");
+    // A merged PR has no Merge, Close or Approve.
+    wait_for(cx, "merged", |cx| shown_state(cx, &reading) == Some(IssueState::Merged));
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_state(), action_bar::MergeState::None));
+}
+
+#[gpui_kit::test]
+fn merge_cancel_and_other_items_drop_the_pick(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    reading.update(cx, |pane, cx| pane.pick_merge(fl_types::MergeMethod::Rebase, cx));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("action-merge-cancel", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.read(|cx| assert!(reading.read(cx).merge_confirm.is_none()));
+    assert!(!kinds(cx).contains(&"merge".to_owned()));
+}
+
+#[gpui_kit::test]
+fn merge_is_blocked_for_a_draft_or_a_conflict(cx: &mut TestAppContext) {
+    let (_, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    crate::test_support::write(cx, "UPDATE pr_details SET is_draft = 1 WHERE issue_id = 3", &["issues"]);
+    wait_for(cx, "draft", |cx| {
+        cx.read(|cx| reading.read(cx).merge_state() == action_bar::MergeState::Blocked("Draft"))
+    });
+    crate::test_support::write(
+        cx,
+        "UPDATE pr_details SET is_draft = 0, mergeable = 'CONFLICTING' WHERE issue_id = 3",
+        &["issues"],
+    );
+    wait_for(cx, "conflict", |cx| {
+        cx.read(|cx| reading.read(cx).merge_state() == action_bar::MergeState::Blocked("Has conflicts"))
+    });
+    // Confirm re-checks: a pick made before the block sends nothing.
+    reading.update(cx, |pane, cx| {
+        pane.pick_merge(fl_types::MergeMethod::Merge, cx);
+        pane.confirm_merge(cx);
+    });
+    cx.run_until_parked();
+    assert!(!kinds(cx).contains(&"merge".to_owned()));
+}
+
+// ---- review composer (parity step 2) ---------------------------------------
+
+fn count(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> usize {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find_all(id).len()
+    })
+    .unwrap()
+}
+
+fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn request_changes_sends_the_body_as_a_review(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| window.input("please split this", cx)).unwrap();
+    click(cx, handle, "review-request-changes");
+    assert!(!reply_open(cx, &reading));
+    wait_for(cx, "review queued", |cx| kinds(cx).contains(&"submit_review".to_owned()));
+    let review = actions(cx).into_iter().find(|(kind, _)| kind == "submit_review").unwrap().1;
+    assert!(review.contains("REQUEST_CHANGES") && review.contains("please split this"), "payload: {review}");
+    assert!(!kinds(cx).contains(&"comment".to_owned()));
+    let state: String = read_db(cx, |c| c.query_row("SELECT state FROM reviews WHERE pr_id = 3", [], |r| r.get(0)));
+    assert_eq!(state, "CHANGES_REQUESTED");
+}
+
+#[gpui_kit::test]
+fn approve_from_the_composer_keeps_the_body(cx: &mut TestAppContext) {
+    let (handle, _, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| window.input("nice work", cx)).unwrap();
+    click(cx, handle, "review-approve");
+    wait_for(cx, "review queued", |cx| kinds(cx).contains(&"submit_review".to_owned()));
+    let review = actions(cx).into_iter().find(|(kind, _)| kind == "submit_review").unwrap().1;
+    assert!(review.contains("APPROVE") && review.contains("nice work"), "payload: {review}");
+}
+
+#[gpui_kit::test]
+fn request_changes_needs_a_body(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| {
+        reading.update(cx, |pane, cx| pane.send_review(ReviewEvent::RequestChanges, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(reply_open(cx, &reading), "an empty request keeps the box open");
+    assert!(!kinds(cx).contains(&"submit_review".to_owned()), "{:?}", kinds(cx));
+}
+
+#[gpui_kit::test]
+fn an_issue_reply_has_no_review_buttons(cx: &mut TestAppContext) {
+    let (handle, _, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    press(cx, handle, "r");
+    assert_eq!(count(cx, handle, "reply-send"), 1);
+    assert_eq!(count(cx, handle, "review-approve"), 0);
+    assert_eq!(count(cx, handle, "review-request-changes"), 0);
+}
+
+// ---- labels and assignees (parity step 3) ----------------------------------
+
+const LABELS: &str = "INSERT INTO labels(id, repo_id, name, color) VALUES (1, 1, 'bug', 'd73a4a'), (2, 1, 'docs', '0075ca'),
+    (3, 2, 'other repo', 'ffffff');";
+
+fn picker_kind(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Option<pickers::PickerKind> {
+    cx.read(|cx| reading.read(cx).picker.as_ref().map(|p| p.kind))
+}
+
+fn choices_loaded(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> bool {
+    cx.read(|cx| reading.read(cx).picker.as_ref().is_some_and(|p| p.choices.is_some()))
+}
+
+fn payloads(cx: &mut TestAppContext, kind: &str) -> Vec<String> {
+    actions(cx).into_iter().filter(|(k, _)| k == kind).map(|(_, p)| p).collect()
+}
+
+fn click_pick(cx: &mut TestAppContext, handle: AnyWindowHandle, id: usize) {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("pick", id), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn l_opens_the_labels_of_the_repo_and_a_click_sends_the_set(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    crate::test_support::write(cx, LABELS, &[]);
+    press(cx, handle, "l");
+    assert_eq!(picker_kind(cx, &reading), Some(pickers::PickerKind::Labels));
+    wait_for(cx, "choices", |cx| choices_loaded(cx, &reading));
+    // The labels of this repo only.
+    let ids: Vec<i64> = cx.read(|cx| reading.read(cx).visible_choices(cx).iter().map(|c| c.id).collect());
+    assert_eq!(ids, [1, 2]);
+
+    click_pick(cx, handle, 1);
+    wait_for(cx, "labels queued", |cx| !payloads(cx, "set_labels").is_empty());
+    // Applied at once; the header marks the field pending.
+    wait_for(cx, "pending", |cx| cx.read(|cx| reading.read(cx).field_pending(pickers::PickerKind::Labels)));
+    assert_eq!(count(cx, handle, "labels-pending"), 1);
+    let on: i64 = crate::test_support::query_i64(cx, "SELECT COUNT(*) FROM issue_labels WHERE issue_id = 1 AND label_id = 1");
+    assert_eq!(on, 1);
+
+    // A second click sends the whole set and supersedes the first.
+    click_pick(cx, handle, 2);
+    wait_for(cx, "second set", |cx| payloads(cx, "set_labels").last().is_some_and(|p| p.contains("[1,2]")));
+    let pending: i64 = crate::test_support::query_i64(
+        cx,
+        "SELECT COUNT(*) FROM pending_fields WHERE table_name = 'issues' AND row_id = 1 AND field = 'labels'",
+    );
+    assert_eq!(pending, 1);
+}
+
+#[gpui_kit::test]
+fn the_assignee_search_and_enter_pick_the_first_match(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    click(cx, handle, "action-assignees");
+    assert_eq!(picker_kind(cx, &reading), Some(pickers::PickerKind::Assignees));
+    wait_for(cx, "choices", |cx| choices_loaded(cx, &reading));
+    // Keys type into the search box; `l` does not act.
+    cx.update_window(handle, |_, window, cx| window.input("BO", cx)).unwrap();
+    let ids: Vec<i64> = cx.read(|cx| reading.read(cx).visible_choices(cx).iter().map(|c| c.id).collect());
+    assert_eq!(ids, [2]);
+    press(cx, handle, "enter");
+    wait_for(cx, "assignees queued", |cx| !payloads(cx, "set_assignees").is_empty());
+    assert!(payloads(cx, "set_assignees")[0].contains("[2]"), "{:?}", payloads(cx, "set_assignees"));
+    wait_for(cx, "assigned", |cx| cx.read(|cx| reading.read(cx).assignees.iter().any(|u| u.login == "bob")));
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_picker_and_another_item_drops_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (queue, reading) = show(cx, handle, &ws, "101", 3);
+    press(cx, handle, "l");
+    assert!(picker_kind(cx, &reading).is_some());
+    press(cx, handle, "escape");
+    assert!(picker_kind(cx, &reading).is_none());
+    // Focus is back on the queue.
+    press(cx, handle, "j");
+    cx.read(|cx| assert_eq!(queue.read(cx).selected_key(), Some("102")));
+    wait_for(cx, "issue", |cx| detail_id(cx, &reading) == Some(1));
+    press(cx, handle, "l");
+    assert!(picker_kind(cx, &reading).is_some());
+    reading.update(cx, |pane, cx| pane.set_item(None, cx));
+    assert!(picker_kind(cx, &reading).is_none());
+    assert!(payloads(cx, "set_labels").is_empty());
+}
+
+// ---- merge method per repo, check state (parity G1 part 3) -----------------
+
+fn open_pr_in(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>, id: i64) -> Entity<ReadingPane> {
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id }, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let reading = active_pane(cx, handle, ws);
+    wait_for(cx, "detail", |cx| detail_id(cx, &reading) == Some(id) && is_pr_detail(cx, &reading));
+    reading
+}
+
+fn saved_method(cx: &mut TestAppContext, repo_id: i64) -> Option<String> {
+    read_db(cx, move |c| {
+        use rusqlite::OptionalExtension as _;
+        c.query_row("SELECT method FROM repo_merge_methods WHERE repo_id = ?1", [repo_id], |r| r.get(0)).optional()
+    })
+}
+
+#[gpui_kit::test]
+fn the_merge_button_offers_the_method_last_sent_in_the_repo(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    crate::test_support::write(
+        cx,
+        "INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at) VALUES
+           (7,'I',2,3,1,'open','second PR',2,0,40), (8,'I',1,2,1,'open','other repo',2,0,40);
+         INSERT INTO pr_details(issue_id,base_ref,head_ref,base_oid,head_oid,changed_files)
+           VALUES (7,'main','t2','b1','h7',1), (8,'main','t3','b1','h8',1);",
+        &["issues"],
+    );
+    // First merge in the repo: a merge commit.
+    let reading = open_pr_in(cx, handle, &ws, 3);
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_method, fl_types::MergeMethod::Merge));
+    click(cx, handle, "action-merge");
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_confirm, Some(fl_types::MergeMethod::Merge)));
+    click(cx, handle, "action-merge-cancel");
+    // Another method from the menu; saved when sent, before GitHub answers.
+    reading.update(cx, |pane, cx| pane.pick_merge(fl_types::MergeMethod::Squash, cx));
+    click(cx, handle, "action-merge-confirm");
+    wait_for(cx, "method saved", |cx| saved_method(cx, 2).as_deref() == Some("squash"));
+    assert!(actions(cx).into_iter().any(|(k, p)| k == "merge" && p.contains("squash")));
+
+    // The next PR in that repo offers squash; a PR in another repo does not.
+    let next = open_pr_in(cx, handle, &ws, 7);
+    cx.read(|cx| assert_eq!(next.read(cx).merge_method, fl_types::MergeMethod::Squash));
+    click(cx, handle, "action-merge");
+    cx.read(|cx| assert_eq!(next.read(cx).merge_confirm, Some(fl_types::MergeMethod::Squash)));
+    let other = open_pr_in(cx, handle, &ws, 8);
+    cx.read(|cx| assert_eq!(other.read(cx).merge_method, fl_types::MergeMethod::Merge));
+}
+
+#[gpui_kit::test]
+fn the_check_state_shows_beside_merge(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    assert_eq!(count(cx, handle, "merge-checks"), 0, "no combined state yet");
+    crate::test_support::write(cx, "UPDATE pr_details SET check_state = 'FAILURE' WHERE issue_id = 3", &["issues"]);
+    wait_for(cx, "checks", |cx| cx.read(|cx| reading.read(cx).check_state() == Some(CheckState::Failure)));
+    assert_eq!(count(cx, handle, "merge-checks"), 1);
+    // Also beside a blocked Merge.
+    crate::test_support::write(cx, "UPDATE pr_details SET is_draft = 1 WHERE issue_id = 3", &["issues"]);
+    wait_for(cx, "draft", |cx| {
+        cx.read(|cx| reading.read(cx).merge_state() == action_bar::MergeState::Blocked("Draft"))
+    });
+    assert_eq!(count(cx, handle, "merge-checks"), 1);
+}
+
+/// A wheel notch over the Conversation scrolls over a few frames, not in one
+/// jump, and ends where the jump would have.
+#[gpui_kit::test]
+fn a_wheel_notch_scrolls_the_conversation_smoothly(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let comments: String = (10..40)
+        .map(|id| {
+            format!(
+                "INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at) \
+                 VALUES ({id},3,2,'one\n\ntwo\n\nthree',{id},{id});"
+            )
+        })
+        .collect();
+    let (handle, ws) = open_seeded(cx, dir.path(), &format!("{SEED}{comments}"));
+    cx.run_until_parked();
+    let (_, reading) = show(cx, handle, &ws, "101", 3);
+    let frame = |cx: &mut TestAppContext| cx.update_window(handle, |_, window, cx| window.render_frame(cx)).unwrap();
+    let top = |cx: &mut TestAppContext| cx.read(|cx| reading.read(cx).conversation.scroll_top());
+    frame(cx);
+    assert_eq!(top(cx), 0.);
+
+    // One notch: three lines of 20 px.
+    cx.update_window(handle, |_, window, cx| window.scroll("conversation", ScrollDelta::Lines(point(0., -3.)), cx))
+        .unwrap();
+    let first = top(cx);
+    assert!(first < 59., "the notch landed in one frame: {first}");
+    let start = Instant::now();
+    while top(cx) < 59.5 && start.elapsed() < Duration::from_secs(2) {
+        frame(cx);
+    }
+    assert!((top(cx) - 60.).abs() < 0.5, "ended at {}", top(cx));
 }

@@ -1,5 +1,5 @@
 //! Token lookup (env, OS credential store, GitHub CLI) and the OAuth device
-//! flow. The device flow goes away with the Tauri app (ADR 0001).
+//! flow.
 
 use fl_types::{AuthPoll, DeviceCode};
 

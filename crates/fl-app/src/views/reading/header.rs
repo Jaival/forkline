@@ -1,18 +1,25 @@
 //! Header of the reading pane: repo and number, title, state and meta line.
 
-use fl_types::{IssueState, Label, PrDetail, QueueRow};
+use fl_types::{IssueState, Label, PrDetail, QueueRow, User};
 use gpui_kit::component::{ActiveTheme as _, Theme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Div, FontWeight, Hsla, IntoElement as _, ParentElement as _, SharedString, Styled as _, div,
-    px, rgb,
+    AnyElement, App, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    SharedString, Styled as _, TestSupportExt as _, div, px, rgb,
 };
 
 use super::Detail;
 
+/// What the header shows beside the detail: assignees and pending markers.
+pub(super) struct Extra<'a> {
+    pub assignees: &'a [User],
+    pub labels_pending: bool,
+    pub assignees_pending: bool,
+}
+
 /// `row` is the selected queue row (absent in an item tab); `detail` arrives a
 /// moment later. Render from `detail` when it is there, else from `row`.
-pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, cx: &App) -> AnyElement {
+pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Extra<'_>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let block = v_flex().flex_none().p(px(12.)).gap(px(4.)).border_b_1().border_color(theme.border);
     let (repo, number, title, state, author) = match (detail, row) {
@@ -68,7 +75,13 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, cx: &App) 
         .children(labels.iter().map(|label| {
             let color = parse_color(&label.color).unwrap_or(theme.muted_foreground);
             pill(label.name.clone(), color, 0.18)
-        }));
+        }))
+        .when(extra.labels_pending, |d| d.child(pending("labels-pending", "labels pending", theme)))
+        .when(detail.is_some() && !extra.assignees.is_empty(), |d| {
+            let logins: Vec<&str> = extra.assignees.iter().map(|u| u.login.as_str()).collect();
+            d.child(format!("Assigned: {}", logins.join(", ")))
+        })
+        .when(extra.assignees_pending, |d| d.child(pending("assignees-pending", "assignees pending", theme)));
 
     block
         .child(div().text_xs().text_color(theme.muted_foreground).child(path))
@@ -80,6 +93,11 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, cx: &App) 
 /// Small rounded tag: text in `color` on `color` at `fill` opacity.
 fn pill(text: impl Into<SharedString>, color: Hsla, fill: f32) -> Div {
     div().px(px(6.)).rounded_full().bg(color.opacity(fill)).text_color(color).child(text.into())
+}
+
+/// A change GitHub has not confirmed yet.
+fn pending(id: &'static str, text: &'static str, theme: &Theme) -> impl gpui_kit::IntoElement {
+    div().id(id).test_support().child(pill(text, theme.muted_foreground, 0.15))
 }
 
 /// A dot and `passed / total checks`.
@@ -102,6 +120,6 @@ fn check_summary(pr: &PrDetail, theme: &Theme) -> Div {
 }
 
 /// GitHub label colour: six hex digits, no `#`.
-fn parse_color(hex: &str) -> Option<Hsla> {
+pub(super) fn parse_color(hex: &str) -> Option<Hsla> {
     u32::from_str_radix(hex, 16).ok().filter(|_| hex.len() == 6).map(|c| rgb(c).into())
 }

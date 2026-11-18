@@ -52,20 +52,24 @@ pub fn mark_viewed(conn: &Connection, id: IssueId, now: i64) -> rusqlite::Result
     Ok(())
 }
 
+/// Assignees of an issue or pull request, by login.
+pub fn assignees(conn: &Connection, id: IssueId) -> rusqlite::Result<Vec<User>> {
+    conn.prepare_cached(
+        "SELECT u.id, u.login FROM issue_assignees a JOIN users u ON u.id = a.user_id
+         WHERE a.issue_id = ?1 ORDER BY u.login",
+    )?
+    .query_map([id], |r| {
+        Ok(User {
+            id: r.get(0)?,
+            login: r.get(1)?,
+        })
+    })?
+    .collect()
+}
+
 /// Conversation, timeline, assignees, linked items and pending fields.
 pub fn thread(conn: &Connection, id: IssueId) -> rusqlite::Result<IssueThread> {
-    let assignees = conn
-        .prepare_cached(
-            "SELECT u.id, u.login FROM issue_assignees a JOIN users u ON u.id = a.user_id
-             WHERE a.issue_id = ?1 ORDER BY u.login",
-        )?
-        .query_map([id], |r| {
-            Ok(User {
-                id: r.get(0)?,
-                login: r.get(1)?,
-            })
-        })?
-        .collect::<rusqlite::Result<_>>()?;
+    let assignees = assignees(conn, id)?;
     let comments = conn
         .prepare_cached(
             "SELECT c.id, COALESCE(u.login, 'ghost'), c.body_html, c.body_md, c.created_at
