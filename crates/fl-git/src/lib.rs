@@ -206,6 +206,20 @@ impl GitStore {
         })
     }
 
+    /// The `diff_summary` plus the whole unified patch of
+    /// `merge-base(base, head)..head`. The patch is the input of
+    /// gpui-component's `DiffFile::parse`.
+    pub fn diff_patch(&self, clone: &Path, base: &str, head: &str) -> GitResult<(DiffSummary, String)> {
+        let (mb, files) = self.summary_files(clone, base, head)?;
+        let out = run_git(Some(clone), &["diff", "--no-color", "--no-ext-diff", "-M", "-U3", &mb, head], None, true)?;
+        let summary = DiffSummary {
+            merge_base_oid: mb,
+            head_oid: head.to_owned(),
+            files,
+        };
+        Ok((summary, String::from_utf8_lossy(&out).into_owned()))
+    }
+
     fn summary_files(&self, clone: &Path, base: &str, head: &str) -> GitResult<(String, Vec<DiffFileSummary>)> {
         if !is_oid(base) || !is_oid(head) {
             return Err(GitError::Other("invalid object id".into()));

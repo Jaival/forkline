@@ -277,11 +277,19 @@ impl Queue {
     }
 
     fn apply(&mut self, snap: Snapshot, cx: &mut Context<Self>) {
-        let before = self.selected.map(|ix| self.rows[ix].clone());
+        let before_ix = self.selected;
+        let before = before_ix.map(|ix| self.rows[ix].clone());
         self.rows = snap.rows;
         self.next = snap.next;
         self.counts = snap.counts;
-        self.selected = before.as_ref().and_then(|b| self.rows.iter().position(|r| r.key == b.key));
+        // A selected row that left (Done, Snooze, sync) passes the selection
+        // to the row that took its place, so triage goes on with the next one.
+        self.selected = before.as_ref().and_then(|b| {
+            self.rows.iter().position(|r| r.key == b.key).or_else(|| {
+                let last = self.rows.len().checked_sub(1)?;
+                before_ix.map(|ix| ix.min(last))
+            })
+        });
         self.rebuild();
         let after = self.selected.map(|ix| &self.rows[ix]);
         if after != before.as_ref() {

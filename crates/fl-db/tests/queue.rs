@@ -196,3 +196,55 @@ fn paging() {
     assert_eq!(keys(&second.items), ["2"]);
     assert_eq!(second.next, None);
 }
+
+fn inbox_keys(db: &Db) -> Vec<String> {
+    rows(db, q(QueueKind::Inbox, None)).into_iter().map(|r| r.key).collect()
+}
+
+fn unread(db: &Db) -> u32 {
+    db.read(queries::inbox::unread_count).unwrap()
+}
+
+#[test]
+fn done_hides_and_returns_on_later_update() {
+    let (_d, db) = fresh();
+    seed(&db);
+    seed_inbox(&db);
+    let before = unread(&db);
+    assert!(db.write(|c| queries::inbox::set_done(c, "sub", 1000)).unwrap());
+    assert!(!inbox_keys(&db).contains(&"sub".to_string()));
+    assert_eq!(unread(&db), before - 1);
+    let page = db
+        .read(|c| queries::inbox::list(c, &fl_types::InboxFilter::default(), PageReq { offset: 0, limit: 100 }))
+        .unwrap();
+    assert!(page.items.iter().all(|r| r.id != "sub"));
+    // done_at = MAX(now, updated_at): a future-dated row is hidden too.
+    assert!(db.write(|c| queries::inbox::set_done(c, "unk", 5)).unwrap());
+    assert!(!inbox_keys(&db).contains(&"unk".to_string()));
+    // A later update brings it back.
+    db.write(|c| c.execute("UPDATE notifications SET updated_at = 1001 WHERE id = 'sub'", []))
+        .unwrap();
+    assert!(inbox_keys(&db).contains(&"sub".to_string()));
+    assert!(!db.write(|c| queries::inbox::set_done(c, "missing", 1)).unwrap());
+}
+
+#[test]
+fn snooze_hides_until_time_passes() {
+    let (_d, db) = fresh();
+    seed(&db);
+    seed_inbox(&db);
+    let before = unread(&db);
+    assert!(db.write(|c| queries::inbox::snooze(c, "men", 4_000_000_000)).unwrap());
+    assert!(!inbox_keys(&db).contains(&"men".to_string()));
+    assert_eq!(unread(&db), before - 1);
+    assert!(db.write(|c| queries::inbox::snooze(c, "men", 1)).unwrap());
+    assert!(inbox_keys(&db).contains(&"men".to_string()));
+    assert_eq!(unread(&db), before);
+    // Done clears a snooze.
+    db.write(|c| queries::inbox::snooze(c, "asg", 4_000_000_000)).unwrap();
+    db.write(|c| queries::inbox::set_done(c, "asg", 1)).unwrap();
+    let until: Option<i64> = db
+        .read(|c| c.query_row("SELECT snoozed_until FROM notifications WHERE id = 'asg'", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(until, None);
+}
