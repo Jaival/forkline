@@ -31,5 +31,5 @@ start the app with `--data-dir fake-data`. The benchmark report produced by
 `--bench <report.json>` can be checked with
 `cargo run -p fl-bench --release -- <report.json> bench/budgets.json`.
 
-Phase 0 establishes the workspace, SQLite schema, typed Tauri command boundary,
-and UI shell. GitHub sync and feature views are added in later phases.
+Requires Git for Windows on PATH (used for diffs). Sign in from the footer, or
+set `FORKLINE_GITHUB_TOKEN` in dev. See `docs/HANDOFF.md` for the current state.

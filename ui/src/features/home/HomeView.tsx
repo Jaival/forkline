@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { commands } from "../../bindings";
 import type { ViewRef } from "../../lib/layout";
 import { signalReady } from "../../lib/perf";
+import { VirtualList } from "../../lib/VirtualList";
+import { IssueRowItem, ROW_HEIGHT, viewFor } from "../lists/IssueRowItem";
 
 export function HomeView({ onNavigate }: { onNavigate: (view: ViewRef) => void }) {
   const feed = useQuery({
@@ -16,24 +18,21 @@ export function HomeView({ onNavigate }: { onNavigate: (view: ViewRef) => void }
   }, [feed.isSuccess]);
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <h1 className="mb-4 text-xl font-semibold">Home</h1>
-      {feed.isPending ? <p className="text-muted">Loading cached activity…</p> : null}
-      {feed.isError ? <p role="alert">Could not read the local activity cache.</p> : null}
-      {feed.data?.items.length === 0 ? <p className="text-muted">No cached activity yet.</p> : null}
-      <ul className="divide-y divide-border">
-        {feed.data?.items.map((item) => (
-          <li key={item.id}>
-            <button
-              className="block w-full py-3 text-left hover:bg-raised"
-              onClick={() => onNavigate({ kind: item.is_pr ? "pr" : "issue", id: item.id })}
-            >
-              <span className="text-muted">{item.repo} #{item.number}</span>
-              <span className="ml-2">{item.title}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+    <div className="flex h-full flex-col">
+      <h1 className="px-6 pt-6 pb-4 text-xl font-semibold">Home</h1>
+      {feed.isPending ? <p className="px-6 text-muted">Loading cached activity…</p> : null}
+      {feed.isError ? <p className="px-6" role="alert">Could not read the local activity cache.</p> : null}
+      {feed.data?.items.length === 0 ? <p className="px-6 text-muted">No cached activity yet.</p> : null}
+      <div className="min-h-0 flex-1">
+        <VirtualList
+          label="Recent activity"
+          items={feed.data?.items ?? []}
+          rowHeight={ROW_HEIGHT}
+          getKey={(item) => item.id}
+          renderRow={(item) => <IssueRowItem item={item} onNavigate={onNavigate} />}
+          onOpen={(item) => onNavigate(viewFor(item))}
+        />
+      </div>
     </div>
   );
 }

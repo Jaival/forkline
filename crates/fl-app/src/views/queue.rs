@@ -1,0 +1,782 @@
+//! The work queue: one grouped, virtualized list behind Inbox, Pull requests,
+//! Issues and Review requests.
+
+use std::rc::Rc;
+use std::time::Instant;
+
+use fl_db::queries::{queue, repo, views};
+use fl_types::{
+    CheckState, DataChanged, IssueState, PAGE_MAX, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow,
+    SavedView,
+};
+use gpui_kit::assets::IconName;
+use gpui_kit::base::VirtualListScrollHandle;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme, h_flex, v_flex, v_virtual_list};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollStrategy, SharedString,
+    Size, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions,
+    div, px, size,
+};
+use rusqlite::Connection;
+
+use crate::bench;
+use crate::store::Store;
+use crate::view_ref::ViewRef;
+use crate::workspace::{OpenView, SetViewRef};
+
+actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView]);
+
+const HEADER_HEIGHT: f32 = 26.;
+const ROW_HEIGHT: f32 = 46.;
+/// Start the next page when the rendered range ends this close to the end.
+const LOAD_AHEAD: usize = 20;
+
+pub enum QueueEvent {
+    Selected(Option<QueueRow>),
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Item {
+    Header(QueueGroup),
+    /// Index into `Queue::rows`.
+    Row(usize),
+}
+
+/// One header before the first row of each group. Rows arrive ordered by group.
+fn flatten(rows: &[QueueRow]) -> Vec<Item> {
+    let mut items = Vec::with_capacity(rows.len() + QueueGroup::ALL.len());
+    let mut group = None;
+    for (ix, row) in rows.iter().enumerate() {
+        if group != Some(row.group) {
+            group = Some(row.group);
+            items.push(Item::Header(row.group));
+        }
+        items.push(Item::Row(ix));
+    }
+    items
+}
+
+/// `now`, `5m`, `2h`, `3d`, `4w`, `2y`.
+pub(super) fn age(now: i64, then: i64) -> String {
+    match now - then {
+        ..60 => "now".into(),
+        s @ 60..3_600 => format!("{}m", s / 60),
+        s @ 3_600..86_400 => format!("{}h", s / 3_600),
+        s @ 86_400..604_800 => format!("{}d", s / 86_400),
+        s @ 604_800..31_536_000 => format!("{}w", s / 604_800),
+        s => format!("{}y", s / 31_536_000),
+    }
+}
+
+struct Snapshot {
+    rows: Vec<QueueRow>,
+    next: Option<u32>,
+    counts: Vec<(QueueGroup, u32)>,
+}
+
+/// The first `pages` pages and the group counts, under the `/` filter text.
+fn snapshot(conn: &Connection, query: &QueueQuery, filter: &str, pages: usize) -> rusqlite::Result<Snapshot> {
+    let cond = fl_search::queue_filter(conn, filter)?;
+    let mut rows = Vec::new();
+    let mut offset = 0;
+    let mut next = None;
+    for _ in 0..pages {
+        let page = queue::page(conn, query, cond.as_ref(), PageReq { offset, limit: PAGE_MAX })?;
+        rows.extend(page.items);
+        next = page.next;
+        match next {
+            Some(n) => offset = n,
+            None => break,
+        }
+    }
+    Ok(Snapshot { rows, next, counts: queue::counts(conn, query, cond.as_ref())? })
+}
+
+pub struct Queue {
+    query: QueueQuery,
+    title: SharedString,
+    rows: Vec<QueueRow>,
+    counts: Vec<(QueueGroup, u32)>,
+    /// False between a filter change and its counts: show no numbers then.
+    counts_ready: bool,
+    next: Option<u32>,
+    loading: bool,
+    /// Bumped when a read in flight turns stale (reload, filter change).
+    generation: u32,
+    /// Index into `rows`.
+    selected: Option<usize>,
+    items: Vec<Item>,
+    sizes: Rc<Vec<Size<Pixels>>>,
+    scroll: VirtualListScrollHandle,
+    pub focus: FocusHandle,
+    /// `(owner/name, id)` of the pinned repositories, for the filter.
+    repos: Rc<Vec<(String, i64)>>,
+    /// The `/` filter text, as typed.
+    filter: String,
+    input: Entity<InputState>,
+    /// Milliseconds from the last filter change to its first page applied.
+    filter_ms: Option<f64>,
+    /// A first page for the current filter was applied; the next frame tells the bench.
+    filter_applied: bool,
+    /// Saved views of every queue kind.
+    views: Vec<SavedView>,
+    _store: Subscription,
+    _input: Subscription,
+}
+
+impl EventEmitter<QueueEvent> for Queue {}
+
+impl Queue {
+    pub fn new(query: QueueQuery, title: SharedString, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Read synchronously: the first frame must have rows.
+        let db = Store::global(cx).read(cx).db().clone();
+        let snap = db.read(|c| snapshot(c, &query, "", 1)).ok();
+        let repos = db
+            .read(repo::pinned)
+            .map(|pinned| pinned.into_iter().map(|r| (format!("{}/{}", r.owner, r.name), r.id)).collect())
+            .unwrap_or_default();
+        let saved = db.read(views::list).unwrap_or_default();
+        let subscription = cx.subscribe(&Store::global(cx), |this, _, ev: &DataChanged, cx| {
+            if ev.scopes.iter().any(|s| matches!(s.as_str(), "inbox" | "issues" | "pr")) {
+                this.reload(cx);
+            }
+            if ev.scopes.iter().any(|s| s == "views") {
+                this.views = Store::global(cx).read(cx).db().read(views::list).unwrap_or_default();
+                cx.notify();
+            }
+        });
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter: is:open author:me label:bug text"));
+        let input_subscription = cx.subscribe_in(&input, window, |this, input, ev: &InputEvent, window, cx| match ev {
+            InputEvent::Change => {
+                let text = input.read(cx).value().to_string();
+                this.change_filter(text, cx);
+            }
+            InputEvent::PressEnter { .. } => window.focus(&this.focus, cx),
+            _ => {}
+        });
+        let mut this = Self {
+            query,
+            title,
+            rows: Vec::new(),
+            counts: Vec::new(),
+            counts_ready: false,
+            next: None,
+            loading: false,
+            generation: 0,
+            selected: None,
+            items: Vec::new(),
+            sizes: Rc::default(),
+            scroll: VirtualListScrollHandle::new(),
+            focus: cx.focus_handle(),
+            repos: Rc::new(repos),
+            filter: String::new(),
+            input,
+            filter_ms: None,
+            filter_applied: false,
+            views: saved,
+            _store: subscription,
+            _input: input_subscription,
+        };
+        if let Some(snap) = snap {
+            this.rows = snap.rows;
+            this.next = snap.next;
+            this.counts = snap.counts;
+            this.counts_ready = true;
+            this.rebuild();
+        }
+        this
+    }
+
+    fn rebuild(&mut self) {
+        self.items = flatten(&self.rows);
+        let sizes = self.items.iter().map(|item| {
+            let height = if matches!(item, Item::Header(_)) { HEADER_HEIGHT } else { ROW_HEIGHT };
+            size(px(0.), px(height))
+        });
+        self.sizes = Rc::new(sizes.collect());
+    }
+
+    fn select(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        if self.selected == selected {
+            return;
+        }
+        self.selected = selected;
+        cx.emit(QueueEvent::Selected(selected.map(|ix| self.rows[ix].clone())));
+        cx.notify();
+    }
+
+    fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
+        let Some(last) = self.rows.len().checked_sub(1) else { return };
+        let ix = match self.selected {
+            None => 0,
+            Some(ix) => ix.saturating_add_signed(step).min(last),
+        };
+        self.select(Some(ix), cx);
+        if let Some(item_ix) = self.items.iter().position(|item| *item == Item::Row(ix)) {
+            self.scroll.scroll_to_item(item_ix, ScrollStrategy::Nearest);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(1, cx);
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(-1, cx);
+    }
+
+    fn open_selected(&mut self, _: &OpenSelected, window: &mut Window, cx: &mut Context<Self>) {
+        self.open(window, cx);
+    }
+
+    fn open(&self, window: &mut Window, cx: &mut App) {
+        let Some(row) = self.selected.map(|ix| &self.rows[ix]) else { return };
+        let Some(id) = row.issue_id else { return };
+        let view = if row.is_pr { ViewRef::Pr { id } } else { ViewRef::Issue { id } };
+        window.dispatch_action(Box::new(OpenView(view)), cx);
+    }
+
+    /// The repo filter menu: filter, and have the tab record it, so its title
+    /// names the repo and the saved layout reopens it.
+    pub(super) fn pick_repo(&mut self, repo_id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_repo(repo_id, cx);
+        let view_ref = match self.query.kind {
+            QueueKind::Pulls => ViewRef::Pulls { repo_id },
+            QueueKind::Issues => ViewRef::Issues { repo_id },
+            QueueKind::Inbox | QueueKind::Reviews => return,
+        };
+        window.dispatch_action(Box::new(SetViewRef(view_ref)), cx);
+    }
+
+    fn set_repo(&mut self, repo_id: Option<i64>, cx: &mut Context<Self>) {
+        self.query.repo_id = repo_id;
+        self.generation += 1;
+        self.loading = false;
+        self.selected = None;
+        let query = self.query;
+        let filter = self.filter.clone();
+        let snap = Store::global(cx).read(cx).db().read(|c| snapshot(c, &query, &filter, 1)).ok();
+        self.rows = Vec::new();
+        self.counts = Vec::new();
+        self.counts_ready = false;
+        self.next = None;
+        if let Some(snap) = snap {
+            self.rows = snap.rows;
+            self.next = snap.next;
+            self.counts = snap.counts;
+            self.counts_ready = true;
+        }
+        self.rebuild();
+        cx.emit(QueueEvent::Selected(None));
+        cx.notify();
+    }
+
+    /// Show `text` in the query bar and filter by it.
+    pub(super) fn set_filter_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+        self.change_filter(text.to_owned(), cx);
+    }
+
+    /// Filter by `filter`: read its first page in the background, then the
+    /// group counts. Nothing is selected until the page is on screen.
+    fn change_filter(&mut self, filter: String, cx: &mut Context<Self>) {
+        self.filter = filter;
+        self.generation += 1;
+        self.loading = false;
+        self.counts_ready = false;
+        self.filter_ms = None;
+        self.select(None, cx);
+        let generation = self.generation;
+        let started = Instant::now();
+        let query = self.query;
+        let text = self.filter.clone();
+        let store = Store::global(cx).read(cx);
+        let task = store.read(cx, move |c| {
+            let cond = fl_search::queue_filter(c, &text)?;
+            queue::page(c, &query, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX })
+        });
+        cx.spawn(async move |this, cx| {
+            let page = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if let Ok(page) = page {
+                    this.rows = page.items;
+                    this.next = page.next;
+                    this.rebuild();
+                    this.filter_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+                    this.filter_applied = true;
+                    cx.notify();
+                    this.read_counts(generation, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The group counts of the current filter, in a second background read.
+    fn read_counts(&mut self, generation: u32, cx: &mut Context<Self>) {
+        let query = self.query;
+        let text = self.filter.clone();
+        let task = Store::global(cx).read(cx).read(cx, move |c| {
+            let cond = fl_search::queue_filter(c, &text)?;
+            queue::counts(c, &query, cond.as_ref())
+        });
+        cx.spawn(async move |this, cx| {
+            let counts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if let Ok(counts) = counts {
+                    this.counts = counts;
+                    this.counts_ready = true;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    /// Escape in the query bar: drop the filter, then give the keys back to the list.
+    fn escape_filter(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.filter.is_empty() {
+            self.set_filter_text("", window, cx);
+        }
+        window.focus(&self.focus, cx);
+    }
+
+    /// Save the filter as a view named after its text.
+    pub(super) fn save_view(&mut self, _: &SaveView, _: &mut Window, cx: &mut Context<Self>) {
+        let text = self.filter.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        let kind = self.query.kind;
+        let db = Store::global(cx).read(cx).db().clone();
+        let task = cx.background_spawn(async move { db.write(|c| views::save(c, kind, &text, &text, fl_sync::now())) });
+        cx.spawn(async move |_, cx| {
+            if task.await.is_ok() {
+                cx.update(|cx| Store::emit_changed(&["views"], cx));
+            }
+        })
+        .detach();
+    }
+
+    /// The saved views of this queue's kind.
+    fn kind_views(&self) -> impl Iterator<Item = &SavedView> {
+        self.views.iter().filter(|v| v.kind == self.query.kind)
+    }
+
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        let Some(offset) = self.next else { return };
+        if self.loading {
+            return;
+        }
+        self.loading = true;
+        let generation = self.generation;
+        let query = self.query;
+        let filter = self.filter.clone();
+        let task = Store::global(cx).read(cx).read(cx, move |c| {
+            let cond = fl_search::queue_filter(c, &filter)?;
+            queue::page(c, &query, cond.as_ref(), PageReq { offset, limit: PAGE_MAX })
+        });
+        cx.spawn(async move |this, cx| {
+            let page = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                this.loading = false;
+                if let Ok(page) = page {
+                    this.rows.extend(page.items);
+                    this.next = page.next;
+                    this.rebuild();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Read again as many pages as are loaded now; keep the selection by key.
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        self.generation += 1;
+        self.loading = true;
+        let generation = self.generation;
+        let query = self.query;
+        let filter = self.filter.clone();
+        let pages = self.rows.len().div_ceil(PAGE_MAX as usize).max(1);
+        let task = Store::global(cx).read(cx).read(cx, move |c| snapshot(c, &query, &filter, pages));
+        cx.spawn(async move |this, cx| {
+            let snap = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                this.loading = false;
+                if let Ok(snap) = snap {
+                    this.apply(snap, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn apply(&mut self, snap: Snapshot, cx: &mut Context<Self>) {
+        let before_ix = self.selected;
+        let before = before_ix.map(|ix| self.rows[ix].clone());
+        self.rows = snap.rows;
+        self.next = snap.next;
+        self.counts = snap.counts;
+        self.counts_ready = true;
+        // A selected row that left (Done, Snooze, sync) passes the selection
+        // to the row that took its place, so triage goes on with the next one.
+        self.selected = before.as_ref().and_then(|b| {
+            self.rows.iter().position(|r| r.key == b.key).or_else(|| {
+                let last = self.rows.len().checked_sub(1)?;
+                before_ix.map(|ix| ix.min(last))
+            })
+        });
+        self.rebuild();
+        let after = self.selected.map(|ix| &self.rows[ix]);
+        if after != before.as_ref() {
+            cx.emit(QueueEvent::Selected(after.cloned()));
+        }
+        cx.notify();
+    }
+
+    fn header_element(&self, group: QueueGroup, theme: &Theme) -> AnyElement {
+        let count = self.counts.iter().find(|(g, _)| *g == group).map_or(0, |(_, n)| *n);
+        h_flex()
+            .w_full()
+            .h(px(HEADER_HEIGHT))
+            .px(px(10.))
+            .items_center()
+            .justify_between()
+            .bg(theme.sidebar)
+            .border_b_1()
+            .border_color(theme.border)
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(group.label().to_uppercase())
+            .child(if self.counts_ready { count.to_string() } else { String::new() })
+            .into_any_element()
+    }
+
+    fn row_element(&self, row_ix: usize, cx: &Context<Self>) -> AnyElement {
+        let row = &self.rows[row_ix];
+        let theme = cx.theme();
+        let selected = self.selected == Some(row_ix);
+        let (icon, icon_color) = state_icon(row, theme);
+
+        let mut sub = row.repo.clone();
+        if let Some(number) = row.number {
+            sub.push_str(&format!(" #{number}"));
+        }
+        if let Some(author) = &row.author {
+            sub.push_str(&format!(" \u{b7} {author}"));
+        }
+        let check = row.checks.map(|state| match state {
+            CheckState::Success => (IconName::Check, theme.success),
+            CheckState::Failure => (IconName::X, theme.danger),
+            CheckState::Pending => (IconName::Clock, theme.warning),
+        });
+
+        div()
+            .id(("queue-row", row_ix))
+            .test_support()
+            .relative()
+            .flex()
+            .w_full()
+            .h(px(ROW_HEIGHT))
+            .px(px(10.))
+            .py(px(5.))
+            .gap(px(8.))
+            .items_start()
+            .border_b_1()
+            .border_color(theme.border)
+            .when(selected, |d| {
+                d.bg(theme.primary.opacity(0.12)).child(
+                    div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(theme.primary),
+                )
+            })
+            .when(!selected, |d| d.hover(|s| s.bg(theme.accent.opacity(0.5))))
+            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                this.select(Some(row_ix), cx);
+                if ev.click_count() >= 2 {
+                    this.open(window, cx);
+                }
+            }))
+            .child(div().mt(px(3.)).child(Icon::new(icon).with_size(px(14.)).text_color(icon_color)))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .truncate()
+                            .text_sm()
+                            .when(row.unread, |d| d.font_weight(FontWeight::SEMIBOLD))
+                            .child(row.title.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(div().truncate().min_w_0().child(sub))
+                            .when_some(check, |d, (icon, color)| {
+                                d.child(Icon::new(icon).with_size(px(12.)).text_color(color))
+                            }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap(px(6.))
+                    .pt(px(2.))
+                    .items_center()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .when(row.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.primary)))
+                    .child(age(fl_sync::now(), row.updated_at)),
+            )
+            .into_any_element()
+    }
+
+    fn filter_button(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let label = match self.query.repo_id {
+            None => "All repos".to_owned(),
+            Some(id) => self
+                .repos
+                .iter()
+                .find(|(_, repo_id)| *repo_id == id)
+                .map_or_else(|| format!("Repo {id}"), |(name, _)| name.clone()),
+        };
+        let repos = self.repos.clone();
+        let queue = cx.weak_entity();
+        Button::new("queue-repo-filter").ghost().small().label(label).dropdown_caret(true).dropdown_menu(
+            move |mut menu, _, _| {
+                let entries = std::iter::once(("All repos".to_owned(), None))
+                    .chain(repos.iter().map(|(name, id)| (name.clone(), Some(*id))));
+                for (label, repo_id) in entries {
+                    let queue = queue.clone();
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
+                    }));
+                }
+                menu
+            },
+        )
+    }
+
+    /// The `/` row under the header, and the result line when a filter is set.
+    fn query_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let theme = cx.theme();
+        let text = self.filter.trim();
+        let saved = self.kind_views().any(|v| v.query == text);
+        let views: Vec<String> = self.kind_views().map(|v| v.query.clone()).collect();
+        let queue = cx.weak_entity();
+        let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
+        let result = match (self.counts_ready, self.filter_ms) {
+            (true, Some(ms)) => format!("{total} results \u{b7} {ms:.0} ms"),
+            (false, Some(ms)) => format!("{ms:.0} ms"),
+            _ => "Searching".to_owned(),
+        };
+        v_flex()
+            .flex_none()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                h_flex()
+                    .key_context("QueryBar")
+                    .on_action(cx.listener(Self::escape_filter))
+                    .h(px(30.))
+                    .px(px(12.))
+                    .gap(px(6.))
+                    .items_center()
+                    .child(div().text_color(theme.muted_foreground).child("/"))
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
+                    .child(Button::new("queue-views").ghost().small().label("Views").dropdown_caret(true).dropdown_menu(
+                        move |mut menu, _, _| {
+                            for query in &views {
+                                let (queue, text) = (queue.clone(), query.clone());
+                                menu = menu.item(PopupMenuItem::new(query.clone()).on_click(move |_, window, cx| {
+                                    let _ = queue.update(cx, |q, cx| q.set_filter_text(&text, window, cx));
+                                }));
+                            }
+                            if !views.is_empty() {
+                                menu = menu.separator();
+                            }
+                            let queue = queue.clone();
+                            menu.item(PopupMenuItem::new("Clear filter").on_click(move |_, window, cx| {
+                                let _ = queue.update(cx, |q, cx| q.set_filter_text("", window, cx));
+                            }))
+                        },
+                    )),
+            )
+            .when(!self.filter.is_empty(), |d| {
+                d.child(
+                    h_flex()
+                        .h(px(26.))
+                        .px(px(12.))
+                        .gap(px(8.))
+                        .items_center()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(div().id("queue-result-count").child(result))
+                        .child(div().flex_1())
+                        .when(!text.is_empty() && !saved, |d| {
+                            d.child(
+                                Button::new("queue-save-view")
+                                    .ghost()
+                                    .small()
+                                    .label("Save view")
+                                    .on_click(cx.listener(|this, _, window, cx| this.save_view(&SaveView, window, cx))),
+                            )
+                        }),
+                )
+            })
+    }
+
+    #[cfg(test)]
+    pub(super) fn input(&self) -> &Entity<InputState> {
+        &self.input
+    }
+
+    #[cfg(test)]
+    pub(super) fn repo_id(&self) -> Option<i64> {
+        self.query.repo_id
+    }
+
+    #[cfg(test)]
+    pub(super) fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    #[cfg(test)]
+    pub(super) fn view_queries(&self) -> Vec<&str> {
+        self.views.iter().map(|v| v.query.as_str()).collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn keys(&self) -> Vec<&str> {
+        self.rows.iter().map(|r| r.key.as_str()).collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_key(&self) -> Option<&str> {
+        self.selected.map(|ix| self.rows[ix].key.as_str())
+    }
+}
+
+fn state_icon(row: &QueueRow, theme: &Theme) -> (IconName, Hsla) {
+    match (row.is_pr, row.state) {
+        (_, None) => (IconName::Bell, theme.muted_foreground),
+        (true, Some(IssueState::Open)) => (IconName::GitPullRequest, theme.success),
+        (true, Some(IssueState::Merged)) => (IconName::GitMerge, theme.magenta),
+        (true, Some(IssueState::Closed)) => (IconName::GitPullRequestClosed, theme.danger),
+        (false, Some(IssueState::Open)) => (IconName::CircleDot, theme.success),
+        (false, Some(_)) => (IconName::CircleCheck, theme.magenta),
+    }
+}
+
+impl Render for Queue {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.filter_applied) {
+            bench::ready("filter", window, cx);
+        }
+        if !self.rows.is_empty() {
+            bench::ready(
+                match self.query.kind {
+                    QueueKind::Inbox => "inbox",
+                    QueueKind::Pulls => "pulls",
+                    QueueKind::Issues => "issues",
+                    QueueKind::Reviews => "reviews",
+                },
+                window,
+                cx,
+            );
+        }
+        let theme = cx.theme();
+        let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
+        let counts_ready = self.counts_ready;
+        let header = h_flex()
+            .flex_none()
+            .h(px(36.))
+            .px(px(12.))
+            .gap(px(8.))
+            .items_center()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title.clone()))
+            .when(counts_ready, |d| {
+                d.child(
+                    div()
+                        .px(px(6.))
+                        .rounded_full()
+                        .bg(theme.muted)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(total.to_string()),
+                )
+            })
+            .child(div().flex_1())
+            .child(self.filter_button(cx));
+
+        let body = if self.rows.is_empty() {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme.muted_foreground)
+                .child("Nothing here")
+                .into_any_element()
+        } else {
+            let list = v_virtual_list(cx.entity(), "queue-list", self.sizes.clone(), |this, range, _, cx| {
+                if range.end + LOAD_AHEAD >= this.items.len() {
+                    this.load_more(cx);
+                }
+                let theme = cx.theme();
+                range
+                    .map(|ix| match this.items[ix] {
+                        Item::Header(group) => this.header_element(group, theme),
+                        Item::Row(row_ix) => this.row_element(row_ix, cx),
+                    })
+                    .collect()
+            })
+            .track_scroll(&self.scroll);
+            div().relative().flex_1().min_h_0().child(list).vertical_scrollbar(&self.scroll).into_any_element()
+        };
+
+        v_flex()
+            .key_context("Queue")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::open_selected))
+            .on_action(cx.listener(Self::focus_filter))
+            .on_action(cx.listener(Self::save_view))
+            .size_full()
+            .child(header)
+            .child(self.query_bar(cx))
+            .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests;

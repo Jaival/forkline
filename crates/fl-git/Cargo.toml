@@ -7,6 +7,11 @@ publish.workspace = true
 [dependencies]
 fl-types.workspace = true
 fl-db.workspace = true
+thiserror.workspace = true
+base64 = "0.22"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3"

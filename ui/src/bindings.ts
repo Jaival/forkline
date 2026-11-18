@@ -16,17 +16,51 @@ export const commands = {
 	/**  Write the report to the `--bench` file and exit the app. */
 	benchFinish: () => __TAURI_INVOKE<null>("bench_finish"),
 	reposPinned: () => __TAURI_INVOKE<RepoSummary[]>("repos_pinned"),
-	repoOverview: (repoId: number) => __TAURI_INVOKE<null>("repo_overview", { repoId }),
+	reposList: (filter: RepoFilter, page: PageReq) => __TAURI_INVOKE<Page<RepoRow>>("repos_list", { filter, page }),
+	repoOverview: (repoId: number) => __TAURI_INVOKE<RepoOverview>("repo_overview", { repoId }),
+	/**  Local-only write. Sync (agent 1) deep-syncs pinned repos. */
+	repoSetPinned: (repoId: number, pinned: boolean) => __TAURI_INVOKE<null>("repo_set_pinned", { repoId, pinned }),
 	homeFeed: (page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("home_feed", { page }),
-	issueList: () => __TAURI_INVOKE<null>("issue_list"),
-	inboxList: () => __TAURI_INVOKE<null>("inbox_list"),
+	/**  Pull requests, Issues and Review requests views. */
+	issueList: (filter: IssueFilter, page: PageReq) => __TAURI_INVOKE<Page<IssueRow>>("issue_list", { filter, page }),
+	/**
+	 *  Open (not done) notifications, newest first. Mark read / done go through
+	 *  `action_enqueue`.
+	 */
+	inboxList: (filter: InboxFilter, page: PageReq) => __TAURI_INVOKE<Page<InboxRow>>("inbox_list", { filter, page }),
 	/**  Read an issue or PR from cache and clear its unread dot. */
 	issueGet: (id: number) => __TAURI_INVOKE<IssueDetail>("issue_get", { id }),
-	prGet: (id: number) => __TAURI_INVOKE<null>("pr_get", { id }),
-	diffGet: (prId: number) => __TAURI_INVOKE<null>("diff_get", { prId }),
-	search: (query: string) => __TAURI_INVOKE<null>("search", { query }),
+	/**  Conversation, timeline, assignees, linked items and pending fields. */
+	issueThread: (id: number) => __TAURI_INVOKE<IssueThread>("issue_thread", { id }),
+	/**  Labels and users to choose from in the editors. */
+	issueEditOptions: (repoId: number) => __TAURI_INVOKE<EditOptions>("issue_edit_options", { repoId }),
+	/**  Read a PR from cache and clear its unread dot. */
+	prGet: (id: number) => __TAURI_INVOKE<PrDetail>("pr_get", { id }),
+	prThreads: (prId: number, page: PageReq) => __TAURI_INVOKE<Page<ReviewThread>>("pr_threads", { prId, page }),
+	/**  Paths marked viewed at the PR's current head. */
+	prViewedPaths: (prId: number) => __TAURI_INVOKE<string[]>("pr_viewed_paths", { prId }),
+	prSetViewed: (prId: number, path: string, viewed: boolean) => __TAURI_INVOKE<null>("pr_set_viewed", { prId, path, viewed }),
+	diffSummary: (prId: number) => __TAURI_INVOKE<DiffSummary>("diff_summary", { prId }),
+	diffFile: (prId: number, path: string) => __TAURI_INVOKE<DiffFile>("diff_file", { prId, path }),
+	/**  Free text plus operators (`is:pr`, `author:`, `label:`, `repo:`, ...). */
+	search: (query: string, page: PageReq) => __TAURI_INVOKE<Page<SearchHit>>("search", { query, page }),
 	syncStatus: () => __TAURI_INVOKE<SyncStatus>("sync_status"),
-	actionEnqueue: (kind: string, payloadJson: string) => __TAURI_INVOKE<null>("action_enqueue", { kind, payloadJson }),
+	/**  Run a sync pass now. */
+	syncNow: () => __TAURI_INVOKE<null>("sync_now"),
+	/**
+	 *  Validate, apply optimistically and queue a write. Returns at once; the
+	 *  worker sends it to GitHub in the background.
+	 */
+	actionEnqueue: (action: Action) => __TAURI_INVOKE<number>("action_enqueue", { action }),
+	actionFailedList: () => __TAURI_INVOKE<FailedAction[]>("action_failed_list"),
+	actionRetry: (id: number) => __TAURI_INVOKE<null>("action_retry", { id }),
+	actionDiscard: (id: number) => __TAURI_INVOKE<null>("action_discard", { id }),
+	authState: () => __TAURI_INVOKE<AuthState>("auth_state"),
+	/**  Start the device flow. The UI shows `user_code` and opens `verification_uri`. */
+	authStart: () => __TAURI_INVOKE<DeviceCode>("auth_start"),
+	/**  One poll; call again after `interval` seconds while `pending`. */
+	authPoll: () => __TAURI_INVOKE<AuthPoll>("auth_poll"),
+	authSignOut: () => __TAURI_INVOKE<null>("auth_sign_out"),
 };
 
 /** Events */
@@ -35,6 +69,43 @@ export const events = {
 };
 
 /* Types */
+export type Action = 
+/**  New comment. Shown at once as a local comment with a negative id. */
+{ kind: "comment"; issue_id: number; body_md: string } | 
+/**  Close or reopen an issue / PR. `state` must be `open` or `closed`. */
+{ kind: "set_state"; issue_id: number; state: IssueState } | 
+/**  Replace the full label set. */
+{ kind: "set_labels"; issue_id: number; label_ids: number[] } | 
+/**  Replace the full assignee set. */
+{ kind: "set_assignees"; issue_id: number; user_ids: number[] } | 
+/**  Submit a review with optional inline comments. */
+{ kind: "submit_review"; pr_id: number; event: ReviewEvent; body_md: string; comments: DraftReviewComment[] } | 
+/**  Reply in an existing review thread. */
+{ kind: "reply_thread"; thread_id: number; body_md: string } | 
+/**  Resolve or unresolve a review thread. */
+{ kind: "resolve_thread"; thread_id: number; resolved: boolean } | { kind: "merge"; pr_id: number; method: MergeMethod } | 
+/**  Notification thread: mark read. */
+{ kind: "notification_read"; id: string } | 
+/**  Notification thread: mark done (removed from the inbox). */
+{ kind: "notification_done"; id: string };
+
+export type AuthPoll = 
+/**  Not approved yet; poll again after `interval` seconds. */
+{ status: "pending"; interval: number } | { status: "done"; login: string } | { status: "expired" } | { status: "denied" };
+
+export type AuthState = {
+	signed_in: boolean,
+	/**  Viewer login, once known. */
+	login: string | null,
+	/**
+	 *  False when the build has no `FORKLINE_GITHUB_CLIENT_ID`; device-flow
+	 *  sign-in is then unavailable and only `FORKLINE_GITHUB_TOKEN` works.
+	 */
+	client_id_configured: boolean,
+	/**  True when `FORKLINE_GITHUB_TOKEN` supplies the token. */
+	env_override: boolean,
+};
+
 /**  Everything the UI needs before its first paint, in one IPC call. */
 export type Boot = {
 	/**  Saved tabs + panes (UI-owned JSON), if any. */
@@ -45,7 +116,34 @@ export type Boot = {
 };
 
 /**  Error type returned by every command. */
-export type CmdError = { kind: "Db"; message: string } | { kind: "NotFound" } | { kind: "NotImplemented"; message: string } | { kind: "Other"; message: string };
+export type CmdError = { kind: "Db"; message: string } | { kind: "NotFound" } | { kind: "NotImplemented"; message: string } | 
+/**  No GitHub token: the UI shows the sign-in flow. */
+{ kind: "Unauthorized" } | 
+/**  GitHub or the network failed; `message` is safe to show. */
+{ kind: "Github"; message: string } | { kind: "Other"; message: string };
+
+/**  A comment. Local optimistic comments have a negative `id`. */
+export type CommentRow = {
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
+
+export type CommitRow = {
+	oid: string,
+	headline: string,
+	author: string | null,
+	authored_at: number,
+	/**  SUCCESS | FAILURE | PENDING | ERROR, if known. */
+	check_state: string | null,
+};
+
+export type ContributorRow = {
+	login: string,
+	contributions: number,
+};
 
 /**
  *  Emitted when sync or an action changed rows. The UI invalidates queries
@@ -57,12 +155,133 @@ export type DataChanged = {
 
 export type DataChangedEvent = DataChanged;
 
+/**  Device-flow code to show the user. The device code itself stays in Rust. */
+export type DeviceCode = {
+	user_code: string,
+	verification_uri: string,
+	expires_in: number,
+	/**  Seconds to wait between `auth_poll` calls. */
+	interval: number,
+};
+
+/**  Full diff of one file. Binary files have no hunks. */
+export type DiffFile = {
+	summary: DiffFileSummary,
+	hunks: DiffHunk[],
+};
+
+/**  One changed file, without its hunks (file tree / list). */
+export type DiffFileSummary = {
+	path: string,
+	/**  Previous path for renames. */
+	old_path: string | null,
+	status: FileStatus,
+	additions: number,
+	deletions: number,
+	binary: boolean,
+};
+
+export type DiffHunk = {
+	old_start: number,
+	old_lines: number,
+	new_start: number,
+	new_lines: number,
+	/**  Text after the second `@@` (function context), may be empty. */
+	header: string,
+	lines: DiffLine[],
+};
+
+export type DiffLine = {
+	kind: LineKind,
+	/**  Line number in the old file (`None` for added lines). */
+	old_no: number | null,
+	/**  Line number in the new file (`None` for deleted lines). */
+	new_no: number | null,
+	/**  Line text without the trailing newline or the +/- marker. */
+	text: string,
+};
+
+export type DiffSide = "LEFT" | "RIGHT";
+
+/**  List of changed files for a PR. */
+export type DiffSummary = {
+	merge_base_oid: string,
+	head_oid: string,
+	files: DiffFileSummary[],
+};
+
+/**  Inline comment in a review. Lines are file line numbers on `side`. */
+export type DraftReviewComment = {
+	path: string,
+	side: DiffSide,
+	line: number,
+	/**  Set for a multi-line comment; must be < `line`. */
+	start_line: number | null,
+	body_md: string,
+};
+
+/**  Choices for the label and assignee editors. */
+export type EditOptions = {
+	labels: Label[],
+	users: User[],
+};
+
+/**  A write action that failed for good. Its optimistic change was rolled back. */
+export type FailedAction = {
+	id: number,
+	/**  Short human text, e.g. "Comment on owner/repo#12". */
+	summary: string,
+	error: string,
+	created_at: number,
+};
+
+export type FileStatus = "added" | "modified" | "deleted" | "renamed";
+
+export type InboxFilter = {
+	repo_id: number | null,
+	unread_only: boolean,
+	/**  Order by repo first so the UI can render repo groups. */
+	grouped: boolean,
+};
+
+export type InboxRow = {
+	/**  GitHub notification thread id. */
+	id: string,
+	repo_id: number,
+	repo: string,
+	subject_type: string,
+	/**  Linked cached issue / PR, if any. */
+	issue_id: number | null,
+	is_pr: boolean,
+	title: string,
+	reason: string,
+	unread: boolean,
+	updated_at: number,
+	/**  A read / done action for this thread is queued and not yet confirmed. */
+	pending: boolean,
+};
+
 export type IssueDetail = {
 	row: IssueRow,
 	body_html: string | null,
 	body_md: string | null,
 	labels: Label[],
 	created_at: number,
+};
+
+/**  Filter for `issue_list`. Every field narrows the result; `None` / `false` means "any". */
+export type IssueFilter = {
+	repo_id: number | null,
+	state: IssueState | null,
+	/**  Author login. */
+	author: string | null,
+	/**  Assignee login. */
+	assignee: string | null,
+	/**  Label name. */
+	label: string | null,
+	is_pr: boolean | null,
+	/**  Open PRs with a review request for the signed-in user (`viewer` setting). */
+	review_requested: boolean,
 };
 
 /**  One row in any issue / PR list. */
@@ -82,11 +301,34 @@ export type IssueRow = {
 
 export type IssueState = "open" | "closed" | "merged";
 
+/**
+ *  Everything under the issue header: assignees, conversation, timeline.
+ *  Comments and events are capped at 100 each (oldest first).
+ */
+export type IssueThread = {
+	assignees: User[],
+	comments: CommentRow[],
+	timeline: TimelineEvent[],
+	/**  PRs linked to an issue, or issues linked to a PR. */
+	linked: IssueRow[],
+	/**  Fields of the issue row with an unsent action: `state`, `labels`, `assignees`. */
+	pending_fields: string[],
+};
+
 export type Label = {
 	id: number,
 	name: string,
 	color: string,
 };
+
+export type LanguageShare = {
+	name: string,
+	bytes: number,
+};
+
+export type LineKind = "context" | "add" | "del";
+
+export type MergeMethod = "merge" | "squash" | "rebase";
 
 /**  One page of rows. `next` is the offset of the following page, if any. */
 export type Page<T> = {
@@ -99,6 +341,124 @@ export type PageReq = {
 	limit: number,
 };
 
+export type PrCheck = {
+	id: number,
+	name: string,
+	/**  QUEUED | IN_PROGRESS | COMPLETED */
+	status: string,
+	/**  SUCCESS | FAILURE | NEUTRAL | CANCELLED | SKIPPED | TIMED_OUT */
+	conclusion: string | null,
+	url: string | null,
+};
+
+export type PrComment = {
+	/**  Negative = local optimistic comment. */
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
+
+export type PrCommit = {
+	oid: string,
+	headline: string,
+	author: string | null,
+	authored_at: number | null,
+};
+
+/**
+ *  Everything the PR view needs except review threads (see `ReviewThread`).
+ *  Comments are capped at `PAGE_MAX`; `row.comments` is the full count so
+ *  the UI can say "n more on GitHub".
+ */
+export type PrDetail = {
+	row: IssueRow,
+	body_html: string | null,
+	body_md: string | null,
+	labels: Label[],
+	created_at: number,
+	base_ref: string,
+	head_ref: string,
+	base_oid: string,
+	head_oid: string,
+	is_draft: boolean,
+	/**  MERGEABLE | CONFLICTING | UNKNOWN */
+	mergeable: string | null,
+	/**  GitHub mergeStateStatus. */
+	merge_state: string | null,
+	/**  APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED */
+	review_decision: string | null,
+	/**  SUCCESS | FAILURE | PENDING | ERROR */
+	check_state: string | null,
+	additions: number,
+	deletions: number,
+	changed_files: number,
+	review_requests: string[],
+	/**  Fields of this PR with an unconfirmed optimistic change (e.g. `state`). */
+	pending_fields: string[],
+	comments: PrComment[],
+	reviews: PrReview[],
+	checks: PrCheck[],
+	commits: PrCommit[],
+};
+
+export type PrReview = {
+	id: number,
+	author: string,
+	/**  APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING | DISMISSED */
+	state: string,
+	body_html: string | null,
+	body_md: string | null,
+	submitted_at: number | null,
+};
+
+export type ReleaseRow = {
+	tag: string,
+	name: string | null,
+	published_at: number | null,
+};
+
+/**  Filter for `repos_list`. `query` matches `owner/name` (case-insensitive substring). */
+export type RepoFilter = {
+	query: string,
+	starred_only: boolean,
+};
+
+export type RepoOverview = {
+	id: number,
+	owner: string,
+	name: string,
+	description: string | null,
+	default_branch: string,
+	license: string | null,
+	stars: number,
+	forks: number,
+	pinned: boolean,
+	starred: boolean,
+	open_prs: number,
+	open_issues: number,
+	languages: LanguageShare[],
+	commits: CommitRow[],
+	releases: ReleaseRow[],
+	contributors: ContributorRow[],
+	star_history: StarPoint[],
+};
+
+/**  One row in the Repositories and Starred views. */
+export type RepoRow = {
+	id: number,
+	owner: string,
+	name: string,
+	description: string | null,
+	language: string | null,
+	stars: number,
+	pinned: boolean,
+	starred: boolean,
+	open_prs: number,
+	open_issues: number,
+};
+
 export type RepoSummary = {
 	id: number,
 	owner: string,
@@ -108,12 +468,70 @@ export type RepoSummary = {
 	open_issues: number,
 };
 
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/**
+ *  One inline review thread. `line` is `None` when the thread is outdated
+ *  and no longer maps to a line of the current diff.
+ */
+export type ReviewThread = {
+	id: number,
+	path: string,
+	side: DiffSide,
+	line: number | null,
+	start_line: number | null,
+	original_line: number | null,
+	is_resolved: boolean,
+	is_outdated: boolean,
+	/**  An unconfirmed resolve / unresolve is queued. */
+	pending: boolean,
+	comments: ReviewThreadComment[],
+};
+
+export type ReviewThreadComment = {
+	id: number,
+	author: string,
+	body_html: string | null,
+	body_md: string | null,
+	created_at: number,
+};
+
+/**
+ *  One issue / PR that matched. `snippet` is plain text; matched terms are
+ *  wrapped in U+E000 / U+E001 so the UI can highlight without parsing HTML.
+ */
+export type SearchHit = {
+	row: IssueRow,
+	snippet: string,
+	/**  Set when the best match was in a comment. */
+	comment_id: number | null,
+};
+
+/**  Star count on one day (`day` = unix seconds / 86400). */
+export type StarPoint = {
+	day: number,
+	stars: number,
+};
+
 export type SyncStatus = {
 	last_synced_at: number | null,
 	pending_actions: number,
 	failed_actions: number,
 	paused: boolean,
 	error: string | null,
+};
+
+export type TimelineEvent = {
+	id: number,
+	kind: string,
+	actor: string,
+	created_at: number,
+	payload_json: string | null,
+};
+
+export type User = {
+	id: number,
+	login: string,
 };
 
 /* Tauri Specta runtime */

@@ -2,13 +2,16 @@
 //! (see docs/HANDOFF.md). Every list query must use an index; the
 //! `query_plans` test checks this with EXPLAIN QUERY PLAN.
 
+pub mod explore;
 pub mod inbox;
 pub mod issue;
 pub mod layout;
 pub mod lists;
 pub mod pr;
+pub mod queue;
 pub mod repo;
 pub mod sync;
+pub mod views;
 
 use fl_types::{IssueRow, IssueState};
 use rusqlite::Row;

@@ -1,5 +1,6 @@
+use fl_db::rusqlite::types::Value;
 use fl_db::{Db, migrate, queries};
-use fl_types::PageReq;
+use fl_types::{InboxFilter, IssueFilter, IssueState, PageReq, QueueKind, QueueQuery};
 
 fn fresh() -> (tempfile::TempDir, Db) {
     let dir = tempfile::tempdir().unwrap();
@@ -131,7 +132,7 @@ fn empty_queries_succeed() {
 #[test]
 fn query_plans_use_indexes() {
     let (_d, db) = fresh();
-    let queries = [
+    let queries: [String; 15] = [
         format!(
             "SELECT {} FROM issues i INDEXED BY issues_updated JOIN repos r ON r.id = i.repo_id
              LEFT JOIN users u ON u.id = i.author_id WHERE i.state = 'open'
@@ -145,12 +146,49 @@ fn query_plans_use_indexes() {
         "SELECT id FROM notifications WHERE done = 0 AND repo_id = 1 ORDER BY updated_at DESC".into(),
         "SELECT id FROM search_docs WHERE issue_id = 1".into(),
         "SELECT id FROM action_queue WHERE state = 'pending' AND next_attempt_at <= 0".into(),
+        // Action queue worker and footer (agent 1).
+        "SELECT id FROM action_queue WHERE state = 'pending' AND next_attempt_at <= 0 ORDER BY next_attempt_at, id LIMIT 1".into(),
+        "SELECT id, summary FROM action_queue WHERE state = 'failed' ORDER BY next_attempt_at, id LIMIT 100".into(),
+        "SELECT 1 FROM pending_fields WHERE table_name = 'issues' AND row_id = 1 AND field = 'state'".into(),
+        "SELECT row_id FROM pending_fields WHERE action_id = 1".into(),
+        "SELECT r.id FROM repos r LEFT JOIN sync_state s ON s.key = 'repo:' || r.id
+         WHERE r.pinned = 1 AND r.sync_enabled = 1 AND COALESCE(s.last_synced_at, 0) + 300 <= 0".into(),
+        "SELECT id FROM labels WHERE repo_id = 1 AND name = 'bug'".into(),
+        "SELECT id FROM issues WHERE repo_id = 1 AND number = 1".into(),
     ];
-    for q in queries {
+    let req = PageReq { offset: 0, limit: 50 };
+    let state = Some(IssueState::Open);
+    let filters = [
+        IssueFilter { state, ..Default::default() },
+        IssueFilter { state, is_pr: Some(true), ..Default::default() },
+        IssueFilter { repo_id: Some(1), state, is_pr: Some(false), ..Default::default() },
+        IssueFilter { state, author: Some("a".into()), ..Default::default() },
+        IssueFilter { state, assignee: Some("a".into()), ..Default::default() },
+        IssueFilter { state, label: Some("bug".into()), ..Default::default() },
+        IssueFilter { state, review_requested: true, ..Default::default() },
+        IssueFilter::default(),
+    ];
+    let mut queries: Vec<(String, Vec<Value>)> = queries.map(|q| (q, Vec::new())).into();
+    queries.extend(filters.iter().map(|f| queries::lists::issue_list_sql(f, req)));
+    queries.push((queries::explore::STARRED_BY_SQL.into(), vec![Value::Integer(1), Value::Integer(3)]));
+    for grouped in [false, true] {
+        for repo_id in [None, Some(1)] {
+            let f = InboxFilter { repo_id, unread_only: true, grouped };
+            queries.push(queries::inbox::inbox_sql(&f, req));
+        }
+    }
+    for kind in [QueueKind::Inbox, QueueKind::Pulls, QueueKind::Issues, QueueKind::Reviews] {
+        for repo_id in [None, Some(1)] {
+            let q = QueueQuery { kind, repo_id };
+            queries.push(queries::queue::queue_sql(&q, None, req));
+            queries.push(queries::queue::counts_sql(&q, None));
+        }
+    }
+    for (q, args) in queries {
         let plan: Vec<String> = db
             .read(|c| {
                 c.prepare(&format!("EXPLAIN QUERY PLAN {q}"))?
-                    .query_map([], |r| r.get::<_, String>(3))?
+                    .query_map(rusqlite::params_from_iter(args), |r| r.get::<_, String>(3))?
                     .collect()
             })
             .unwrap();
@@ -159,4 +197,109 @@ fn query_plans_use_indexes() {
             assert!(!full_scan, "full scan in plan for:\n{q}\nplan: {plan:?}");
         }
     }
+}
+
+/// Two repos, five items; check each `issue_list` filter and the inbox.
+#[test]
+fn issue_list_filters_and_inbox() {
+    let (_d, db) = fresh();
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO settings VALUES ('viewer', '{\"id\":1,\"login\":\"me\"}');
+             INSERT INTO users(id, login) VALUES (1, 'me'), (2, 'bob');
+             INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);
+             INSERT INTO labels(id, repo_id, name, color) VALUES (1, 1, 'bug', 'f00');
+             INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at) VALUES
+               (1,'I',1,1,0,'open','i1',1,0,10), (2,'I',1,2,1,'open','p2',2,0,20),
+               (3,'I',2,1,1,'open','p3',2,0,30), (4,'I',2,2,0,'closed','i4',1,0,40),
+               (5,'I',2,3,1,'merged','p5',2,0,50);
+             INSERT INTO issue_labels VALUES (1, 1);
+             INSERT INTO issue_assignees VALUES (2, 1);
+             INSERT INTO pr_review_requests VALUES (3, 'me'), (2, 'bob'), (5, 'me');
+             INSERT INTO notifications(id,repo_id,subject_type,issue_id,title,reason,unread,done,updated_at) VALUES
+               ('a',1,'Issue',1,'t','mention',1,0,5), ('b',2,'PullRequest',3,'t','mention',0,0,6),
+               ('c',1,'Issue',1,'t','mention',1,1,7), ('d',2,'Release',NULL,'t','mention',1,0,8);",
+        )
+    })
+    .unwrap();
+    let ids = |f: IssueFilter| -> Vec<i64> {
+        let page = PageReq { offset: 0, limit: 10 };
+        db.read(|c| queries::lists::issue_list(c, &f, page))
+            .unwrap()
+            .items
+            .iter()
+            .map(|r| r.id)
+            .collect()
+    };
+    let open = Some(IssueState::Open);
+    assert_eq!(ids(IssueFilter::default()), [5, 4, 3, 2, 1]);
+    assert_eq!(ids(IssueFilter { state: open, is_pr: Some(true), ..Default::default() }), [3, 2]);
+    assert_eq!(ids(IssueFilter { repo_id: Some(1), ..Default::default() }), [2, 1]);
+    assert_eq!(ids(IssueFilter { author: Some("bob".into()), ..Default::default() }), [5, 3, 2]);
+    assert_eq!(ids(IssueFilter { assignee: Some("me".into()), ..Default::default() }), [2]);
+    assert_eq!(ids(IssueFilter { label: Some("bug".into()), ..Default::default() }), [1]);
+    // Review requests: open PRs asked of the viewer (not the merged one).
+    assert_eq!(ids(IssueFilter { state: open, review_requested: true, ..Default::default() }), [3]);
+
+    let inbox = |f: InboxFilter| -> Vec<String> {
+        let page = PageReq { offset: 0, limit: 10 };
+        db.read(|c| queries::inbox::list(c, &f, page))
+            .unwrap()
+            .items
+            .iter()
+            .map(|r| r.id.clone())
+            .collect()
+    };
+    assert_eq!(inbox(InboxFilter::default()), ["d", "b", "a"]);
+    assert_eq!(inbox(InboxFilter { unread_only: true, ..Default::default() }), ["d", "a"]);
+    assert_eq!(inbox(InboxFilter { grouped: true, ..Default::default() }), ["a", "d", "b"]);
+    assert_eq!(inbox(InboxFilter { repo_id: Some(2), ..Default::default() }), ["d", "b"]);
+
+    // A queued read / done shows as pending; GitHub thread ids are numeric text.
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO notifications(id,repo_id,subject_type,title,reason,updated_at)
+               VALUES ('42',1,'Issue','t','mention',9);
+             INSERT INTO action_queue(id,kind,payload_json,target_table,target_id,next_attempt_at,created_at)
+               VALUES (1,'notification_read','{}','notifications',42,0,0);
+             INSERT INTO pending_fields VALUES ('notifications', 42, 'unread', 1, '1');",
+        )
+    })
+    .unwrap();
+    let rows = db
+        .read(|c| queries::inbox::list(c, &InboxFilter::default(), PageReq { offset: 0, limit: 10 }))
+        .unwrap()
+        .items;
+    let pending: Vec<_> = rows.iter().filter(|r| r.pending).map(|r| r.id.as_str()).collect();
+    assert_eq!(pending, ["42"]);
+}
+
+#[test]
+fn thread_reads_comments_pending_and_links() {
+    let (_d, db) = fresh();
+    seed_issue(&db);
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO users(id, login) VALUES (1, 'me');
+             INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,created_at,updated_at)
+               VALUES (2,'I',1,2,1,'open','pr',0,100);
+             INSERT INTO issue_links VALUES (1, 2);
+             INSERT INTO issue_assignees VALUES (1, 1);
+             INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at) VALUES
+               (7,1,1,'hi',10,10), (-1,1,1,'local',20,20);
+             INSERT INTO timeline_events(id,issue_id,kind,actor_id,created_at) VALUES (1,1,'closed',1,15);
+             INSERT INTO action_queue(id,kind,payload_json,target_table,target_id,next_attempt_at,created_at)
+               VALUES (1,'close','{}','issues',1,0,0);
+             INSERT INTO pending_fields VALUES ('issues', 1, 'state', 1, '\"open\"');",
+        )
+    })
+    .unwrap();
+    let t = db.read(|c| queries::issue::thread(c, 1)).unwrap();
+    assert_eq!(t.comments.iter().map(|c| c.id).collect::<Vec<_>>(), [7, -1]);
+    assert_eq!(t.timeline.len(), 1);
+    assert_eq!(t.assignees[0].login, "me");
+    assert_eq!(t.linked[0].id, 2);
+    assert_eq!(t.pending_fields, ["state"]);
+    // The PR sees the issue it fixes.
+    assert_eq!(db.read(|c| queries::issue::thread(c, 2)).unwrap().linked[0].id, 1);
 }

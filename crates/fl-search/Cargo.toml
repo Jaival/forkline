@@ -7,6 +7,10 @@ publish.workspace = true
 [dependencies]
 fl-types.workspace = true
 fl-db.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
 
 [lints]
 workspace = true
