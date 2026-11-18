@@ -1,15 +1,21 @@
 //! Tab content. Each G1 area adds its arm to [`build`] and its module here.
 
+mod explore;
+mod home;
 mod list_view;
 mod placeholder;
 mod queue;
 mod reading;
+mod rows;
+mod repo;
+mod repos;
+pub(crate) mod search;
 
 pub use queue::{FocusFilter, SaveView, SelectNext};
 pub use reading::{Approve, Done, NextFile, PrevFile, Reply, ShowFiles, Snooze, ToggleViewed};
 
 use fl_types::{QueueKind, QueueQuery};
-use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window};
+use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window, actions};
 
 use crate::view_ref::ViewRef;
 
@@ -23,8 +29,24 @@ pub struct Built {
 /// Where the action keys of the reading pane work.
 const TRIAGE: &str = "(Queue || Reading) && !Input";
 
-/// Where the list keys of the queue work.
-const LIST: &str = "Queue && !Input";
+/// Where the list keys work: the queue and the plain lists of step 7
+/// (Repositories, Starred, Explore, Search, Home; key context `List`).
+const LIST: &str = "(Queue || List) && !Input";
+
+/// Where `/` works: a view with a query bar or a filter input.
+const SLASH: &str = "(Queue || Reading || List) && !Input";
+
+actions!(views, [TogglePin]);
+
+/// The next selection in a flat list of `len` rows, `step` rows on. Nothing
+/// is selected until the first move, which selects the first row.
+pub(super) fn step(selected: Option<usize>, len: usize, step: isize) -> Option<usize> {
+    let last = len.checked_sub(1)?;
+    Some(match selected {
+        None => 0,
+        Some(ix) => ix.saturating_add_signed(step).min(last),
+    })
+}
 
 /// Bind the keys of the views. Call once at startup.
 pub fn init(cx: &mut App) {
@@ -35,7 +57,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("k", queue::SelectPrev, Some(LIST)),
         KeyBinding::new("up", queue::SelectPrev, Some(LIST)),
         KeyBinding::new("enter", queue::OpenSelected, Some(LIST)),
-        KeyBinding::new("/", queue::FocusFilter, Some(TRIAGE)),
+        KeyBinding::new("/", queue::FocusFilter, Some(SLASH)),
+        // Repositories, Starred, Explore and a Repo tab: pin or unpin the repo.
+        KeyBinding::new("p", TogglePin, Some("(List || Repo) && !Input")),
         // Not while typing: the reply box sits inside the reading pane.
         KeyBinding::new("a", reading::Approve, Some(TRIAGE)),
         KeyBinding::new("r", reading::Reply, Some(TRIAGE)),
@@ -78,10 +102,46 @@ pub fn build(view_ref: &ViewRef, window: &mut Window, cx: &mut App) -> Built {
         ViewRef::Reviews => list(QueueKind::Reviews, None),
         ViewRef::Issue { id } => reading::ReadingPane::build(*id, false, cx),
         ViewRef::Pr { id } => reading::ReadingPane::build(*id, true, cx),
-        _ => {
+        ViewRef::Repos => repos::ReposView::build(false, window, cx),
+        ViewRef::Starred => repos::ReposView::build(true, window, cx),
+        ViewRef::Explore => explore::ExploreView::build(window, cx),
+        ViewRef::Repo { repo_id } => repo::RepoView::build(*repo_id, window, cx),
+        ViewRef::Search { q } => search::SearchView::build(q, window, cx),
+        ViewRef::Home => home::HomeView::build(window, cx),
+        ViewRef::Settings => {
             let view = cx.new(|cx| placeholder::Placeholder::new(view_ref.clone(), cx));
             let focus = view.read(cx).focus.clone();
             Built { view: view.into(), focus }
         }
+    }
+}
+
+/// A centred muted line for an empty list.
+fn empty<V>(text: &'static str, cx: &gpui_kit::Context<V>) -> gpui_kit::AnyElement {
+    use gpui_kit::component::ActiveTheme as _;
+    use gpui_kit::{IntoElement as _, ParentElement as _, Styled as _};
+    gpui_kit::div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+        .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step;
+
+    #[test]
+    fn step_starts_at_the_first_row_and_stays_in_range() {
+        assert_eq!(step(None, 0, 1), None);
+        assert_eq!(step(None, 3, 1), Some(0));
+        assert_eq!(step(None, 3, -1), Some(0));
+        assert_eq!(step(Some(0), 3, -1), Some(0));
+        assert_eq!(step(Some(1), 3, 1), Some(2));
+        assert_eq!(step(Some(2), 3, 1), Some(2));
+        assert_eq!(step(Some(5), 3, 1), Some(2));
     }
 }

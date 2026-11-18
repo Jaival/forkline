@@ -91,3 +91,21 @@ pub struct RepoOverview {
     pub contributors: Vec<ContributorRow>,
     pub star_history: Vec<StarPoint>,
 }
+
+/// One repo in the Explore view: starred lately by people the user follows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct ExploreRow {
+    pub repo_id: RepoId,
+    pub owner: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub language: Option<String>,
+    pub stars: u32,
+    /// Starred by the user too.
+    pub starred: bool,
+    /// Followed users who starred it, newest first, at most three.
+    pub starred_by: Vec<String>,
+    pub starred_by_count: u32,
+    pub last_starred_at: Timestamp,
+}

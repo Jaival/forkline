@@ -109,6 +109,13 @@ fn check(report: &Report, budgets: &BTreeMap<String, f64>, partial: bool) -> any
             missed.push(key.as_str());
         }
     }
+    for (key, values) in &report.durations {
+        if !budgets.contains_key(key)
+            && let Some(value) = values.first()
+        {
+            println!("{key}: {value:.1} (no budget)");
+        }
+    }
     if !missed.is_empty() {
         bail!("missed budgets: {}", missed.join(", "));
     }

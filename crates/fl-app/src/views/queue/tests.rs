@@ -269,6 +269,24 @@ fn repo_filter_keeps_that_repos_rows(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui_kit::test]
+fn picking_a_repo_names_the_tab(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Pulls { repo_id: None }, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let queue = queue_of(cx, handle, &ws);
+    cx.update_window(handle, |_, window, cx| queue.update(cx, |q, cx| q.pick_repo(Some(2), window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*o/b: Pull requests"]);
+    cx.update_window(handle, |_, window, cx| queue.update(cx, |q, cx| q.pick_repo(None, window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*Pull requests"]);
+}
+
 /// Index the seeded issues, so the `/` filter finds their words.
 fn index(cx: &mut TestAppContext) {
     cx.update(|cx| {
