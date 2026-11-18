@@ -24,3 +24,4 @@ workspace = true
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile = "3"
+wiremock = "0.6.5"

@@ -6,17 +6,32 @@ use gpui_kit::test::TestWindowExt as _;
 
 use crate::store::Store;
 use crate::workspace::Workspace;
-use crate::{panel, views, workspace};
+use crate::{panel, signin, views, workspace};
 
 pub fn open(cx: &mut TestAppContext, dir: &std::path::Path) -> (AnyWindowHandle, Entity<Workspace>) {
     open_seeded(cx, dir, "")
 }
 
-/// Run `sql` on the database before the window opens.
+/// A GitHub API base nothing listens on: tests never reach GitHub.
+pub const NO_GITHUB: &str = "http://127.0.0.1:9";
+
+/// Run `sql` on the database before the window opens. Signed in (a test token).
 pub fn open_seeded(
     cx: &mut TestAppContext,
     dir: &std::path::Path,
     sql: &str,
+) -> (AnyWindowHandle, Entity<Workspace>) {
+    open_with(cx, dir, sql, NO_GITHUB, Some("test-token"))
+}
+
+/// Like [`open_seeded`] with the engine on `api` (a mock GitHub) and
+/// `token` in memory; `None` starts signed out.
+pub fn open_with(
+    cx: &mut TestAppContext,
+    dir: &std::path::Path,
+    sql: &str,
+    api: &str,
+    token: Option<&str>,
 ) -> (AnyWindowHandle, Entity<Workspace>) {
     let dir = dir.to_owned();
     // The footer awaits engine calls on the real tokio runtime; their
@@ -27,14 +42,30 @@ pub fn open_seeded(
         panel::init(cx);
         workspace::init(cx);
         views::init(cx);
-        Store::init(dir, true, false, cx).unwrap();
-        Store::global(cx).read(cx).db().write(|c| c.execute_batch(sql)).unwrap();
+        signin::init(cx);
+        Store::init(dir, fl_sync::Config::test(api), true, false, cx).unwrap();
+        let store = Store::global(cx);
+        store.read(cx).sync().set_test_token(token);
+        store.read(cx).db().write(|c| c.execute_batch(sql)).unwrap();
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(Default::default(), size(px(1200.), px(800.))))),
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx))).unwrap()
     })
+}
+
+/// Run the app until `done` holds; engine calls finish on other threads.
+pub fn wait_for(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
+    let start = std::time::Instant::now();
+    loop {
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(2), "timed out waiting for: {what}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 /// Open the workspace over `sql`, open `view` and draw a frame.

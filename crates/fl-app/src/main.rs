@@ -8,6 +8,7 @@ mod footer;
 mod palette;
 mod panel;
 mod rail;
+mod signin;
 mod store;
 #[cfg(test)]
 mod test_support;
@@ -72,10 +73,11 @@ fn main() {
         panel::init(cx);
         workspace::init(cx);
         views::init(cx);
+        signin::init(cx);
         if let Some(out) = bench_out.clone() {
             bench::init(out, &[("main", main_ms), ("app_created", app_ms), ("run_callback", run_ms), ("kit_init", kit_ms)], cx);
         }
-        if let Err(e) = Store::init(data_dir, offline, bench, cx) {
+        if let Err(e) = Store::init(data_dir, fl_sync::Config::github(), offline, bench, cx) {
             eprintln!("forkline: cannot open the database: {e:#}");
             cx.quit();
             return;

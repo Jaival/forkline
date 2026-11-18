@@ -9,7 +9,9 @@ use gpui_kit::{
 
 use super::Built;
 use super::queue::{FocusFilter, Queue, QueueEvent, SaveView};
-use super::reading::{Approve, Done, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleViewed};
+use super::reading::{
+    Approve, Done, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleState, ToggleViewed,
+};
 use crate::store::Store;
 
 pub struct ListView {
@@ -59,6 +61,10 @@ impl ListView {
         self.reading.update(cx, |pane, cx| pane.reply(a, window, cx));
     }
 
+    fn toggle_state(&mut self, a: &ToggleState, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.toggle_state(a, window, cx));
+    }
+
     fn done(&mut self, a: &Done, window: &mut Window, cx: &mut Context<Self>) {
         self.reading.update(cx, |pane, cx| pane.done(a, window, cx));
     }
@@ -99,6 +105,7 @@ impl Render for ListView {
             .size_full()
             .on_action(cx.listener(Self::approve))
             .on_action(cx.listener(Self::reply))
+            .on_action(cx.listener(Self::toggle_state))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
             .on_action(cx.listener(Self::next_file))

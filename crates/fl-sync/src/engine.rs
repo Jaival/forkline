@@ -375,6 +375,23 @@ impl Engine {
             rt.device = matches!(poll, AuthPoll::Pending { .. }).then_some(device);
             return Ok(poll);
         };
+        let login = self.finish_sign_in(token).await?;
+        Ok(AuthPoll::Done { login })
+    }
+
+    /// Sign in with a personal access token the user pasted. GitHub must
+    /// accept it (`GET /user`); it is then stored like a device-flow token.
+    /// Returns the viewer login; a rejected token is `Error::Unauthorized`.
+    pub async fn sign_in_with_token(&self, token: &str) -> Result<String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(Error::Invalid("Paste a token first.".into()));
+        }
+        self.finish_sign_in(token.to_owned()).await
+    }
+
+    /// Read the viewer with `token`, store the token, and wake sync.
+    async fn finish_sign_in(&self, token: String) -> Result<String> {
         let login = sync::viewer(&self.gh, &token, &self.db).await?;
         if self.cfg.use_keyring {
             auth::store_token(&token)?;
@@ -391,7 +408,7 @@ impl Engine {
         self.wake();
         self.wake_actions.notify_one();
         self.emit(&["sync"]);
-        Ok(AuthPoll::Done { login })
+        Ok(login)
     }
 
     /// Delete the stored token. Cached data stays.

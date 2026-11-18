@@ -24,7 +24,7 @@ use gpui_kit::{
 };
 use rusqlite::Connection;
 
-pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze};
+pub use self::action_bar::{Approve, CancelReply, Done, Reply, Snooze, ToggleState};
 use self::conversation::Conversation;
 use self::files::FilesTab;
 use super::Built;
@@ -104,6 +104,8 @@ pub struct ReadingPane {
     return_focus: Option<FocusHandle>,
     /// The last action error, shown in the action bar.
     pub(super) notice: Option<SharedString>,
+    /// The merge method picked, waiting for Confirm.
+    pub(super) merge_confirm: Option<fl_types::MergeMethod>,
     pub focus: FocusHandle,
     _store: Subscription,
 }
@@ -130,6 +132,7 @@ impl ReadingPane {
             _reply_subscription: None,
             return_focus: None,
             notice: None,
+            merge_confirm: None,
             focus: cx.focus_handle(),
             _store: subscription,
         }
@@ -165,6 +168,7 @@ impl ReadingPane {
         self._reply_subscription = None;
         self.return_focus = None;
         self.notice = None;
+        self.merge_confirm = None;
         self.detail = None;
         self.missing = false;
         self.tab = PaneTab::Conversation;
@@ -307,6 +311,7 @@ impl Render for ReadingPane {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::approve))
             .on_action(cx.listener(Self::reply))
+            .on_action(cx.listener(Self::toggle_state))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
             .on_action(cx.listener(Self::next_file))

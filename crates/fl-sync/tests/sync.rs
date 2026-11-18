@@ -318,6 +318,36 @@ async fn device_flow_signs_in_and_writes_viewer() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_pasted_token_signs_in_once_github_accepts_it() {
+    let env = common::env().await;
+    env.engine.set_test_token(None);
+    env.db.write(|c| c.execute("DELETE FROM settings", [])).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(header("authorization", "Bearer ghp_bad"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({ "message": "Bad credentials" })))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .and(header("authorization", "Bearer ghp_good"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 42, "login": "octo" })))
+        .mount(&env.server)
+        .await;
+
+    assert!(matches!(env.engine.sign_in_with_token("  ").await, Err(fl_sync::Error::Invalid(_))));
+    assert!(matches!(env.engine.sign_in_with_token("ghp_bad").await, Err(fl_sync::Error::Unauthorized)));
+    assert!(!env.engine.auth_state().await.unwrap().signed_in);
+
+    // Pasted text often has a trailing newline.
+    assert_eq!(env.engine.sign_in_with_token("ghp_good\n").await.unwrap(), "octo");
+    let state = env.engine.auth_state().await.unwrap();
+    assert!(state.signed_in);
+    assert_eq!(state.login.as_deref(), Some("octo"));
+    assert_eq!(env.engine.token().as_deref(), Some("ghp_good"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn missing_client_id_explains_the_dev_override() {
     let env = common::env().await;
     let mut cfg = fl_sync::Config::test(&env.server.uri());

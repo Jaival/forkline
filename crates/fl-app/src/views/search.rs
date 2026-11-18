@@ -31,6 +31,7 @@ const HIT_END: char = '\u{E001}';
 const HELP: &[(&str, &str)] = &[
     ("is:pr  is:issue", "pull requests or issues"),
     ("is:open  is:closed", "state"),
+    ("is:unread", "updated since you last opened it"),
     ("author:name", "opened by"),
     ("assignee:name", "assigned to"),
     ("label:bug", "has the label (quote names with spaces)"),

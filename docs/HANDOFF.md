@@ -620,10 +620,161 @@ and their `*/tests.rs`, `views/mod.rs`, `views/queue.rs` (test accessor),
 `crates/fl-types/src/repo.rs`; `crates/fl-bench/src/main.rs`;
 `docs/design/gpui-parity.md`, `docs/design/ui-plan.md`.
 
-Next (new thread): the parity gaps (sign-in and Retry / Discard first),
-then Explore sync (plan above), then the PR / issue writes. The Tauri app
-stays until the gaps in `docs/design/gpui-parity.md` are closed (user,
-2026-11-18).
+Done (parity gaps 8 and 9, sign-in and failed actions, 2026-11-18, branch
+`gpui-parity`):
+
+- `signin.rs`: `SignIn` dialog, an overlay like the palette (priority 2,
+  dimmed modal backdrop; a backdrop click does not close it). Element ids
+  `signin-*`.
+  - Device flow: "Sign in with GitHub" (only with a build-time client ID)
+    calls `Engine::auth_start`, opens `verification_uri`, shows the code
+    (Copy, "Open the page again") and polls `auth_poll` at the server's
+    interval. Expired / denied / errors show under the body and return to
+    the start.
+  - PAT paste (new; the Tauri dialog had none): masked `Input` with
+    Save token (Enter too) and a "Create one on GitHub" link
+    (classic token, scopes `repo,read:org,notifications`). New
+    `Engine::sign_in_with_token` (trims, checks `GET /user`, stores the token
+    like the device flow through the shared `finish_sign_in`). A 401 shows
+    "GitHub rejected this token."
+  - `FORKLINE_GITHUB_TOKEN` set but rejected: only a note (the env token
+    comes first, a pasted one would not be used).
+  - `Esc` (key context `SignIn`, and `Escape` from the input), Not now /
+    Cancel close it; focus goes back. The dialog emits `SignInEvent`; the
+    workspace closes it.
+- When it opens: the footer now reads `auth_state` with the status (on
+  `sync` and every 10 s) and emits `FooterEvent::SignIn` when it first reads
+  "signed out" and on every signed-in -> signed-out change. A GitHub 401 in
+  sync or the action worker sets `token_rejected` and emits `sync`, so this
+  is the `Unauthorized` reopen. Dismissed, it stays closed until that change
+  again. Also: footer "Sign in to sync" link, palette "Sign in to GitHub"
+  (`workspace::OpenSignIn`). Never in a bench run (`read_only`; no
+  `auth_state`, no `gh` start).
+- Footer (`footer.rs`): `N failed` opens the failed list (summary, error,
+  Retry / Discard per row; `engine.retry` / `discard`); it closes when none
+  is left. `@login` opens the account box: Sign out, or the env-override
+  note. A failed Retry / Discard / Sign out shows in the footer.
+- `Store::init` takes the `fl_sync::Config`. Tests use
+  `Config::test(NO_GITHUB)` with an in-memory token, so they never read the
+  real env / credential store / `gh`. `test_support::open_with(cx, dir, sql,
+  api, token)` (mock GitHub, signed out with `None`) and `wait_for` (moved
+  from the reading tests). `wiremock` is an fl-app dev-dependency.
+- Tests: `signin/tests.rs` 7 (no dialog when signed in, opens signed out and
+  stays dismissed, Esc and palette, pasted token signs in, rejected token
+  error, rejected token reopens, device flow code then sign-in), footer
+  `retry_and_discard_failed_actions`, fl-sync
+  `a_pasted_token_signs_in_once_github_accepts_it`. `cargo test -p fl-app`:
+  119 pass. Workspace clippy and tests pass.
+
+Bench (2026-11-18, release, AC power, fake data; run 1 cold: `launch_ms`
+607, `app_startup_ms` 66.5, 204 ms before `main`; warm runs 2-3):
+`launch_ms` 442-444 (600), `app_startup_ms` 47-50 (60), `switch_tab_ms`
+4.1-4.2 (8), `open_cached_item_ms` 5.9 (30), `search_p95_ms` 11.7-14.5 (30),
+`diff_scroll_fps` 240 (120). No new code on the launch path but one
+background `status` + `auth_state` read, skipped in bench.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`
+with `gh` removed from PATH so the app reads "signed out"; script
+`target/tmp/shot-signin.ps1`, image `target/tmp/g1p-signin.png`): dialog
+with the no-client-ID note, token box focused, footer "Sign in to sync".
+Signed in, the footer shows `@octocat`. Not checked by eye: the device code
+screen (needs a client ID), the failed list and account box (need a click),
+light theme.
+
+Open decisions (gaps 8 / 9):
+
+- A git 401 (`GitError::Unauthorized`, Files tab) does not reopen the
+  dialog: the engine still holds the token as good. The Tauri app behaves
+  the same (its dialog only shows while signed out).
+- Sign out deletes the stored token only; with `gh` signed in the app stays
+  signed in through `gh auth token` (Tauri: same).
+- The pasted token's scopes are not checked; a token without
+  `notifications` signs in and the inbox sync then fails with an error in
+  the footer.
+- While the dialog is open, workspace keys (`Ctrl+T`, `Ctrl+K`) still work
+  under it.
+- Signing in under `--offline` stores the token but starts no sync.
+
+Changed files (gaps 8 / 9): `crates/fl-app/src/{signin.rs, signin/tests.rs,
+footer.rs, workspace.rs, store.rs, main.rs, palette.rs, test_support.rs}`,
+`views/reading/tests.rs`, `crates/fl-app/Cargo.toml`;
+`crates/fl-sync/src/engine.rs`, `crates/fl-sync/tests/sync.rs`;
+`docs/design/gpui-parity.md`.
+
+Order of the remaining gaps agreed by the user on 2026-11-18 (see
+`docs/design/gpui-parity.md`), and gap 7: `E` sends `NotificationDone`.
+
+Done (parity step 1, small writes and keys, 2026-11-18, branch
+`gpui-parity`):
+
+- Close / Reopen (gap 1): action-bar button `action-close` /
+  `action-reopen` and key `X` (`reading::ToggleState`, context
+  `(Queue || Reading) && !Input`, forwarded by `ListView`; palette "Close or
+  reopen"). `Action::SetState` through the queue; a merged PR has neither.
+  A second `X` before the first is sent supersedes it (`pending_fields`).
+- Merge (gap 3): `action-merge` menu (Merge commit / Squash and merge /
+  Rebase and merge), then `action-merge-confirm` / `action-merge-cancel`
+  in the bar; no key. Disabled with the reason for a draft, a conflict
+  (`mergeable = CONFLICTING`) or a pending change on the PR (the Tauri
+  checks). Confirm re-checks; another item drops the pick
+  (`ReadingPane::merge_confirm`). `Action::Merge` sets `state = merged` at
+  once.
+- `E` (gap 7) keeps the local `done_at` and also queues
+  `Action::NotificationDone` (GitHub "done", `DELETE
+  /notifications/threads/{id}`). Sync clears `done` on new activity, as
+  `done_at` does.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` (gap 10): `workspace::NextTab` /
+  `PrevTab` select and focus the next / previous tab of the focused pane
+  (wraps). Palette "Next tab" / "Previous tab".
+- Unread (gap 11): `is:unread` in `fl_search` (`Filter::Unread`). Queues
+  other than the Inbox and Search read `updated_at > last_viewed_at`; the
+  Inbox reads `notifications.unread` (its row mark), also for a
+  notification without a cached issue. `queue_filter` now takes the
+  `QueueKind`. Every queue's `/` bar has an `Unread` toggle
+  (`queue-unread`) that adds or removes the word `is:unread`; saved views
+  can hold it. Search help lists it.
+- Not done from gap 11: the Tauri grouped / flat toggle. GPUI queues are
+  always grouped; ask if flat is wanted.
+- Tests: reading `x_closes_then_reopens_the_item`,
+  `merge_waits_for_the_confirm`, `merge_cancel_and_other_items_drop_the_pick`,
+  `merge_is_blocked_for_a_draft_or_a_conflict`, the `E` test now checks
+  `notification_done`; queue `the_unread_button_keeps_unread_notifications`,
+  `toggle_term_adds_and_removes_one_word`; workspace
+  `ctrl_tab_cycles_the_focused_pane`; fl-search
+  `unread_reads_the_issue_or_the_notification`. `cargo test -p fl-app`: 126
+  pass. Workspace clippy and tests pass.
+
+Bench (2026-11-18, release, fake data, ON BATTERY: the laptop came off AC
+during the run; 3 runs, run 1 cold): `launch_ms` 374-400 warm (600),
+`app_startup_ms` 47-52 warm (60), `search_p95_ms` 18.6 (30),
+`open_cached_item_ms` 17.1 (30), `switch_tab_ms` 9.7-9.8 (8, MISSED),
+`diff_scroll_fps` 102 (120, MISSED). The same whole-frame pattern as the
+step-4 battery runs (9.7 / 16.5, back to 4.0 / 6.2 on AC). Re-run on AC
+power before shipping.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`,
+image `target/tmp/g1p-actions.png`): PR #3 action bar with Approve A,
+Reply R, Close X, Merge menu button. Not checked by eye: the open menu,
+the confirm row, a blocked Merge, Reopen, the Unread toggle (needs a click
+or the Inbox tab on show), light theme.
+
+Open decisions (step 1):
+
+- `X` closes without a confirm (Reopen undoes it). Merge has a confirm and
+  no key.
+- Merge does not wait for checks or reviews (GitHub refuses; the action
+  rolls back and shows in the failed list).
+- The default merge method is not remembered; the menu asks each time.
+
+Changed files (step 1): `crates/fl-search/src/{lib,query,tests}.rs`,
+`crates/fl-search/examples/queue_filter_bench.rs`;
+`crates/fl-app/src/views/{queue.rs, queue/tests.rs, reading.rs,
+reading/action_bar.rs, reading/tests.rs, list_view.rs, mod.rs, search.rs}`,
+`crates/fl-app/src/{workspace,palette}.rs`.
+
+Next: parity step 2, the review composer (gap 4), then labels and
+assignees (2), threads (6), inline comments (5); then Explore sync (plan
+above). The Tauri app stays until the gaps are closed (user, 2026-11-18).
 
 Decided (2026-11-16):
 

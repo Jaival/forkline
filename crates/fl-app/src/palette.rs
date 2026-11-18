@@ -21,9 +21,9 @@ use gpui_kit::{
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::views::{
-    Approve, Done, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleViewed,
+    Approve, Done, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleState, ToggleViewed,
 };
-use crate::workspace::{GoTo, NewTab, OpenView, SplitRight, ToggleTheme};
+use crate::workspace::{GoTo, NewTab, NextTab, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
 
 #[cfg(test)]
 mod tests;
@@ -136,6 +136,7 @@ impl Palette {
         let items: Vec<Cmd> = [
             action("Approve", Some("A"), Approve),
             action("Reply", Some("R"), Reply),
+            action("Close or reopen", Some("X"), ToggleState),
             action("Mark done", Some("E"), Done),
             action("Snooze for a day", Some("H"), Snooze),
             action("Show files", None, ShowFiles),
@@ -156,7 +157,10 @@ impl Palette {
             action("New tab", Some("Ctrl+T"), NewTab),
             action("Close tab", Some("Ctrl+W"), ClosePanel),
             action("Split right", Some("Ctrl+\\"), SplitRight),
+            action("Next tab", Some("Ctrl+Tab"), NextTab),
+            action("Previous tab", Some("Ctrl+Shift+Tab"), PrevTab),
             action("Toggle theme", None, ToggleTheme),
+            action("Sign in to GitHub", None, OpenSignIn),
         ];
 
         // After the availability check above: that one needs the old focus.

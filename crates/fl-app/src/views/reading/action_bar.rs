@@ -1,15 +1,18 @@
 //! Action bar of the reading pane and its keys: `A` approve, `R` reply,
-//! `E` done, `H` snooze.
+//! `X` close / reopen, `E` done, `H` snooze; Merge (button only: it asks
+//! for a confirm).
 //!
-//! Approve and reply go through the optimistic action queue (`fl-sync`).
-//! Done and snooze are local state of an Inbox notification (GitHub has no
-//! snooze): the queue hides the row until it updates or the snooze ends.
+//! Approve, reply, close / reopen and merge go through the optimistic action
+//! queue (`fl-sync`). Done is local state of an Inbox notification and is
+//! also sent to GitHub (`NotificationDone`); snooze is local only (GitHub has
+//! no snooze). The queue hides the row until it updates or the snooze ends.
 
 use fl_db::queries::inbox;
-use fl_types::{Action, IssueState, ReviewEvent};
+use fl_types::{Action, IssueState, MergeMethod, ReviewEvent};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -20,10 +23,30 @@ use rusqlite::Connection;
 use super::{Detail, ReadingPane};
 use crate::store::Store;
 
-actions!(reading, [Approve, Reply, Done, Snooze, CancelReply]);
+actions!(reading, [Approve, Reply, ToggleState, Done, Snooze, CancelReply]);
 
 /// `H` snoozes for one day.
 const SNOOZE_SECS: i64 = 86_400;
+
+const METHODS: [(MergeMethod, &str); 3] = [
+    (MergeMethod::Merge, "Merge commit"),
+    (MergeMethod::Squash, "Squash and merge"),
+    (MergeMethod::Rebase, "Rebase and merge"),
+];
+
+fn method_label(method: MergeMethod) -> &'static str {
+    METHODS.iter().find(|(m, _)| *m == method).map_or("Merge", |(_, label)| label)
+}
+
+/// What the Merge button can do for the item on show.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum MergeState {
+    /// Not an open pull request with details: no button.
+    None,
+    Ready,
+    /// A disabled button and the reason.
+    Blocked(&'static str),
+}
 
 impl ReadingPane {
     /// The open pull request on show, if any.
@@ -42,6 +65,51 @@ impl ReadingPane {
         let action =
             Action::SubmitReview { pr_id, event: ReviewEvent::Approve, body_md: String::new(), comments: Vec::new() };
         self.enqueue(action, cx);
+    }
+
+    pub(super) fn merge_state(&self) -> MergeState {
+        let Some(pr) = self.detail.as_ref().and_then(Detail::pr) else { return MergeState::None };
+        if pr.row.state != IssueState::Open {
+            return MergeState::None;
+        }
+        // The checks of the Tauri merge box; GitHub checks the rest.
+        if pr.is_draft {
+            MergeState::Blocked("Draft")
+        } else if pr.mergeable.as_deref() == Some("CONFLICTING") {
+            MergeState::Blocked("Has conflicts")
+        } else if !pr.pending_fields.is_empty() {
+            MergeState::Blocked("A change is waiting to sync")
+        } else {
+            MergeState::Ready
+        }
+    }
+
+    /// `X`: close an open item, reopen a closed one. A merged PR has neither.
+    pub(crate) fn toggle_state(&mut self, _: &ToggleState, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.detail.as_ref().map(Detail::row) else { return };
+        let state = match row.state {
+            IssueState::Open => IssueState::Closed,
+            IssueState::Closed => IssueState::Open,
+            IssueState::Merged => return,
+        };
+        let issue_id = row.id;
+        self.enqueue(Action::SetState { issue_id, state }, cx);
+    }
+
+    /// A method picked from the Merge menu; the bar then asks to confirm.
+    pub(super) fn pick_merge(&mut self, method: MergeMethod, cx: &mut Context<Self>) {
+        self.merge_confirm = Some(method);
+        cx.notify();
+    }
+
+    pub(super) fn confirm_merge(&mut self, cx: &mut Context<Self>) {
+        let Some(method) = self.merge_confirm.take() else { return };
+        cx.notify();
+        if self.merge_state() != MergeState::Ready {
+            return;
+        }
+        let Some(pr_id) = self.open_pr() else { return };
+        self.enqueue(Action::Merge { pr_id, method }, cx);
     }
 
     /// Open the reply box under the item and focus it.
@@ -98,8 +166,13 @@ impl ReadingPane {
         cx.notify();
     }
 
+    /// Done here and on GitHub: the local `done_at` hides the row at once,
+    /// `NotificationDone` marks the thread done on GitHub. Both return on
+    /// new activity.
     pub(crate) fn done(&mut self, _: &Done, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.notification() else { return };
         self.triage(inbox::set_done, cx);
+        self.enqueue(Action::NotificationDone { id }, cx);
     }
 
     pub(crate) fn snooze(&mut self, _: &Snooze, _: &mut Window, cx: &mut Context<Self>) {
@@ -157,6 +230,12 @@ impl ReadingPane {
         if !(approve || reply || triage) {
             return None;
         }
+        let state_button = match self.detail.as_ref().map(|d| d.row().state) {
+            Some(IssueState::Open) => Some(("action-close", "Close")),
+            Some(IssueState::Closed) => Some(("action-reopen", "Reopen")),
+            _ => None,
+        };
+        let merge = self.merge_element(cx);
         let theme = cx.theme();
         let button = |id: &'static str, label: &'static str, key: &'static str| {
             Button::new(id)
@@ -186,6 +265,12 @@ impl ReadingPane {
                             .on_click(cx.listener(|this, _, window, cx| this.reply(&Reply, window, cx))),
                     )
                 })
+                .when_some(state_button, |d, (id, label)| {
+                    d.child(
+                        button(id, label, "X")
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle_state(&ToggleState, window, cx))),
+                    )
+                })
                 .when(triage, |d| {
                     d.child(
                         button("action-done", "Done", "E")
@@ -196,12 +281,68 @@ impl ReadingPane {
                             .on_click(cx.listener(|this, _, window, cx| this.snooze(&Snooze, window, cx))),
                     )
                 })
+                .children(merge)
                 .child(div().flex_1())
                 .when_some(self.notice.clone(), |d, notice: SharedString| {
                     d.child(div().truncate().min_w_0().text_xs().text_color(theme.danger).child(notice))
                 })
                 .into_any_element(),
         )
+    }
+
+    /// Merge: a menu of methods, then Confirm / Cancel; disabled with the
+    /// reason when GitHub would refuse.
+    fn merge_element(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let theme = cx.theme();
+        let el = match (self.merge_state(), self.merge_confirm) {
+            (MergeState::None, _) => return None,
+            (MergeState::Blocked(reason), _) => h_flex()
+                .gap(px(6.))
+                .items_center()
+                .child(Button::new("action-merge").small().ghost().label("Merge").disabled(true))
+                .child(div().text_xs().text_color(theme.muted_foreground).child(reason))
+                .into_any_element(),
+            (MergeState::Ready, Some(method)) => h_flex()
+                .gap(px(2.))
+                .items_center()
+                .child(
+                    Button::new("action-merge-confirm")
+                        .small()
+                        .primary()
+                        .label(format!("Confirm: {}", method_label(method)))
+                        .on_click(cx.listener(|this, _, _, cx| this.confirm_merge(cx))),
+                )
+                .child(
+                    Button::new("action-merge-cancel")
+                        .small()
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.merge_confirm = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+            (MergeState::Ready, None) => {
+                let pane = cx.weak_entity();
+                Button::new("action-merge")
+                    .small()
+                    .ghost()
+                    .label("Merge")
+                    .dropdown_caret(true)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for (method, label) in METHODS {
+                            let pane = pane.clone();
+                            menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                                let _ = pane.update(cx, |pane, cx| pane.pick_merge(method, cx));
+                            }));
+                        }
+                        menu
+                    })
+                    .into_any_element()
+            }
+        };
+        Some(el)
     }
 
     /// The reply box, when open.

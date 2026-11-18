@@ -12,6 +12,9 @@ pub enum Filter {
     /// `owner`, `name`
     Repo(String, String),
     Assignee(String),
+    /// `is:unread`: updated since last opened (Inbox: the notification's
+    /// unread flag).
+    Unread,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -64,6 +67,7 @@ fn filter(key: &str, value: &str) -> Option<Filter> {
             "open" => Filter::State("open"),
             "closed" => Filter::State("closed"),
             "merged" => Filter::State("merged"),
+            "unread" => Filter::Unread,
             _ => return None,
         },
         "author" => Filter::Author(value.to_owned()),

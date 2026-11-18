@@ -470,3 +470,40 @@ fn a_data_change_reload_keeps_the_filter(cx: &mut TestAppContext) {
         assert!(queue.read(cx).counts_ready);
     });
 }
+
+#[test]
+fn toggle_term_adds_and_removes_one_word() {
+    assert_eq!(toggle_term("", UNREAD), "is:unread");
+    assert_eq!(toggle_term("bug ", UNREAD), "bug is:unread");
+    assert_eq!(toggle_term("bug is:unread label:x", UNREAD), "bug label:x");
+    assert_eq!(toggle_term("IS:UNREAD", UNREAD), "");
+    // `-is:unread` is another word: the button adds the positive one.
+    assert_eq!(toggle_term("-is:unread", UNREAD), "-is:unread is:unread");
+}
+
+#[gpui_kit::test]
+fn the_unread_button_keeps_unread_notifications(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    let click = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.click("queue-unread", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    click(cx);
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "is:unread");
+        assert_eq!(queue.read(cx).input().read(cx).value(), "is:unread");
+        // `men2` is read; `rel` has no cached issue but its flag still counts.
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "sub", "rel"]);
+    });
+    click(cx);
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "");
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "men2", "sub", "rel"]);
+    });
+}
