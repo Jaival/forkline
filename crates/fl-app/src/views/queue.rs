@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
-use crate::workspace::OpenView;
+use crate::workspace::{OpenView, SetViewRef};
 
 actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView]);
 
@@ -240,6 +240,18 @@ impl Queue {
         let Some(id) = row.issue_id else { return };
         let view = if row.is_pr { ViewRef::Pr { id } } else { ViewRef::Issue { id } };
         window.dispatch_action(Box::new(OpenView(view)), cx);
+    }
+
+    /// The repo filter menu: filter, and have the tab record it, so its title
+    /// names the repo and the saved layout reopens it.
+    pub(super) fn pick_repo(&mut self, repo_id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_repo(repo_id, cx);
+        let view_ref = match self.query.kind {
+            QueueKind::Pulls => ViewRef::Pulls { repo_id },
+            QueueKind::Issues => ViewRef::Issues { repo_id },
+            QueueKind::Inbox | QueueKind::Reviews => return,
+        };
+        window.dispatch_action(Box::new(SetViewRef(view_ref)), cx);
     }
 
     fn set_repo(&mut self, repo_id: Option<i64>, cx: &mut Context<Self>) {
@@ -562,8 +574,8 @@ impl Queue {
                     .chain(repos.iter().map(|(name, id)| (name.clone(), Some(*id))));
                 for (label, repo_id) in entries {
                     let queue = queue.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                        let _ = queue.update(cx, |q, cx| q.set_repo(repo_id, cx));
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
                     }));
                 }
                 menu
@@ -643,6 +655,11 @@ impl Queue {
     #[cfg(test)]
     pub(super) fn input(&self) -> &Entity<InputState> {
         &self.input
+    }
+
+    #[cfg(test)]
+    pub(super) fn repo_id(&self) -> Option<i64> {
+        self.query.repo_id
     }
 
     #[cfg(test)]

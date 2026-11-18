@@ -170,6 +170,7 @@ fn query_plans_use_indexes() {
     ];
     let mut queries: Vec<(String, Vec<Value>)> = queries.map(|q| (q, Vec::new())).into();
     queries.extend(filters.iter().map(|f| queries::lists::issue_list_sql(f, req)));
+    queries.push((queries::explore::STARRED_BY_SQL.into(), vec![Value::Integer(1), Value::Integer(3)]));
     for grouped in [false, true] {
         for repo_id in [None, Some(1)] {
             let f = InboxFilter { repo_id, unread_only: true, grouped };

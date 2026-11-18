@@ -35,8 +35,10 @@ pub fn render(
     };
     let nav = |id: &'static str, view_ref: ViewRef| {
         let ws = ws.clone();
-        let btn = button(id, view_ref.icon(), &view_ref.title(), active == Some(&view_ref));
-        btn.on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open(view_ref.clone(), window, cx)))
+        // A filtered Pulls tab or a Search tab with a query still lights its button.
+        let selected = active.is_some_and(|a| a.same_kind(&view_ref));
+        let btn = button(id, view_ref.icon(), &view_ref.title(), selected);
+        btn.on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(view_ref.clone(), window, cx)))
     };
 
     let inbox = div()

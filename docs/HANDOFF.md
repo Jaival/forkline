@@ -176,8 +176,10 @@ can exceed 450; run the bench twice.
 ## GPUI G1 state
 
 Plan: `docs/design/ui-plan.md` (7 steps). Mockups: `docs/design/ui-mockups.html`
-(B = shell, D = PR Files tab). Steps 1-6 are done. PRs: #2 (G0 + steps 1-3, `gpui`), #3 (step 4,
-`gpui-step4`), #4 (step 5, `gpui-step5`), step 6 on `gpui-step6` (stacked on `gpui-step5`).
+(B = shell, D = PR Files tab). Steps 1-6 are done; step 7's views are done, the Tauri
+removal waits for the parity gaps. PRs: #2 (G0 + steps 1-3, `gpui`), #3 (step 4,
+`gpui-step4`), #4 (step 5, `gpui-step5`), #5 (step 6, `gpui-step6`), step 7 on
+`gpui-step7` (stacked on `gpui-step6`).
 
 Done (steps 1 and 2):
 
@@ -469,10 +471,159 @@ Open decisions (step 6):
 - A failed Save view / Delete view write is silent.
 - The filter is not saved in the layout; a restored tab starts unfiltered.
 
-Next (new thread): step 7, remaining views (Repo, Repositories, Starred,
-Explore, Search, Home), then the parity check and removal of the Tauri app
-(ask first). The palette's `Go to: Search` and `Search for "…"` already open
-`ViewRef::Search { q }`, which is still a placeholder.
+Done (step 7, remaining views, 2026-11-18):
+
+- `views/rows.rs`: the shared list for the flat views. `Rows<T>` holds the
+  rows, the selection and the paging; a view implements `HasRows`
+  (`rows`, `rows_mut`, `open_ref`). `Rows::load_now` reads the first page on
+  the UI thread (first frame has rows), `reset` swaps the fetch (new filter
+  or query: no selection, first page in the background, `first_page_ms`),
+  `reload` re-reads the loaded pages and keeps the selection by key; a
+  `generation` drops stale reads. `rows::list` is a `uniform_list` with a
+  scrollbar that loads the next page near the end; `row_shell` gives the
+  row look and clicks (click selects, double-click opens); `list_keys` adds
+  the list actions.
+- Keys: the list keys (`j` / `k` / arrows / `Enter`) also work in key
+  context `List` (`(Queue || List) && !Input`); `/` in
+  `(Queue || Reading || List) && !Input`; new `views::TogglePin` on `p` in
+  `(List || Repo) && !Input`. `views::step` is the shared selection rule
+  (none until the first move, then row 0).
+- `views/repos.rs`: Repositories (`ViewRef::Repos`, hides Explore-only
+  repos) and Starred (`ViewRef::Starred`), one view. Name filter input
+  (`/` focuses, `Enter` returns and keeps it, `Esc` clears); rows: owner /
+  name, star and pin marks, description, open PRs / issues, language, stars,
+  Pin / Unpin button (`repo-pin`, ix). `Enter` opens the repo, `p` pins.
+  `repos::set_pinned` writes, emits `repos`, and wakes sync on pin.
+  Reloads on `repos` / `issues`. Ready keys `repos`, `starred`.
+- `views/explore.rs` (new, no Tauri view): repos the people you follow
+  starred, newest star first: "starred by a, b, c and N others · age",
+  language, stars. `Enter` opens the repo. Data `fl_db::queries::explore::feed`
+  (`fl_types::ExploreRow`), tests in `crates/fl-db/tests/explore.rs`; the
+  per-row login query is in the query-plan test. Ready key `explore`.
+- `views/repo.rs`: Repo overview (`ViewRef::Repo`): header with Pin
+  (`repo-pin`), stats, open PR / issue cards (`repo-open-prs`,
+  `repo-open-issues`; they open the repo's Pulls / Issues queue), languages
+  bar, star history sparkline (GPUI `canvas` + `PathBuilder::stroke`), recent
+  commits with check dots, releases, contributors. Dates `YYYY-MM-DD` UTC.
+  `p` pins. Read in the background; reloads on `repos` / `issues`. Ready key
+  `repo`.
+- `views/search.rs`: Search (`ViewRef::Search { q }`): query bar,
+  `fl_search::search` 50 per page, status line (`N+ results · X ms`, No
+  results, Search failed), rows with state icon, `repo #n`, title and the
+  snippet with hits in bold (U+E000 / U+E001 parsed by `split_snippet`),
+  "In a comment:" for comment hits. Empty `q`: operator help, and the bar
+  holds the focus when the tab opens. `Enter` in the bar runs the query in
+  the same tab; `Esc` returns to the list; `/` focuses the bar. Ready key
+  `search` (non-empty query only).
+- `views/home.rs`: Home (`ViewRef::Home`): `lists::home_feed` (open items,
+  newest update first), unread mark, comments, age. Reloads on `issues` /
+  `pr`. Ready key `home`. Also holds the shared `state_icon` / `item_ref`
+  for `IssueRow`.
+- `workspace::SetViewRef(ViewRef)`: a view says it now shows another
+  `ViewRef`; `ViewPanel` records it (the tab title follows) and the
+  workspace saves the layout. Search uses it.
+- `test_support`: `start_on` (open a view), `active::<T>`, `press`,
+  `type_text`, `tabs`, `write` (SQL + `DataChanged`), `query_i64`.
+- Tests: `repos/tests.rs` 11, `explore/tests.rs` 4, `repo/tests.rs` 8,
+  `search/tests.rs` 7, `home/tests.rs` 5, `views::tests` 1; fl-db
+  `tests/explore.rs` 3. `cargo test -p fl-app`: 106 pass.
+- Bench: step `open_views` opens each view in a tab and records
+  `open_<key>_ms` (open -> `<key>_painted`). No budgets yet; `fl-bench` now
+  prints durations without a budget as `(no budget)`.
+
+Bench (2026-11-18, release, AC power, fake data; run 1 cold: `launch_ms`
+821, `app_startup_ms` 181; 5 warm runs): `open_home_ms` 4.5-6.3,
+`open_repos_ms` 6.5-7.2, `open_starred_ms` 6.1-6.4, `open_explore_ms`
+5.6-6.4, `open_repo_ms` 7.0-7.1, `open_search_ms` 35-40 (`fixture`, a broad
+query: more than 2000 docs, recency order), `search_p95_ms` 11.5-14.8 (30),
+`open_cached_item_ms` 6.0-6.1 (30), `switch_tab_ms` 4.1 (8),
+`diff_scroll_fps` 240 (120), `launch_ms` 440-469 (600), `app_startup_ms`
+47-56 in 3 runs, 60.2 and 64.5 in 2 (60). The misses sit between
+`store_ready` and `workspace_new` (window creation), as in steps 3 and 5;
+step 7 adds no code on the launch path.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-data`
+with a saved layout holding the six tabs; script `target/tmp/shots.sh`,
+images `target/tmp/g1s7-*.png`): Home, Repositories, Explore, Repository 1
+(languages bar, sparkline, commits), Search `fixture` (snippets in bold).
+Not checked by eye: Starred (same view as Repositories), selection after
+`j` (covered by UI tests), filter typing, releases / contributors below the
+fold, the empty-query help, light theme.
+
+Parity: `docs/design/gpui-parity.md`. The Tauri app still has issue close /
+reopen, labels and assignees, merge, Request changes / Comment reviews,
+inline review comments, thread reply / resolve, GitHub notification done,
+the sign-in dialog, failed-action Retry / Discard, `Ctrl+Tab` and the Inbox
+unread toggle. The note recommends keeping `app/` and `ui/` until those
+land. Not removed; the user decides.
+
+Tab titles and Go to (step 7, after review, 2026-11-18):
+
+- `ViewRef` stays id-only (saved layouts unchanged). `ViewPanel` reads the
+  repo's `owner/name` (`fl_db::queries::repo::full_name`, one row by key,
+  sync) when it is built and on `SetViewRef`, and again on a `repos`
+  change. `ViewRef::title_with(name)`: Repo tab `owner/name`, filtered
+  queues `owner/name: Pull requests` / `owner/name: Issues`; an unknown repo
+  keeps "Repository N". Tests and `Workspace::tab_groups` use the panel
+  title.
+- The queue's repo filter menu (`Queue::pick_repo`) sends `SetViewRef`
+  (Pulls / Issues only), so the title and the saved layout follow the filter.
+- `workspace::GoTo(ViewRef)` / `Workspace::go_to`: select an open tab of the
+  same kind (`ViewRef::same_kind`), keeping its query or repo filter; the
+  focused pane first, then layout order; else open the given view. A Search
+  tab also gets its bar focused with the query selected
+  (`SearchView::select_bar`). The rail buttons and the palette's top "Go to"
+  entries use it; the rail lights a button by kind. The palette's per-repo
+  Go to entries and `Search for "…"` still match exactly (`OpenView`).
+- Tests: `view_ref::tests::titles_name_the_repo`,
+  `queue/tests.rs` `picking_a_repo_names_the_tab`, `repo/tests.rs`
+  `the_tab_title_follows_a_rename`, `search/tests.rs`
+  `the_rail_selects_the_open_search_tab_with_its_query_selected`,
+  `workspace::tests::go_to_keeps_a_filtered_tab_and_prefers_the_focused_pane`;
+  fl-db `tests/repo.rs` `full_name_joins_owner_and_name`.
+  `cargo test -p fl-app`: 111 pass.
+
+Explore sync plan (decided 2026-11-18; its own step, after sign-in and
+Retry / Discard):
+
+- On the 30-min repo tick (`REPOS_EVERY`), last in the tick; skip it when
+  REST remaining is under `LOW_REMAINING` (50).
+- `GET /user/following` (ETag via `list_cached`), at most 200 users, into
+  `following`.
+- Per user: first page of `GET /users/{login}/starred` (Accept
+  `application/vnd.github.star+json` for `starred_at`, 30 per page, ETag).
+  Keep 90 days of stars in `explore_stars`.
+- New repos from it get `explore_only = 1`, `sync_enabled = 0` (migration
+  0008 rules; sync clears the flag or deletes unreferenced Explore-only
+  repos).
+- Pinning an Explore-only repo sets `explore_only = 0`, `sync_enabled = 1`
+  (`repo::set_pinned`). Unpin leaves it to the 0008 rules.
+- Explore gets `p` and a Pin button per row.
+- Tests: the fl-sync mock-server harness (`crates/fl-sync/tests/common`).
+
+Open decisions (step 7):
+
+- The Explore feed reads every `explore_stars` row per page (fine for recent
+  stars of followed users; not index-ordered).
+- `open_*_ms` have no budget. Suggest 30 ms for all but search; a broad
+  search term takes 35-40 ms (the `fl_search` broad path).
+- Search shows the loaded count (`50+ results`), not a total.
+- Home lists open items newest first (Tauri parity); with Inbox as launch
+  view it adds little.
+- A failed pin write is silent.
+
+Changed files (step 7): `crates/fl-app/src/views/{rows,repos,explore,repo,search,home}.rs`
+and their `*/tests.rs`, `views/mod.rs`, `views/queue.rs` (test accessor),
+`panel.rs`, `workspace.rs`, `rail.rs`, `palette.rs`, `view_ref.rs`, `bench.rs`,
+`test_support.rs`; `crates/fl-db/src/queries/{explore,mod,repo}.rs`,
+`crates/fl-db/tests/{explore,schema,repo}.rs`;
+`crates/fl-types/src/repo.rs`; `crates/fl-bench/src/main.rs`;
+`docs/design/gpui-parity.md`, `docs/design/ui-plan.md`.
+
+Next (new thread): the parity gaps (sign-in and Retry / Discard first),
+then Explore sync (plan above), then the PR / issue writes. The Tauri app
+stays until the gaps in `docs/design/gpui-parity.md` are closed (user,
+2026-11-18).
 
 Decided (2026-11-16):
 

@@ -23,7 +23,7 @@ use crate::view_ref::ViewRef;
 use crate::views::{
     Approve, Done, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleViewed,
 };
-use crate::workspace::{NewTab, OpenView, SplitRight, ToggleTheme};
+use crate::workspace::{GoTo, NewTab, OpenView, SplitRight, ToggleTheme};
 
 #[cfg(test)]
 mod tests;
@@ -69,8 +69,9 @@ fn open(label: String, view: ViewRef) -> Cmd {
     Cmd { label, hint: None, run: Run::Action(Rc::new(OpenView(view))) }
 }
 
-fn go_to(label: String, view: ViewRef) -> Cmd {
-    open(format!("Go to: {label}"), view)
+/// Selects an open tab of the view's kind (see `Workspace::go_to`).
+fn go_to(label: &str, view: ViewRef) -> Cmd {
+    Cmd { label: format!("Go to: {label}"), hint: None, run: Run::Action(Rc::new(GoTo(view))) }
 }
 
 pub struct Palette {
@@ -91,20 +92,21 @@ impl Palette {
     pub fn new(pinned: &[RepoSummary], window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.new(|cx| CommandState::new(window, cx));
         let mut go = vec![
-            go_to("Inbox".into(), ViewRef::Inbox),
-            go_to("Pull requests".into(), ViewRef::Pulls { repo_id: None }),
-            go_to("Issues".into(), ViewRef::Issues { repo_id: None }),
-            go_to("Review requests".into(), ViewRef::Reviews),
-            go_to("Repositories".into(), ViewRef::Repos),
-            go_to("Starred".into(), ViewRef::Starred),
-            go_to("Explore".into(), ViewRef::Explore),
-            go_to("Search".into(), ViewRef::Search { q: String::new() }),
-            go_to("Settings".into(), ViewRef::Settings),
+            go_to("Inbox", ViewRef::Inbox),
+            go_to("Pull requests", ViewRef::Pulls { repo_id: None }),
+            go_to("Issues", ViewRef::Issues { repo_id: None }),
+            go_to("Review requests", ViewRef::Reviews),
+            go_to("Repositories", ViewRef::Repos),
+            go_to("Starred", ViewRef::Starred),
+            go_to("Explore", ViewRef::Explore),
+            go_to("Search", ViewRef::Search { q: String::new() }),
+            go_to("Settings", ViewRef::Settings),
         ];
         for repo in pinned {
             let name = format!("{}/{}", repo.owner, repo.name);
-            go.push(go_to(format!("{name}: Pull requests"), ViewRef::Pulls { repo_id: Some(repo.id) }));
-            go.push(go_to(format!("{name}: Issues"), ViewRef::Issues { repo_id: Some(repo.id) }));
+            // This repo's tab exactly, not any Pulls / Issues tab.
+            go.push(open(format!("Go to: {name}: Pull requests"), ViewRef::Pulls { repo_id: Some(repo.id) }));
+            go.push(open(format!("Go to: {name}: Issues"), ViewRef::Issues { repo_id: Some(repo.id) }));
         }
 
         // One small read, on open: the palette lives only while the user types.

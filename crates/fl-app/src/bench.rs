@@ -12,7 +12,9 @@
 //! the Issues queue with 20 `/` queries (`search_p95_ms`: p95 of change ->
 //! first filtered page painted, 10 rounds after one warm-up round), scroll
 //! the 10k-line diff (`diff_scroll_fps`: the Files tab of the fake PR
-//! `tune-generated`, `diff::ScrollDown` every frame for two seconds).
+//! `tune-generated`, `diff::ScrollDown` every frame for two seconds), open
+//! each step 7 view once (`open_<key>_ms`: open -> `<key>_painted`; no
+//! budget yet).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -191,6 +193,8 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         }
     }
 
+    let views = open_views(&ws, &mut cx).await;
+
     let search = search_p95(&ws, &mut cx).await;
 
     let fps = scroll_big_diff(&ws, &mut cx).await;
@@ -207,12 +211,52 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         if !opens.is_empty() {
             bench.report.durations.insert("open_cached_item_ms".into(), vec![median(opens)]);
         }
+        for (key, ms) in views {
+            bench.report.durations.insert(format!("open_{key}_ms"), vec![ms]);
+        }
         let json = serde_json::to_vec_pretty(&bench.report).expect("report serializes");
         if let Err(e) = std::fs::write(&bench.out, json) {
             eprintln!("forkline: cannot write {}: {e}", bench.out.display());
         }
         cx.quit();
     });
+}
+
+/// Open each step 7 view in a new tab; time open -> its rows painted.
+async fn open_views(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> Vec<(&'static str, f64)> {
+    let repo_id = cx
+        .update(|_, cx| {
+            crate::store::Store::global(cx)
+                .read(cx)
+                .db()
+                .read(|c| c.query_row("SELECT id FROM repos ORDER BY pinned DESC, id LIMIT 1", [], |r| r.get(0)).optional())
+        })
+        .ok()
+        .and_then(Result::ok)
+        .flatten()
+        .unwrap_or(1);
+    let views = [
+        ("home", ViewRef::Home),
+        ("repos", ViewRef::Repos),
+        ("starred", ViewRef::Starred),
+        ("explore", ViewRef::Explore),
+        ("repo", ViewRef::Repo { repo_id }),
+        ("search", ViewRef::Search { q: "fixture".into() }),
+    ];
+    let mut out = Vec::new();
+    for (key, view) in views {
+        let start = epoch_ms();
+        let _ = cx.update(|window, cx| ws.update(cx, |ws, cx| ws.open(view, window, cx)));
+        let mark = format!("{key}_painted");
+        for _ in 0..OPEN_ITEM_MAX_FRAMES {
+            painted(cx).await;
+            if let Ok(Some(at)) = cx.update(|_, cx| cx.global::<Bench>().report.marks.get(&mark).copied()) {
+                out.push((key, at - start));
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Filter the Issues queue by each query, time change -> first filtered page

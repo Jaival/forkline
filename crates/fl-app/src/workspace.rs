@@ -30,6 +30,18 @@ actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette]);
 #[action(namespace = forkline, no_json)]
 pub struct OpenView(pub ViewRef);
 
+/// Go to a kind of view: select an open tab of that kind (keeping its query
+/// or repo filter), else open `0`. The rail and the palette's "Go to" use it.
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct GoTo(pub ViewRef);
+
+/// The tab's view now shows `0` (e.g. the Search view ran a new query). The
+/// tab records it, so its title follows and the saved layout reopens it.
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct SetViewRef(pub ViewRef);
+
 /// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
 /// to the Tauri app until it is removed (ADR 0001).
 const LAYOUT_KEY: &str = "gpui_layout";
@@ -143,6 +155,25 @@ impl Workspace {
         self.focus_panel(id, window, cx);
     }
 
+    /// Select an open tab of `view_ref`'s kind, in the focused pane first,
+    /// then in layout order; else open `view_ref`. A Search tab also gets its
+    /// bar focused with the query selected, so typing replaces it.
+    pub fn go_to(&mut self, view_ref: ViewRef, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.find_kind(&view_ref, window, cx) else {
+            self.open(view_ref, window, cx);
+            return;
+        };
+        self.dock.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+        self.focus_panel(id, window, cx);
+        if let Some(search) = self.content_of(id, cx).and_then(|v| v.downcast::<crate::views::search::SearchView>().ok()) {
+            search.update(cx, |search, cx| search.select_bar(window, cx));
+        }
+    }
+
+    fn on_go_to(&mut self, action: &GoTo, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(action.0.clone(), window, cx);
+    }
+
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let panel = panel_handle(ViewPanel::new(ViewRef::Inbox, window, cx));
         let id = panel.panel_id(cx);
@@ -171,6 +202,13 @@ impl Workspace {
 
     fn on_open_view(&mut self, action: &OpenView, window: &mut Window, cx: &mut Context<Self>) {
         self.open(action.0.clone(), window, cx);
+    }
+
+    /// The panel has taken the new `ViewRef` already; save it and redraw the tabs.
+    fn on_set_view_ref(&mut self, _: &SetViewRef, window: &mut Window, cx: &mut Context<Self>) {
+        self.schedule_save(window, cx);
+        self.dock.update(cx, |_, cx| cx.notify());
+        cx.notify();
     }
 
     fn on_open_palette(&mut self, _: &OpenPalette, window: &mut Window, cx: &mut Context<Self>) {
@@ -284,6 +322,26 @@ impl Workspace {
         found
     }
 
+    /// Open tab of `view_ref`'s kind: in the focused pane if it has one,
+    /// else the first in layout order.
+    fn find_kind(&self, view_ref: &ViewRef, window: &Window, cx: &App) -> Option<PanelId> {
+        let focused = self.focused_group(window, cx).map(|(node, _)| node);
+        let (mut first, mut in_focused) = (None, None);
+        self.dock.read(cx).layout(DockPlacement::Center)?.root().walk(&mut |node| {
+            if let PaneRef::Tabs { panels, .. } = node.kind() {
+                for id in panels {
+                    if self.view_ref_of(*id, cx).is_some_and(|v| v.same_kind(view_ref)) {
+                        first.get_or_insert(*id);
+                        if Some(node.id()) == focused {
+                            in_focused.get_or_insert(*id);
+                        }
+                    }
+                }
+            }
+        });
+        in_focused.or(first)
+    }
+
     /// The content view of the focused tab.
     #[cfg(test)]
     pub(crate) fn active_view(&self, window: &Window, cx: &App) -> Option<gpui_kit::AnyView> {
@@ -292,8 +350,7 @@ impl Workspace {
     }
 
     fn content_of(&self, id: PanelId, cx: &App) -> Option<gpui_kit::AnyView> {
-        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
-        Some(panel.read(cx).content().clone())
+        Some(self.panel(id, cx)?.read(cx).content().clone())
     }
 
     /// The open command palette, if any.
@@ -313,7 +370,7 @@ impl Workspace {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
-                            let title = self.view_ref_of(*id, cx).unwrap().title().to_string();
+                            let title = self.panel(*id, cx).unwrap().read(cx).title().to_string();
                             if i == active_ix { format!("*{title}") } else { title }
                         })
                         .collect(),
@@ -323,9 +380,12 @@ impl Workspace {
         out
     }
 
+    fn panel(&self, id: PanelId, cx: &App) -> Option<Entity<ViewPanel>> {
+        self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()
+    }
+
     fn view_ref_of(&self, id: PanelId, cx: &App) -> Option<ViewRef> {
-        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
-        Some(panel.read(cx).view_ref().clone())
+        Some(self.panel(id, cx)?.read(cx).view_ref().clone())
     }
 
     fn focus_panel(&self, id: PanelId, window: &mut Window, cx: &mut App) {
@@ -393,6 +453,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_split_right))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_view))
+            .on_action(cx.listener(Self::on_go_to))
+            .on_action(cx.listener(Self::on_set_view_ref))
             .on_action(cx.listener(Self::on_open_palette))
             .size_full()
             .bg(cx.theme().background)
@@ -547,5 +609,53 @@ mod tests {
             assert!(focus.is_focused(window));
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn go_to_keeps_a_filtered_tab_and_prefers_the_focused_pane(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = crate::test_support::open_seeded(
+            cx,
+            dir.path(),
+            "INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);",
+        );
+        cx.run_until_parked();
+        let open = |view_ref: ViewRef, cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                ws.update(cx, |ws, cx| ws.open(view_ref, window, cx));
+                window.render_frame(cx);
+            })
+            .unwrap();
+        };
+        open(ViewRef::Pulls { repo_id: Some(1) }, cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.press("ctrl-\\", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        open(ViewRef::Pulls { repo_id: Some(2) }, cx);
+        cx.read(|cx| {
+            assert_eq!(
+                groups(ws.read(cx), cx),
+                [vec!["Inbox", "*o/a: Pull requests"], vec!["o/a: Pull requests", "*o/b: Pull requests"]]
+            )
+        });
+
+        // The right pane has focus: its first Pulls tab, not the left one.
+        cx.update_window(handle, |_, window, cx| window.click("rail-pulls", cx)).unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                groups(ws.read(cx), cx),
+                [vec!["Inbox", "*o/a: Pull requests"], vec!["*o/a: Pull requests", "o/b: Pull requests"]]
+            )
+        });
+
+        // No Issues tab open: it opens the unfiltered one.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("rail-issues", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx)[1], ["o/a: Pull requests", "o/b: Pull requests", "*Issues"]));
     }
 }

@@ -81,6 +81,13 @@ pub fn list(conn: &Connection, f: &RepoFilter, req: PageReq) -> rusqlite::Result
     Ok(page(items, req))
 }
 
+/// `owner/name`, for tab titles. `None` if the repo is not cached.
+pub fn full_name(conn: &Connection, id: RepoId) -> rusqlite::Result<Option<String>> {
+    conn.prepare_cached("SELECT owner || '/' || name FROM repos WHERE id = ?1")?
+        .query_row([id], |r| r.get(0))
+        .optional()
+}
+
 /// Local write. Returns false if the repo does not exist.
 pub fn set_pinned(conn: &Connection, id: RepoId, pinned: bool) -> rusqlite::Result<bool> {
     Ok(conn
