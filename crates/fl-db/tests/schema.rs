@@ -170,6 +170,7 @@ fn query_plans_use_indexes() {
     ];
     let mut queries: Vec<(String, Vec<Value>)> = queries.map(|q| (q, Vec::new())).into();
     queries.extend(filters.iter().map(|f| queries::lists::issue_list_sql(f, req)));
+    queries.push((queries::explore::STARRED_BY_SQL.into(), vec![Value::Integer(1), Value::Integer(3)]));
     for grouped in [false, true] {
         for repo_id in [None, Some(1)] {
             let f = InboxFilter { repo_id, unread_only: true, grouped };
@@ -179,8 +180,8 @@ fn query_plans_use_indexes() {
     for kind in [QueueKind::Inbox, QueueKind::Pulls, QueueKind::Issues, QueueKind::Reviews] {
         for repo_id in [None, Some(1)] {
             let q = QueueQuery { kind, repo_id };
-            queries.push(queries::queue::queue_sql(&q, req));
-            queries.push(queries::queue::counts_sql(&q));
+            queries.push(queries::queue::queue_sql(&q, None, req));
+            queries.push(queries::queue::counts_sql(&q, None));
         }
     }
     for (q, args) in queries {

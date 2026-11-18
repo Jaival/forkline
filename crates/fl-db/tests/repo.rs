@@ -55,6 +55,13 @@ fn pin_toggle_and_missing_repo() {
 }
 
 #[test]
+fn full_name_joins_owner_and_name() {
+    let (_d, db) = seeded();
+    assert_eq!(db.read(|c| repo::full_name(c, 1)).unwrap().as_deref(), Some("acme/rocket"));
+    assert_eq!(db.read(|c| repo::full_name(c, 99)).unwrap(), None);
+}
+
+#[test]
 fn overview_collects_sections() {
     let (_d, db) = seeded();
     let o = db.read(|c| repo::overview(c, 1)).unwrap().unwrap();

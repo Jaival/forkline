@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use fl_db::queries::{inbox, layout, repo};
-use fl_types::{DataChanged, RepoSummary};
+use fl_db::queries::{inbox, layout, repo, views};
+use fl_types::{DataChanged, QueueKind, RepoSummary};
 use gpui_kit::base::Placement;
 use gpui_kit::component::dock::{
     ClosePanel, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
@@ -12,21 +12,35 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions, div,
+    FocusHandle, MouseButton, ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions,
+    deferred, div, px,
 };
 
 use crate::footer::Footer;
+use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
 use crate::rail;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette]);
 
 /// Ask the workspace to show a view, so child views need no workspace handle.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
 #[action(namespace = forkline, no_json)]
 pub struct OpenView(pub ViewRef);
+
+/// Go to a kind of view: select an open tab of that kind (keeping its query
+/// or repo filter), else open `0`. The rail and the palette's "Go to" use it.
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct GoTo(pub ViewRef);
+
+/// The tab's view now shows `0` (e.g. the Search view ran a new query). The
+/// tab records it, so its title follows and the saved layout reopens it.
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct SetViewRef(pub ViewRef);
 
 /// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
 /// to the Tauri app until it is removed (ADR 0001).
@@ -40,6 +54,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-t", NewTab, None),
         KeyBinding::new("ctrl-w", ClosePanel, None),
         KeyBinding::new("ctrl-\\", SplitRight, None),
+        KeyBinding::new("ctrl-k", OpenPalette, None),
     ]);
 }
 
@@ -50,6 +65,10 @@ pub struct Workspace {
     inbox_unread: u32,
     /// False in a bench run: it neither loads nor overwrites the user's layout.
     save_layout: bool,
+    /// The command palette, while open, and the focus it came from.
+    palette: Option<Entity<Palette>>,
+    palette_return: Option<FocusHandle>,
+    _palette_subscription: Option<Subscription>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -98,6 +117,9 @@ impl Workspace {
             pinned: Vec::new(),
             inbox_unread: 0,
             save_layout,
+            palette: None,
+            palette_return: None,
+            _palette_subscription: None,
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -133,6 +155,25 @@ impl Workspace {
         self.focus_panel(id, window, cx);
     }
 
+    /// Select an open tab of `view_ref`'s kind, in the focused pane first,
+    /// then in layout order; else open `view_ref`. A Search tab also gets its
+    /// bar focused with the query selected, so typing replaces it.
+    pub fn go_to(&mut self, view_ref: ViewRef, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.find_kind(&view_ref, window, cx) else {
+            self.open(view_ref, window, cx);
+            return;
+        };
+        self.dock.update(cx, |dock, cx| dock.select_panel(id, window, cx));
+        self.focus_panel(id, window, cx);
+        if let Some(search) = self.content_of(id, cx).and_then(|v| v.downcast::<crate::views::search::SearchView>().ok()) {
+            search.update(cx, |search, cx| search.select_bar(window, cx));
+        }
+    }
+
+    fn on_go_to(&mut self, action: &GoTo, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(action.0.clone(), window, cx);
+    }
+
     fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let panel = panel_handle(ViewPanel::new(ViewRef::Inbox, window, cx));
         let id = panel.panel_id(cx);
@@ -161,6 +202,74 @@ impl Workspace {
 
     fn on_open_view(&mut self, action: &OpenView, window: &mut Window, cx: &mut Context<Self>) {
         self.open(action.0.clone(), window, cx);
+    }
+
+    /// The panel has taken the new `ViewRef` already; save it and redraw the tabs.
+    fn on_set_view_ref(&mut self, _: &SetViewRef, window: &mut Window, cx: &mut Context<Self>) {
+        self.schedule_save(window, cx);
+        self.dock.update(cx, |_, cx| cx.notify());
+        cx.notify();
+    }
+
+    fn on_open_palette(&mut self, _: &OpenPalette, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+            return;
+        }
+        self.palette_return = window.focused(cx);
+        let palette = cx.new(|cx| Palette::new(&self.pinned, window, cx));
+        self._palette_subscription = Some(cx.subscribe_in(&palette, window, Self::on_palette_event));
+        self.palette = Some(palette);
+        cx.notify();
+    }
+
+    /// Hide the palette and give focus back to where it came from.
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette = None;
+        self._palette_subscription = None;
+        match self.palette_return.take() {
+            Some(focus) => window.focus(&focus, cx),
+            None => {
+                if let Some((_, id)) = self.focused_group(window, cx) {
+                    self.focus_panel(id, window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn on_palette_event(&mut self, _: &Entity<Palette>, event: &PaletteEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_palette(window, cx);
+        let PaletteEvent::Run(run) = event else { return };
+        match run {
+            // Dispatch is deferred, so it runs with focus back on the view.
+            Run::Action(action) => window.dispatch_action(action.boxed_clone(), cx),
+            Run::OpenSaved(view) => {
+                let view_ref = match view.kind {
+                    QueueKind::Inbox => ViewRef::Inbox,
+                    QueueKind::Pulls => ViewRef::Pulls { repo_id: None },
+                    QueueKind::Issues => ViewRef::Issues { repo_id: None },
+                    QueueKind::Reviews => ViewRef::Reviews,
+                };
+                self.open(view_ref.clone(), window, cx);
+                // By view, not by focus: a new tab has not rendered yet, so
+                // the focus does not tell its group apart.
+                let content = self.find(&view_ref, cx).and_then(|id| self.content_of(id, cx));
+                if let Some(content) = content {
+                    crate::views::set_filter(&content, &view.query, window, cx);
+                }
+            }
+            Run::DeleteView(id) => {
+                let (id, db) = (*id, Store::global(cx).read(cx).db().clone());
+                let task = cx.background_spawn(async move { db.write(|c| views::delete(c, id)) });
+                cx.spawn(async move |_, cx| {
+                    if task.await.is_ok() {
+                        cx.update(|cx| Store::emit_changed(&["views"], cx));
+                    }
+                })
+                .detach();
+            }
+        }
     }
 
     fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
@@ -213,12 +322,41 @@ impl Workspace {
         found
     }
 
+    /// Open tab of `view_ref`'s kind: in the focused pane if it has one,
+    /// else the first in layout order.
+    fn find_kind(&self, view_ref: &ViewRef, window: &Window, cx: &App) -> Option<PanelId> {
+        let focused = self.focused_group(window, cx).map(|(node, _)| node);
+        let (mut first, mut in_focused) = (None, None);
+        self.dock.read(cx).layout(DockPlacement::Center)?.root().walk(&mut |node| {
+            if let PaneRef::Tabs { panels, .. } = node.kind() {
+                for id in panels {
+                    if self.view_ref_of(*id, cx).is_some_and(|v| v.same_kind(view_ref)) {
+                        first.get_or_insert(*id);
+                        if Some(node.id()) == focused {
+                            in_focused.get_or_insert(*id);
+                        }
+                    }
+                }
+            }
+        });
+        in_focused.or(first)
+    }
+
     /// The content view of the focused tab.
     #[cfg(test)]
     pub(crate) fn active_view(&self, window: &Window, cx: &App) -> Option<gpui_kit::AnyView> {
         let (_, id) = self.focused_group(window, cx)?;
-        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
-        Some(panel.read(cx).content().clone())
+        self.content_of(id, cx)
+    }
+
+    fn content_of(&self, id: PanelId, cx: &App) -> Option<gpui_kit::AnyView> {
+        Some(self.panel(id, cx)?.read(cx).content().clone())
+    }
+
+    /// The open command palette, if any.
+    #[cfg(test)]
+    pub(crate) fn palette(&self) -> Option<&Entity<Palette>> {
+        self.palette.as_ref()
     }
 
     /// Tab groups in the center, each as its list of views (active one marked `*`).
@@ -232,7 +370,7 @@ impl Workspace {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
-                            let title = self.view_ref_of(*id, cx).unwrap().title().to_string();
+                            let title = self.panel(*id, cx).unwrap().read(cx).title().to_string();
                             if i == active_ix { format!("*{title}") } else { title }
                         })
                         .collect(),
@@ -242,9 +380,12 @@ impl Workspace {
         out
     }
 
+    fn panel(&self, id: PanelId, cx: &App) -> Option<Entity<ViewPanel>> {
+        self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()
+    }
+
     fn view_ref_of(&self, id: PanelId, cx: &App) -> Option<ViewRef> {
-        let panel = self.dock.read(cx).panel(id)?.view().downcast::<ViewPanel>().ok()?;
-        Some(panel.read(cx).view_ref().clone())
+        Some(self.panel(id, cx)?.read(cx).view_ref().clone())
     }
 
     fn focus_panel(&self, id: PanelId, window: &mut Window, cx: &mut App) {
@@ -312,6 +453,9 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_split_right))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_view))
+            .on_action(cx.listener(Self::on_go_to))
+            .on_action(cx.listener(Self::on_set_view_ref))
+            .on_action(cx.listener(Self::on_open_palette))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -324,6 +468,29 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
             )
             .child(self.footer.clone())
+            .children(self.palette.clone().map(|palette| {
+                // Over the dock; a click outside the box closes it.
+                deferred(
+                    div()
+                        .id("palette-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx)))
+                        .child(
+                            div().w_full().flex().justify_center().pt(px(80.)).child(
+                                div()
+                                    .id("palette-box")
+                                    .occlude()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                    .child(palette),
+                            ),
+                        ),
+                )
+                .with_priority(1)
+            }))
     }
 }
 
@@ -442,5 +609,53 @@ mod tests {
             assert!(focus.is_focused(window));
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn go_to_keeps_a_filtered_tab_and_prefers_the_focused_pane(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = crate::test_support::open_seeded(
+            cx,
+            dir.path(),
+            "INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);",
+        );
+        cx.run_until_parked();
+        let open = |view_ref: ViewRef, cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                ws.update(cx, |ws, cx| ws.open(view_ref, window, cx));
+                window.render_frame(cx);
+            })
+            .unwrap();
+        };
+        open(ViewRef::Pulls { repo_id: Some(1) }, cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.press("ctrl-\\", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        open(ViewRef::Pulls { repo_id: Some(2) }, cx);
+        cx.read(|cx| {
+            assert_eq!(
+                groups(ws.read(cx), cx),
+                [vec!["Inbox", "*o/a: Pull requests"], vec!["o/a: Pull requests", "*o/b: Pull requests"]]
+            )
+        });
+
+        // The right pane has focus: its first Pulls tab, not the left one.
+        cx.update_window(handle, |_, window, cx| window.click("rail-pulls", cx)).unwrap();
+        cx.read(|cx| {
+            assert_eq!(
+                groups(ws.read(cx), cx),
+                [vec!["Inbox", "*o/a: Pull requests"], vec!["*o/a: Pull requests", "o/b: Pull requests"]]
+            )
+        });
+
+        // No Issues tab open: it opens the unfiltered one.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("rail-issues", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert_eq!(groups(ws.read(cx), cx)[1], ["o/a: Pull requests", "o/b: Pull requests", "*Issues"]));
     }
 }

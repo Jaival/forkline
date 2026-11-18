@@ -143,3 +143,109 @@ fn snippet_comes_from_a_matching_doc() {
     assert_eq!(h.comment_id, Some(21));
     assert!(h.snippet.contains('\u{e000}'));
 }
+
+mod queue_filter {
+    use fl_db::queries::queue;
+    use fl_types::{PAGE_MAX, QueueKind, QueueQuery};
+
+    use super::*;
+
+    const ISSUES: QueueQuery = QueueQuery { kind: QueueKind::Issues, repo_id: None };
+
+    fn keys(c: &Connection, q: QueueQuery, filter: &str) -> Vec<String> {
+        let cond = crate::queue_filter(c, filter).unwrap();
+        let rows = queue::page(c, &q, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX }).unwrap().items;
+        let total: u32 = queue::counts(c, &q, cond.as_ref()).unwrap().iter().map(|(_, n)| n).sum();
+        assert_eq!(total as usize, rows.len(), "counts for {filter:?}");
+        rows.into_iter().map(|r| r.key).collect()
+    }
+
+    #[test]
+    fn empty_query_filters_nothing() {
+        let c = seeded();
+        assert!(crate::queue_filter(&c, "").unwrap().is_none());
+        assert!(crate::queue_filter(&c, "   ").unwrap().is_none());
+        assert_eq!(keys(&c, ISSUES, ""), ["4", "1"]);
+    }
+
+    #[test]
+    fn text_matches_title_body_and_comments() {
+        let c = seeded();
+        assert_eq!(keys(&c, ISSUES, "crash"), ["1"]);
+        assert_eq!(keys(&c, ISSUES, "STACK pars"), ["1"]);
+        assert_eq!(keys(&c, ISSUES, "frobnicator"), ["4"]);
+        assert_eq!(keys(&c, ISSUES, "frob"), ["4"]);
+        assert!(keys(&c, ISSUES, "nonexistentword").is_empty());
+        assert_eq!(keys(&c, ISSUES, "-frobnicator"), ["1"]);
+    }
+
+    #[test]
+    fn operators_and_negation() {
+        let c = seeded();
+        assert_eq!(keys(&c, ISSUES, "author:hubot"), ["4"]);
+        assert_eq!(keys(&c, ISSUES, "-author:hubot"), ["1"]);
+        assert_eq!(keys(&c, ISSUES, "label:bug"), ["1"]);
+        assert_eq!(keys(&c, ISSUES, "repo:acme/api"), ["4"]);
+        assert_eq!(keys(&c, ISSUES, "assignee:hubot crash"), ["1"]);
+        assert!(keys(&c, ISSUES, "is:pr").is_empty());
+        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None };
+        assert!(keys(&c, pulls, "").is_empty(), "the only PR is merged");
+    }
+
+    #[test]
+    fn broad_terms_filter_per_row() {
+        let c = seeded();
+        // More than BROAD_DOCS docs hold "common"; every 7th also "rare".
+        c.execute_batch(
+            "WITH RECURSIVE n(x) AS (SELECT 100 UNION ALL SELECT x + 1 FROM n WHERE x < 2200)
+             INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,body_md,author_id,created_at,updated_at)
+             SELECT x, 'n' || x, 1, x, 0, 'open', 'common ' || x, CASE WHEN x % 7 = 0 THEN 'rare' END, 1, 0, x
+             FROM n;",
+        )
+        .unwrap();
+        for id in 100..=2200 {
+            index_issue(&c, id).unwrap();
+        }
+        let cond = crate::queue_filter(&c, "common").unwrap().unwrap();
+        assert!(cond.sql.contains("EXISTS"), "{}", cond.sql);
+        let both = |q: &str| {
+            let cond = crate::queue_filter(&c, q).unwrap();
+            let total: u32 = queue::counts(&c, &ISSUES, cond.as_ref()).unwrap().iter().map(|(_, n)| n).sum();
+            total
+        };
+        assert_eq!(both("common"), 2101);
+        assert_eq!(both("common rare"), 300);
+        assert_eq!(both("common -rare"), 1801);
+        assert_eq!(keys(&c, ISSUES, "comm crash").len(), 0);
+        let cond = crate::queue_filter(&c, "rare common").unwrap();
+        let page = queue::page(&c, &ISSUES, cond.as_ref(), PageReq { offset: 0, limit: 2 }).unwrap();
+        let first: Vec<_> = page.items.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(first, ["2198", "2191"]);
+    }
+
+    #[test]
+    fn unsearchable_text_matches_nothing() {
+        let c = seeded();
+        assert!(keys(&c, ISSUES, "***").is_empty());
+        // Quotes in text never break the SQL.
+        assert!(keys(&c, ISSUES, r#"" OR 1=1 --"#).is_empty());
+    }
+
+    #[test]
+    fn inbox_rows_need_a_cached_issue() {
+        let c = seeded();
+        c.execute_batch(
+            "INSERT INTO notifications(id,repo_id,subject_type,issue_id,title,reason,unread,done,updated_at) VALUES
+               ('1',1,'Issue',1,'Crash on startup','mention',1,0,10),
+               ('2',2,'Issue',4,'Docs','mention',1,0,20),
+               ('3',1,'Release',NULL,'crash release','subscribed',1,0,30);",
+        )
+        .unwrap();
+        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None };
+        assert_eq!(keys(&c, inbox, ""), ["2", "1", "3"]);
+        assert_eq!(keys(&c, inbox, "crash"), ["1"]);
+        assert_eq!(keys(&c, inbox, "repo:acme/api"), ["2"]);
+        let in_api = QueueQuery { kind: QueueKind::Inbox, repo_id: Some(2) };
+        assert!(keys(&c, in_api, "crash").is_empty());
+    }
+}

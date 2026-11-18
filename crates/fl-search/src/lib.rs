@@ -9,8 +9,10 @@ mod query;
 mod tests;
 
 use fl_types::{IssueId, IssueRow, Page, PageReq, SearchHit};
+use fl_db::queries::queue::Cond;
 use fl_db::queries::{ISSUE_ROW_COLS, issue_row, page};
 use query::{Filter, fts_terms, parse};
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, ToSql, params_from_iter};
 
 /// When the terms together match more docs than this, results rank by recency, not bm25:
@@ -51,12 +53,9 @@ pub fn index_issue(conn: &Connection, issue_id: IssueId) -> rusqlite::Result<()>
     Ok(())
 }
 
-/// SQL condition (over aliases i, r) and bound values for one filter.
-fn condition(f: &Filter, params: &mut Vec<String>) -> String {
-    let mut bind = |v: &str| {
-        params.push(v.to_owned());
-        format!("?{}", params.len())
-    };
+/// SQL condition (over aliases i, r, u) for one filter. `bind` stores a
+/// value and returns its placeholder.
+fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
     match f {
         Filter::IsPr => "i.is_pr = 1".into(),
         Filter::IsIssue => "i.is_pr = 0".into(),
@@ -80,6 +79,51 @@ fn condition(f: &Filter, params: &mut Vec<String>) -> String {
     }
 }
 
+/// The `/` filter of a queue: `query` as one condition for
+/// `fl_db::queries::queue`. Operators as in [`search`]; every free-text term
+/// must hit the issue's title, body or a comment (the last one as a prefix),
+/// and no negated term may. `None` when the query filters nothing.
+///
+/// A term matching few docs becomes the set of matching issue ids. Mapping
+/// docs to issues costs a lookup per doc, so a broad term (more than
+/// [`BROAD_DOCS`] docs) is checked per queue row instead: the doc ids are
+/// cheap to collect, and a page stops after its rows.
+pub fn queue_filter(conn: &Connection, query: &str) -> rusqlite::Result<Option<Cond>> {
+    let parsed = parse(query);
+    let (terms, neg) = fts_terms(&parsed.terms);
+    let mut args: Vec<Value> = Vec::new();
+    let mut conds: Vec<String> = parsed
+        .filters
+        .iter()
+        .map(|(f, neg)| {
+            let c = condition(f, &mut |v| {
+                args.push(Value::Text(v.to_owned()));
+                "?".to_owned()
+            });
+            if *neg { format!("NOT ({c})") } else { c }
+        })
+        .collect();
+    let positive = terms.into_iter().map(|t| (t, false));
+    for (t, negated) in positive.chain(neg.map(|n| (n, true))) {
+        let docs: i64 = conn
+            .prepare_cached("SELECT count(*) FROM (SELECT 1 FROM search_fts WHERE search_fts MATCH ?1 LIMIT 2001)")?
+            .query_row([&t], |r| r.get(0))?;
+        let hit = if docs > BROAD_DOCS {
+            "EXISTS (SELECT 1 FROM search_docs d WHERE d.issue_id = i.id                AND d.id IN (SELECT rowid FROM search_fts WHERE search_fts MATCH ?))"
+        } else {
+            "i.id IN (SELECT d.issue_id FROM search_fts JOIN search_docs d ON d.id = search_fts.rowid                WHERE search_fts MATCH ?)"
+        };
+        conds.push(if negated { format!("NOT {hit}") } else { hit.to_owned() });
+        args.push(Value::Text(t));
+    }
+    // Text that is neither an operator nor searchable (`*`, `-`) still
+    // filters: it matches nothing, like a search for it would.
+    if conds.is_empty() && !parsed.terms.is_empty() {
+        conds.push("0".to_owned());
+    }
+    Ok((!conds.is_empty()).then(|| Cond { sql: format!("({})", conds.join(" AND ")), args }))
+}
+
 const SNIPPET_SQL: &str = "SELECT snippet(search_fts, -1, char(57344), char(57345), '...', 16)
      FROM search_fts WHERE search_fts MATCH ?1 AND rowid = ?2";
 
@@ -97,7 +141,10 @@ pub fn search(conn: &Connection, query: &str, req: PageReq) -> rusqlite::Result<
         .filters
         .iter()
         .map(|(f, neg)| {
-            let c = condition(f, &mut values);
+            let c = condition(f, &mut |v| {
+                values.push(v.to_owned());
+                format!("?{}", values.len())
+            });
             if *neg { format!("NOT ({c})") } else { c }
         })
         .collect();

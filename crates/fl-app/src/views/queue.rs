@@ -2,20 +2,23 @@
 //! Issues and Review requests.
 
 use std::rc::Rc;
+use std::time::Instant;
 
-use fl_db::queries::{queue, repo};
+use fl_db::queries::{queue, repo, views};
 use fl_types::{
     CheckState, DataChanged, IssueState, PAGE_MAX, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow,
+    SavedView,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::VirtualListScrollHandle;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme, h_flex, v_flex, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, EventEmitter, FocusHandle, FontWeight, Hsla,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollStrategy, SharedString,
     Size, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions,
     div, px, size,
@@ -25,9 +28,9 @@ use rusqlite::Connection;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
-use crate::workspace::OpenView;
+use crate::workspace::{OpenView, SetViewRef};
 
-actions!(queue, [SelectNext, SelectPrev, OpenSelected]);
+actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView]);
 
 const HEADER_HEIGHT: f32 = 26.;
 const ROW_HEIGHT: f32 = 46.;
@@ -77,13 +80,14 @@ struct Snapshot {
     counts: Vec<(QueueGroup, u32)>,
 }
 
-/// The first `pages` pages and the group counts.
-fn snapshot(conn: &Connection, query: &QueueQuery, pages: usize) -> rusqlite::Result<Snapshot> {
+/// The first `pages` pages and the group counts, under the `/` filter text.
+fn snapshot(conn: &Connection, query: &QueueQuery, filter: &str, pages: usize) -> rusqlite::Result<Snapshot> {
+    let cond = fl_search::queue_filter(conn, filter)?;
     let mut rows = Vec::new();
     let mut offset = 0;
     let mut next = None;
     for _ in 0..pages {
-        let page = queue::page(conn, query, PageReq { offset, limit: PAGE_MAX })?;
+        let page = queue::page(conn, query, cond.as_ref(), PageReq { offset, limit: PAGE_MAX })?;
         rows.extend(page.items);
         next = page.next;
         match next {
@@ -91,7 +95,7 @@ fn snapshot(conn: &Connection, query: &QueueQuery, pages: usize) -> rusqlite::Re
             None => break,
         }
     }
-    Ok(Snapshot { rows, next, counts: queue::counts(conn, query)? })
+    Ok(Snapshot { rows, next, counts: queue::counts(conn, query, cond.as_ref())? })
 }
 
 pub struct Queue {
@@ -99,6 +103,8 @@ pub struct Queue {
     title: SharedString,
     rows: Vec<QueueRow>,
     counts: Vec<(QueueGroup, u32)>,
+    /// False between a filter change and its counts: show no numbers then.
+    counts_ready: bool,
     next: Option<u32>,
     loading: bool,
     /// Bumped when a read in flight turns stale (reload, filter change).
@@ -111,30 +117,55 @@ pub struct Queue {
     pub focus: FocusHandle,
     /// `(owner/name, id)` of the pinned repositories, for the filter.
     repos: Rc<Vec<(String, i64)>>,
+    /// The `/` filter text, as typed.
+    filter: String,
+    input: Entity<InputState>,
+    /// Milliseconds from the last filter change to its first page applied.
+    filter_ms: Option<f64>,
+    /// A first page for the current filter was applied; the next frame tells the bench.
+    filter_applied: bool,
+    /// Saved views of every queue kind.
+    views: Vec<SavedView>,
     _store: Subscription,
+    _input: Subscription,
 }
 
 impl EventEmitter<QueueEvent> for Queue {}
 
 impl Queue {
-    pub fn new(query: QueueQuery, title: SharedString, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(query: QueueQuery, title: SharedString, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // Read synchronously: the first frame must have rows.
         let db = Store::global(cx).read(cx).db().clone();
-        let snap = db.read(|c| snapshot(c, &query, 1)).ok();
+        let snap = db.read(|c| snapshot(c, &query, "", 1)).ok();
         let repos = db
             .read(repo::pinned)
             .map(|pinned| pinned.into_iter().map(|r| (format!("{}/{}", r.owner, r.name), r.id)).collect())
             .unwrap_or_default();
+        let saved = db.read(views::list).unwrap_or_default();
         let subscription = cx.subscribe(&Store::global(cx), |this, _, ev: &DataChanged, cx| {
             if ev.scopes.iter().any(|s| matches!(s.as_str(), "inbox" | "issues" | "pr")) {
                 this.reload(cx);
             }
+            if ev.scopes.iter().any(|s| s == "views") {
+                this.views = Store::global(cx).read(cx).db().read(views::list).unwrap_or_default();
+                cx.notify();
+            }
+        });
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter: is:open author:me label:bug text"));
+        let input_subscription = cx.subscribe_in(&input, window, |this, input, ev: &InputEvent, window, cx| match ev {
+            InputEvent::Change => {
+                let text = input.read(cx).value().to_string();
+                this.change_filter(text, cx);
+            }
+            InputEvent::PressEnter { .. } => window.focus(&this.focus, cx),
+            _ => {}
         });
         let mut this = Self {
             query,
             title,
             rows: Vec::new(),
             counts: Vec::new(),
+            counts_ready: false,
             next: None,
             loading: false,
             generation: 0,
@@ -144,12 +175,19 @@ impl Queue {
             scroll: VirtualListScrollHandle::new(),
             focus: cx.focus_handle(),
             repos: Rc::new(repos),
+            filter: String::new(),
+            input,
+            filter_ms: None,
+            filter_applied: false,
+            views: saved,
             _store: subscription,
+            _input: input_subscription,
         };
         if let Some(snap) = snap {
             this.rows = snap.rows;
             this.next = snap.next;
             this.counts = snap.counts;
+            this.counts_ready = true;
             this.rebuild();
         }
         this
@@ -204,24 +242,141 @@ impl Queue {
         window.dispatch_action(Box::new(OpenView(view)), cx);
     }
 
+    /// The repo filter menu: filter, and have the tab record it, so its title
+    /// names the repo and the saved layout reopens it.
+    pub(super) fn pick_repo(&mut self, repo_id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_repo(repo_id, cx);
+        let view_ref = match self.query.kind {
+            QueueKind::Pulls => ViewRef::Pulls { repo_id },
+            QueueKind::Issues => ViewRef::Issues { repo_id },
+            QueueKind::Inbox | QueueKind::Reviews => return,
+        };
+        window.dispatch_action(Box::new(SetViewRef(view_ref)), cx);
+    }
+
     fn set_repo(&mut self, repo_id: Option<i64>, cx: &mut Context<Self>) {
         self.query.repo_id = repo_id;
         self.generation += 1;
         self.loading = false;
         self.selected = None;
         let query = self.query;
-        let snap = Store::global(cx).read(cx).db().read(|c| snapshot(c, &query, 1)).ok();
+        let filter = self.filter.clone();
+        let snap = Store::global(cx).read(cx).db().read(|c| snapshot(c, &query, &filter, 1)).ok();
         self.rows = Vec::new();
         self.counts = Vec::new();
+        self.counts_ready = false;
         self.next = None;
         if let Some(snap) = snap {
             self.rows = snap.rows;
             self.next = snap.next;
             self.counts = snap.counts;
+            self.counts_ready = true;
         }
         self.rebuild();
         cx.emit(QueueEvent::Selected(None));
         cx.notify();
+    }
+
+    /// Show `text` in the query bar and filter by it.
+    pub(super) fn set_filter_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+        self.change_filter(text.to_owned(), cx);
+    }
+
+    /// Filter by `filter`: read its first page in the background, then the
+    /// group counts. Nothing is selected until the page is on screen.
+    fn change_filter(&mut self, filter: String, cx: &mut Context<Self>) {
+        self.filter = filter;
+        self.generation += 1;
+        self.loading = false;
+        self.counts_ready = false;
+        self.filter_ms = None;
+        self.select(None, cx);
+        let generation = self.generation;
+        let started = Instant::now();
+        let query = self.query;
+        let text = self.filter.clone();
+        let store = Store::global(cx).read(cx);
+        let task = store.read(cx, move |c| {
+            let cond = fl_search::queue_filter(c, &text)?;
+            queue::page(c, &query, cond.as_ref(), PageReq { offset: 0, limit: PAGE_MAX })
+        });
+        cx.spawn(async move |this, cx| {
+            let page = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if let Ok(page) = page {
+                    this.rows = page.items;
+                    this.next = page.next;
+                    this.rebuild();
+                    this.filter_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+                    this.filter_applied = true;
+                    cx.notify();
+                    this.read_counts(generation, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The group counts of the current filter, in a second background read.
+    fn read_counts(&mut self, generation: u32, cx: &mut Context<Self>) {
+        let query = self.query;
+        let text = self.filter.clone();
+        let task = Store::global(cx).read(cx).read(cx, move |c| {
+            let cond = fl_search::queue_filter(c, &text)?;
+            queue::counts(c, &query, cond.as_ref())
+        });
+        cx.spawn(async move |this, cx| {
+            let counts = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if let Ok(counts) = counts {
+                    this.counts = counts;
+                    this.counts_ready = true;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    /// Escape in the query bar: drop the filter, then give the keys back to the list.
+    fn escape_filter(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.filter.is_empty() {
+            self.set_filter_text("", window, cx);
+        }
+        window.focus(&self.focus, cx);
+    }
+
+    /// Save the filter as a view named after its text.
+    pub(super) fn save_view(&mut self, _: &SaveView, _: &mut Window, cx: &mut Context<Self>) {
+        let text = self.filter.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        let kind = self.query.kind;
+        let db = Store::global(cx).read(cx).db().clone();
+        let task = cx.background_spawn(async move { db.write(|c| views::save(c, kind, &text, &text, fl_sync::now())) });
+        cx.spawn(async move |_, cx| {
+            if task.await.is_ok() {
+                cx.update(|cx| Store::emit_changed(&["views"], cx));
+            }
+        })
+        .detach();
+    }
+
+    /// The saved views of this queue's kind.
+    fn kind_views(&self) -> impl Iterator<Item = &SavedView> {
+        self.views.iter().filter(|v| v.kind == self.query.kind)
     }
 
     fn load_more(&mut self, cx: &mut Context<Self>) {
@@ -232,8 +387,10 @@ impl Queue {
         self.loading = true;
         let generation = self.generation;
         let query = self.query;
+        let filter = self.filter.clone();
         let task = Store::global(cx).read(cx).read(cx, move |c| {
-            queue::page(c, &query, PageReq { offset, limit: PAGE_MAX })
+            let cond = fl_search::queue_filter(c, &filter)?;
+            queue::page(c, &query, cond.as_ref(), PageReq { offset, limit: PAGE_MAX })
         });
         cx.spawn(async move |this, cx| {
             let page = task.await;
@@ -259,8 +416,9 @@ impl Queue {
         self.loading = true;
         let generation = self.generation;
         let query = self.query;
+        let filter = self.filter.clone();
         let pages = self.rows.len().div_ceil(PAGE_MAX as usize).max(1);
-        let task = Store::global(cx).read(cx).read(cx, move |c| snapshot(c, &query, pages));
+        let task = Store::global(cx).read(cx).read(cx, move |c| snapshot(c, &query, &filter, pages));
         cx.spawn(async move |this, cx| {
             let snap = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -282,6 +440,7 @@ impl Queue {
         self.rows = snap.rows;
         self.next = snap.next;
         self.counts = snap.counts;
+        self.counts_ready = true;
         // A selected row that left (Done, Snooze, sync) passes the selection
         // to the row that took its place, so triage goes on with the next one.
         self.selected = before.as_ref().and_then(|b| {
@@ -312,7 +471,7 @@ impl Queue {
             .text_xs()
             .text_color(theme.muted_foreground)
             .child(group.label().to_uppercase())
-            .child(count.to_string())
+            .child(if self.counts_ready { count.to_string() } else { String::new() })
             .into_any_element()
     }
 
@@ -415,13 +574,102 @@ impl Queue {
                     .chain(repos.iter().map(|(name, id)| (name.clone(), Some(*id))));
                 for (label, repo_id) in entries {
                     let queue = queue.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                        let _ = queue.update(cx, |q, cx| q.set_repo(repo_id, cx));
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
                     }));
                 }
                 menu
             },
         )
+    }
+
+    /// The `/` row under the header, and the result line when a filter is set.
+    fn query_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let theme = cx.theme();
+        let text = self.filter.trim();
+        let saved = self.kind_views().any(|v| v.query == text);
+        let views: Vec<String> = self.kind_views().map(|v| v.query.clone()).collect();
+        let queue = cx.weak_entity();
+        let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
+        let result = match (self.counts_ready, self.filter_ms) {
+            (true, Some(ms)) => format!("{total} results \u{b7} {ms:.0} ms"),
+            (false, Some(ms)) => format!("{ms:.0} ms"),
+            _ => "Searching".to_owned(),
+        };
+        v_flex()
+            .flex_none()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                h_flex()
+                    .key_context("QueryBar")
+                    .on_action(cx.listener(Self::escape_filter))
+                    .h(px(30.))
+                    .px(px(12.))
+                    .gap(px(6.))
+                    .items_center()
+                    .child(div().text_color(theme.muted_foreground).child("/"))
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
+                    .child(Button::new("queue-views").ghost().small().label("Views").dropdown_caret(true).dropdown_menu(
+                        move |mut menu, _, _| {
+                            for query in &views {
+                                let (queue, text) = (queue.clone(), query.clone());
+                                menu = menu.item(PopupMenuItem::new(query.clone()).on_click(move |_, window, cx| {
+                                    let _ = queue.update(cx, |q, cx| q.set_filter_text(&text, window, cx));
+                                }));
+                            }
+                            if !views.is_empty() {
+                                menu = menu.separator();
+                            }
+                            let queue = queue.clone();
+                            menu.item(PopupMenuItem::new("Clear filter").on_click(move |_, window, cx| {
+                                let _ = queue.update(cx, |q, cx| q.set_filter_text("", window, cx));
+                            }))
+                        },
+                    )),
+            )
+            .when(!self.filter.is_empty(), |d| {
+                d.child(
+                    h_flex()
+                        .h(px(26.))
+                        .px(px(12.))
+                        .gap(px(8.))
+                        .items_center()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(div().id("queue-result-count").child(result))
+                        .child(div().flex_1())
+                        .when(!text.is_empty() && !saved, |d| {
+                            d.child(
+                                Button::new("queue-save-view")
+                                    .ghost()
+                                    .small()
+                                    .label("Save view")
+                                    .on_click(cx.listener(|this, _, window, cx| this.save_view(&SaveView, window, cx))),
+                            )
+                        }),
+                )
+            })
+    }
+
+    #[cfg(test)]
+    pub(super) fn input(&self) -> &Entity<InputState> {
+        &self.input
+    }
+
+    #[cfg(test)]
+    pub(super) fn repo_id(&self) -> Option<i64> {
+        self.query.repo_id
+    }
+
+    #[cfg(test)]
+    pub(super) fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    #[cfg(test)]
+    pub(super) fn view_queries(&self) -> Vec<&str> {
+        self.views.iter().map(|v| v.query.as_str()).collect()
     }
 
     #[cfg(test)]
@@ -448,6 +696,9 @@ fn state_icon(row: &QueueRow, theme: &Theme) -> (IconName, Hsla) {
 
 impl Render for Queue {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.filter_applied) {
+            bench::ready("filter", window, cx);
+        }
         if !self.rows.is_empty() {
             bench::ready(
                 match self.query.kind {
@@ -462,6 +713,7 @@ impl Render for Queue {
         }
         let theme = cx.theme();
         let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
+        let counts_ready = self.counts_ready;
         let header = h_flex()
             .flex_none()
             .h(px(36.))
@@ -471,15 +723,17 @@ impl Render for Queue {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title.clone()))
-            .child(
-                div()
-                    .px(px(6.))
-                    .rounded_full()
-                    .bg(theme.muted)
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(total.to_string()),
-            )
+            .when(counts_ready, |d| {
+                d.child(
+                    div()
+                        .px(px(6.))
+                        .rounded_full()
+                        .bg(theme.muted)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(total.to_string()),
+                )
+            })
             .child(div().flex_1())
             .child(self.filter_button(cx));
 
@@ -515,8 +769,11 @@ impl Render for Queue {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::open_selected))
+            .on_action(cx.listener(Self::focus_filter))
+            .on_action(cx.listener(Self::save_view))
             .size_full()
             .child(header)
+            .child(self.query_bar(cx))
             .child(body)
     }
 }

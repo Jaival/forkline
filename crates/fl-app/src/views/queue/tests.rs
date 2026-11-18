@@ -1,5 +1,5 @@
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
+use gpui_kit::{AnyWindowHandle, Entity, Focusable as _, TestAppContext};
 
 use super::*;
 use crate::test_support::open_seeded;
@@ -266,5 +266,207 @@ fn repo_filter_keeps_that_repos_rows(cx: &mut TestAppContext) {
     cx.read(|cx| {
         assert_eq!(queue.read(cx).keys(), ["men1", "men2", "sub"]);
         assert_eq!(queue.read(cx).selected_key(), None);
+    });
+}
+
+#[gpui_kit::test]
+fn picking_a_repo_names_the_tab(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Pulls { repo_id: None }, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let queue = queue_of(cx, handle, &ws);
+    cx.update_window(handle, |_, window, cx| queue.update(cx, |q, cx| q.pick_repo(Some(2), window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*o/b: Pull requests"]);
+    cx.update_window(handle, |_, window, cx| queue.update(cx, |q, cx| q.pick_repo(None, window, cx))).unwrap();
+    cx.run_until_parked();
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*Pull requests"]);
+}
+
+/// Index the seeded issues, so the `/` filter finds their words.
+fn index(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        Store::global(cx)
+            .read(cx)
+            .db()
+            .write(|c| {
+                fl_search::index_issue(c, 1)?;
+                fl_search::index_issue(c, 3)
+            })
+            .unwrap();
+    });
+}
+
+fn type_text(cx: &mut TestAppContext, handle: AnyWindowHandle, text: &str) {
+    cx.update_window(handle, |_, window, cx| {
+        window.input(text, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// `(input focused, queue focused)`.
+fn focus_of(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &Entity<Queue>) -> (bool, bool) {
+    cx.update_window(handle, |_, window, cx| {
+        let queue = queue.read(cx);
+        (queue.input().focus_handle(cx).is_focused(window), queue.focus.is_focused(window))
+    })
+    .unwrap()
+}
+
+fn focus_queue(cx: &mut TestAppContext, handle: AnyWindowHandle, queue: &Entity<Queue>) {
+    cx.update_window(handle, |_, window, cx| window.focus(&queue.read(cx).focus.clone(), cx)).unwrap();
+}
+
+#[gpui_kit::test]
+fn slash_focuses_the_query_bar(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    focus_queue(cx, handle, &queue);
+    press(cx, handle, "/");
+    assert_eq!(focus_of(cx, handle, &queue), (true, false));
+    // Typing `j` goes to the input, not to the list.
+    type_text(cx, handle, "j");
+    assert_eq!(selected(cx, &queue), None);
+    cx.read(|cx| assert_eq!(queue.read(cx).filter(), "j"));
+}
+
+#[gpui_kit::test]
+fn typing_filters_the_rows_and_clears_the_selection(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    press(cx, handle, "j");
+    assert_eq!(selected(cx, &queue).as_deref(), Some("rev"));
+    press(cx, handle, "/");
+    type_text(cx, handle, "pull");
+    cx.read(|cx| assert_eq!(queue.read(cx).keys(), ["rev"]));
+    assert_eq!(selected(cx, &queue), None);
+    cx.read(|cx| {
+        assert!(queue.read(cx).counts_ready);
+        assert!(queue.read(cx).filter_ms.is_some());
+    });
+    // The first `j` after the filter selects the first filtered row.
+    press(cx, handle, "enter");
+    press(cx, handle, "j");
+    assert_eq!(selected(cx, &queue).as_deref(), Some("rev"));
+}
+
+#[gpui_kit::test]
+fn escape_clears_the_filter_and_returns_the_focus(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    press(cx, handle, "/");
+    type_text(cx, handle, "pull");
+    cx.read(|cx| assert_eq!(queue.read(cx).keys(), ["rev"]));
+    press(cx, handle, "escape");
+    cx.run_until_parked();
+    assert_eq!(focus_of(cx, handle, &queue), (false, true));
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "");
+        assert_eq!(queue.read(cx).input().read(cx).value(), "");
+        assert_eq!(queue.read(cx).keys(), ["rev", "men1", "men2", "sub", "rel"]);
+    });
+    press(cx, handle, "j");
+    assert_eq!(selected(cx, &queue).as_deref(), Some("rev"));
+}
+
+#[gpui_kit::test]
+fn enter_keeps_the_filter_and_returns_the_focus(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    press(cx, handle, "/");
+    type_text(cx, handle, "issue");
+    press(cx, handle, "enter");
+    cx.run_until_parked();
+    assert_eq!(focus_of(cx, handle, &queue), (false, true));
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "issue");
+        assert_eq!(queue.read(cx).keys(), ["men1", "men2", "sub"]);
+    });
+    press(cx, handle, "j");
+    assert_eq!(selected(cx, &queue).as_deref(), Some("men1"));
+    // The key `enter` of the list did not run: no tab opened.
+    assert_eq!(tabs(cx, &ws), ["*Inbox"]);
+}
+
+#[gpui_kit::test]
+fn slash_from_the_reading_pane_reaches_the_queue(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    let list = list(cx, handle, &ws);
+    let reading = cx.read(|cx| list.read(cx).reading.clone());
+    cx.update_window(handle, |_, window, cx| window.focus(&reading.read(cx).focus.clone(), cx)).unwrap();
+    press(cx, handle, "/");
+    assert_eq!(focus_of(cx, handle, &queue), (true, false));
+}
+
+#[gpui_kit::test]
+fn save_view_writes_a_row_and_the_queue_lists_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    // An empty filter saves nothing.
+    cx.update_window(handle, |_, window, cx| window.dispatch_action(Box::new(SaveView), cx)).unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert!(queue.read(cx).view_queries().is_empty()));
+    press(cx, handle, "/");
+    type_text(cx, handle, "issue");
+    cx.update_window(handle, |_, window, cx| window.dispatch_action(Box::new(SaveView), cx)).unwrap();
+    cx.run_until_parked();
+    let saved = cx.update(|cx| Store::global(cx).read(cx).db().read(views::list).unwrap());
+    assert_eq!(saved.len(), 1);
+    assert_eq!((saved[0].name.as_str(), saved[0].query.as_str(), saved[0].kind), ("issue", "issue", QueueKind::Inbox));
+    cx.read(|cx| assert_eq!(queue.read(cx).view_queries(), ["issue"]));
+}
+
+#[gpui_kit::test]
+fn set_filter_filters_a_list_view(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    let list = list(cx, handle, &ws);
+    let view: gpui_kit::AnyView = list.clone().into();
+    let done = cx.update_window(handle, |_, window, cx| crate::views::set_filter(&view, "pull", window, cx)).unwrap();
+    assert!(done);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).keys(), ["rev"]);
+        assert_eq!(queue.read(cx).input().read(cx).value(), "pull");
+    });
+    let other: gpui_kit::AnyView = cx.read(|cx| list.read(cx).reading.clone()).into();
+    let done = cx.update_window(handle, |_, window, cx| crate::views::set_filter(&other, "x", window, cx)).unwrap();
+    assert!(!done);
+}
+
+#[gpui_kit::test]
+fn a_data_change_reload_keeps_the_filter(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    index(cx);
+    let queue = queue_of(cx, handle, &ws);
+    let view: gpui_kit::AnyView = list(cx, handle, &ws).into();
+    cx.update_window(handle, |_, window, cx| crate::views::set_filter(&view, "issue", window, cx)).unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| Store::emit_changed(&["inbox"], cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(queue.read(cx).filter(), "issue");
+        assert_eq!(queue.read(cx).keys(), ["men1", "men2", "sub"]);
+        assert!(queue.read(cx).counts_ready);
     });
 }

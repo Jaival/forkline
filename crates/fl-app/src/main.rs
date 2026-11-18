@@ -5,6 +5,7 @@
 mod assets;
 mod bench;
 mod footer;
+mod palette;
 mod panel;
 mod rail;
 mod store;

@@ -2266,6 +2266,7 @@ dependencies = [
  "async-channel",
  "fl-db",
  "fl-git",
+ "fl-search",
  "fl-sync",
  "fl-types",
  "gpui-kit",
