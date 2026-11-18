@@ -6,8 +6,12 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
-specta.workspace = true
+specta = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Only the Tauri app exports TypeScript bindings. Remove with the Tauri app.
+specta = ["dep:specta"]

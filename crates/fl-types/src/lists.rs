@@ -2,12 +2,12 @@
 //! Other agents: do not edit; ask the owner.
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 
 use crate::{IssueId, IssueRow, IssueState, Label, RepoId, Timestamp, UserId};
 
 /// Filter for `issue_list`. Every field narrows the result; `None` / `false` means "any".
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct IssueFilter {
     pub repo_id: Option<RepoId>,
     pub state: Option<IssueState>,
@@ -22,7 +22,8 @@ pub struct IssueFilter {
     pub review_requested: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct InboxFilter {
     pub repo_id: Option<RepoId>,
     pub unread_only: bool,
@@ -30,7 +31,8 @@ pub struct InboxFilter {
     pub grouped: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct InboxRow {
     /// GitHub notification thread id.
     pub id: String,
@@ -48,14 +50,16 @@ pub struct InboxRow {
     pub pending: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct User {
     pub id: UserId,
     pub login: String,
 }
 
 /// A comment. Local optimistic comments have a negative `id`.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct CommentRow {
     pub id: i64,
     pub author: String,
@@ -64,7 +68,8 @@ pub struct CommentRow {
     pub created_at: Timestamp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct TimelineEvent {
     pub id: i64,
     pub kind: String,
@@ -75,7 +80,8 @@ pub struct TimelineEvent {
 
 /// Everything under the issue header: assignees, conversation, timeline.
 /// Comments and events are capped at 100 each (oldest first).
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct IssueThread {
     pub assignees: Vec<User>,
     pub comments: Vec<CommentRow>,
@@ -87,7 +93,8 @@ pub struct IssueThread {
 }
 
 /// Choices for the label and assignee editors.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct EditOptions {
     pub labels: Vec<Label>,
     pub users: Vec<User>,

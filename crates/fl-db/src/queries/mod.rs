@@ -7,6 +7,7 @@ pub mod issue;
 pub mod layout;
 pub mod lists;
 pub mod pr;
+pub mod queue;
 pub mod repo;
 pub mod sync;
 

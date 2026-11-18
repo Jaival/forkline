@@ -107,6 +107,18 @@ fn clones_blobless_and_diffs_offline() {
 }
 
 #[test]
+fn diff_patch_has_unified_text_and_same_summary() {
+    let f = fixture();
+    let clone = f.store.ensure_commits("o", "r", None, &[&f.base, &f.head]).unwrap();
+    let (summary, patch) = f.store.diff_patch(&clone, &f.base, &f.head).unwrap();
+    assert!(patch.contains("diff --git a/a.txt b/a.txt"), "{patch}");
+    assert!(patch.contains("@@ -7,7 +7,8 @@"), "{patch}");
+    assert!(patch.contains("-line 10\n+LINE TEN\n+extra\n"), "{patch}");
+    let plain = f.store.diff_summary(&clone, &f.base, &f.head).unwrap();
+    assert_eq!(format!("{summary:?}"), format!("{plain:?}"));
+}
+
+#[test]
 fn fetches_new_commits_by_id() {
     let f = fixture();
     f.store.ensure_commits("o", "r", None, &[&f.base]).unwrap();

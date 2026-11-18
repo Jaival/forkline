@@ -1,0 +1,221 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Forkline UI mockups</title></head><body>
+<style>
+  .m { margin-bottom: 26px; }
+  .m h3 { font-size: 14px; margin: 0 0 2px; }
+  .m > p { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px; }
+  .win { border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); overflow: hidden; height: 372px; display: flex; flex-direction: column; font-size: 11px; line-height: 1.35; position: relative; }
+  .win * { box-sizing: border-box; }
+  .tb { height: 30px; flex: none; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 10px; gap: 8px; background: var(--card); }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .side { width: 150px; flex: none; border-right: 1px solid var(--border); background: var(--card); padding: 6px; }
+  .nav { display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; border-radius: 4px; }
+  .on { background: var(--accent); color: var(--accent-foreground); }
+  .cap { text-transform: uppercase; letter-spacing: .06em; font-size: 9px; color: var(--muted-foreground); margin: 9px 6px 3px; }
+  .badge { font-size: 9px; padding: 0 5px; border-radius: 8px; background: var(--secondary); color: var(--secondary-foreground); white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
+  .g { background: var(--success); } .r { background: var(--destructive); } .y { background: var(--warning); } .i { background: var(--info); } .n { background: var(--muted-foreground); }
+  .row { display: flex; gap: 7px; padding: 5px 9px; border-bottom: 1px solid var(--border); align-items: center; }
+  .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .mu { color: var(--muted-foreground); }
+  .mono { font-family: var(--font-mono); font-size: 10px; }
+  .b { font-weight: 600; }
+  .kbd { border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; font-family: var(--font-mono); font-size: 9px; background: var(--secondary); color: var(--secondary-foreground); }
+  .ft { height: 22px; flex: none; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; padding: 0 10px; color: var(--muted-foreground); font-size: 10px; background: var(--card); }
+  .search { flex: 1; max-width: 280px; margin: 0 auto; height: 20px; border: 1px solid var(--border); border-radius: 5px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; color: var(--muted-foreground); background: var(--background); }
+  .tabs { display: flex; flex: none; border-bottom: 1px solid var(--border); background: var(--card); height: 26px; }
+  .tab { padding: 0 10px; display: flex; align-items: center; gap: 5px; border-right: 1px solid var(--border); color: var(--muted-foreground); white-space: nowrap; }
+  .tab.cur { background: var(--background); color: var(--foreground); box-shadow: inset 0 -2px 0 var(--primary); }
+  .pad { padding: 10px 12px; }
+  .cmt { border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; }
+  .cmt .h { padding: 4px 8px; border-bottom: 1px solid var(--border); background: var(--card); border-radius: 6px 6px 0 0; }
+  .cmt .c { padding: 6px 8px; }
+  .btn { border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; background: var(--secondary); color: var(--secondary-foreground); white-space: nowrap; }
+  .btn.pri { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .dl { display: flex; font-family: var(--font-mono); font-size: 10px; line-height: 16px; white-space: pre; overflow: hidden; }
+  .ln { width: 26px; flex: none; text-align: right; padding-right: 6px; color: var(--muted-foreground); }
+  .add { background: color-mix(in srgb, var(--success) 16%, transparent); }
+  .del { background: color-mix(in srgb, var(--destructive) 16%, transparent); }
+  .hunk { background: var(--card); color: var(--muted-foreground); }
+  .sel { background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 2px 0 0 var(--primary); }
+  .rail { width: 40px; flex: none; border-right: 1px solid var(--border); background: var(--card); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
+  .ric { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 10px; color: var(--muted-foreground); position: relative; }
+  .ric.on { color: var(--accent-foreground); }
+  .ric i { position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+  .grp { padding: 4px 9px; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); background: var(--card); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+  .bar { height: 4px; border-radius: 2px; display: flex; overflow: hidden; width: 44px; flex: none; background: var(--secondary); }
+  .card { border: 1px solid var(--border); border-radius: 6px; padding: 6px 7px; margin-bottom: 6px; background: var(--background); }
+  .pal { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); width: 380px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 12px 32px rgba(0,0,0,.35); overflow: hidden; }
+  .th { color: var(--muted-foreground); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; background: var(--card); }
+  .w1 { width: 84px; flex: none; } .w2 { width: 58px; flex: none; } .w3 { width: 40px; flex: none; text-align: right; }
+</style>
+
+<!-- A -->
+<div class="m">
+  <h3>A. Workbench</h3>
+  <p>Sidebar, tabs and split panes. The layout the GPUI shell has now, with polish.</p>
+  <div class="win">
+    <div class="tb"><span class="b">Forkline</span><div class="search"><span>Search issues, PRs, repos</span><span class="kbd">Ctrl K</span></div><span class="mu">Synced 12 s ago</span></div>
+    <div class="body">
+      <div class="side col">
+        <div class="nav">Home</div>
+        <div class="nav on">Inbox <span class="badge">12</span></div>
+        <div class="nav">Pull requests</div>
+        <div class="nav">Issues</div>
+        <div class="nav">Review requests <span class="badge">3</span></div>
+        <div class="nav">Starred</div>
+        <div class="nav">Repositories</div>
+        <div class="nav">Explore</div>
+        <div class="cap">Pinned</div>
+        <div class="nav"><span class="t">acme/api</span><span class="mu">14 · 230</span></div>
+        <div class="nav"><span class="t">acme/web</span><span class="mu">6 · 81</span></div>
+        <div class="nav"><span class="t">acme/infra</span><span class="mu">2 · 17</span></div>
+      </div>
+      <div class="col" style="flex:1">
+        <div class="tabs"><div class="tab cur">Inbox</div><div class="tab">acme/api</div><div class="tab">Search: pager</div><div class="tab mu">+</div></div>
+        <div class="body">
+          <div class="col" style="width:44%;border-right:1px solid var(--border)">
+            <div class="row sel"><span class="dot g"></span><span class="t b">Fix pager cursor on empty page</span><span class="mu">#482</span></div>
+            <div class="row"><span class="dot g"></span><span class="t b">Add retry budget to sync worker</span><span class="mu">#479</span></div>
+            <div class="row"><span class="dot i"></span><span class="t">Drop legacy token store</span><span class="mu">#471</span></div>
+            <div class="row"><span class="dot r"></span><span class="t">Crash when repo has no default branch</span><span class="mu">#466</span></div>
+            <div class="row"><span class="dot g"></span><span class="t">Diff: wrap long lines</span><span class="mu">#460</span></div>
+            <div class="row"><span class="dot n"></span><span class="t mu">Docs: budget table out of date</span><span class="mu">#455</span></div>
+            <div class="row"><span class="dot g"></span><span class="t">Search snippet from wrong comment</span><span class="mu">#451</span></div>
+            <div class="row"><span class="dot i"></span><span class="t mu">Bump tokio to 1.48</span><span class="mu">#449</span></div>
+          </div>
+          <div class="col" style="flex:1">
+            <div class="tabs"><div class="tab cur">#482 Fix pager cursor</div><div class="tab">Files 4</div></div>
+            <div class="pad">
+              <div class="b" style="font-size:13px">Fix pager cursor on empty page <span class="mu">#482</span></div>
+              <div class="mu" style="margin-top:3px"><span class="badge">Open</span> mira wants to merge 3 commits into main</div>
+              <div class="cmt"><div class="h"><span class="b">mira</span> <span class="mu">2 h ago</span></div><div class="c">The cursor was kept when a page came back empty. Sync then looped on the same page.</div></div>
+              <div class="cmt"><div class="h"><span class="b">devon</span> <span class="mu">40 min ago</span></div><div class="c">Looks right. One question on the test name.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ft"><span class="dot g"></span>Synced · 5,000 API calls left<span style="margin-left:auto">1 action pending</span></div>
+  </div>
+</div>
+
+<!-- B -->
+<div class="m">
+  <h3>B. Triage</h3>
+  <p>Icon rail, grouped work queue, reading pane. Like a mail client: j / k moves, one key acts.</p>
+  <div class="win">
+    <div class="body">
+      <div class="rail">
+        <div class="ric on" style="background:var(--accent)">In<i></i></div><div class="ric">PR</div><div class="ric">Is</div><div class="ric">Re</div><div class="ric">St</div><div class="ric">Ex</div>
+        <div class="ric" style="margin-top:auto">⌕</div>
+      </div>
+      <div class="col" style="width:262px;flex:none;border-right:1px solid var(--border)">
+        <div class="tb" style="background:none"><span class="b" style="font-size:12px">Inbox</span><span class="badge">12</span><span class="mu" style="margin-left:auto">All repos ▾</span></div>
+        <div class="grp"><span>Review requested</span><span>3</span></div>
+        <div class="row sel" style="align-items:flex-start"><span class="dot g" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t b">Fix pager cursor on empty page</div><div class="mu t">acme/api #482 · mira · checks pass</div></div><span class="mu">2h</span></div>
+        <div class="row" style="align-items:flex-start"><span class="dot g" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t b">Add retry budget to sync worker</div><div class="mu t">acme/api #479 · devon · 1 check fails</div></div><span class="mu">5h</span></div>
+        <div class="row" style="align-items:flex-start"><span class="dot g" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t b">Diff: wrap long lines</div><div class="mu t">acme/web #460 · sam</div></div><span class="mu">1d</span></div>
+        <div class="grp"><span>Mentioned</span><span>2</span></div>
+        <div class="row" style="align-items:flex-start"><span class="dot r" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t b">Crash when repo has no default branch</div><div class="mu t">acme/api #466 · "@you can you confirm…"</div></div><span class="mu">3h</span></div>
+        <div class="row" style="align-items:flex-start"><span class="dot g" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t">Search snippet from wrong comment</div><div class="mu t">acme/web #451 · lee</div></div><span class="mu">2d</span></div>
+        <div class="grp"><span>Your PRs</span><span>7</span></div>
+        <div class="row" style="align-items:flex-start"><span class="dot i" style="margin-top:4px"></span><div class="col" style="flex:1"><div class="t">Drop legacy token store</div><div class="mu t">acme/api #471 · approved · ready</div></div><span class="mu">6h</span></div>
+      </div>
+      <div class="col" style="flex:1">
+        <div class="pad" style="border-bottom:1px solid var(--border)">
+          <div class="mu">acme/api · #482</div>
+          <div class="b" style="font-size:14px;margin:2px 0">Fix pager cursor on empty page</div>
+          <div class="mu"><span class="badge">Open</span> mira → main · +48 −12 · <span class="dot g"></span> 6 / 6 checks</div>
+        </div>
+        <div class="tabs" style="background:none"><div class="tab cur">Conversation</div><div class="tab">Files 4</div><div class="tab">Commits 3</div><div class="tab">Checks</div></div>
+        <div class="pad" style="flex:1;overflow:hidden">
+          <div class="cmt" style="margin-top:0"><div class="h"><span class="b">mira</span> <span class="mu">2 h ago</span></div><div class="c">The cursor was kept when a page came back empty. Sync then looped on the same page. This clears it and adds a test.</div></div>
+          <div class="cmt"><div class="h"><span class="b">devon</span> <span class="mu">40 min ago · sync.rs:214</span></div><div class="c">Looks right. One question on the test name.</div></div>
+        </div>
+        <div class="ft" style="height:30px;gap:8px"><span class="btn pri">Approve <span class="kbd">A</span></span><span class="btn">Reply <span class="kbd">R</span></span><span class="btn">Done <span class="kbd">E</span></span><span class="btn">Snooze <span class="kbd">H</span></span><span style="margin-left:auto"><span class="kbd">J</span> <span class="kbd">K</span> next / previous</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- C -->
+<div class="m">
+  <h3>C. Command</h3>
+  <p>No sidebar. One query bar, one dense table, a palette for everything. Keyboard first.</p>
+  <div class="win">
+    <div class="tb"><span class="b">Forkline</span><span class="badge">Inbox</span><span class="badge" style="background:none;border:1px solid var(--border)">My PRs</span><span class="badge" style="background:none;border:1px solid var(--border)">Reviews 3</span><span class="badge" style="background:none;border:1px solid var(--border)">acme/api</span><span class="mu" style="margin-left:auto">+ Save view</span></div>
+    <div class="row mono" style="padding:6px 10px"><span class="mu">/</span><span class="t">is:open is:pr review-requested:@me sort:updated</span><span class="mu">37 results · 4 ms</span></div>
+    <div class="row th"><span style="width:7px"></span><span class="t">Title</span><span class="w1">Repo</span><span class="w2">Author</span><span class="w2">Checks</span><span class="w3">Size</span><span class="w3">Age</span></div>
+    <div class="row sel"><span class="dot g"></span><span class="t b">Fix pager cursor on empty page</span><span class="w1 mu t">acme/api</span><span class="w2 mu">mira</span><span class="w2"><span class="dot g"></span> 6/6</span><span class="w3 mu">+48</span><span class="w3 mu">2h</span></div>
+    <div class="row"><span class="dot g"></span><span class="t b">Add retry budget to sync worker</span><span class="w1 mu t">acme/api</span><span class="w2 mu">devon</span><span class="w2"><span class="dot r"></span> 5/6</span><span class="w3 mu">+210</span><span class="w3 mu">5h</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Diff: wrap long lines</span><span class="w1 mu t">acme/web</span><span class="w2 mu">sam</span><span class="w2"><span class="dot y"></span> 2/4</span><span class="w3 mu">+31</span><span class="w3 mu">1d</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Search snippet from wrong comment</span><span class="w1 mu t">acme/web</span><span class="w2 mu">lee</span><span class="w2"><span class="dot g"></span> 4/4</span><span class="w3 mu">+9</span><span class="w3 mu">2d</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Move budgets to one file</span><span class="w1 mu t">acme/infra</span><span class="w2 mu">kai</span><span class="w2"><span class="dot g"></span> 3/3</span><span class="w3 mu">+77</span><span class="w3 mu">2d</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Cache label colors</span><span class="w1 mu t">acme/web</span><span class="w2 mu">sam</span><span class="w2"><span class="dot g"></span> 4/4</span><span class="w3 mu">+18</span><span class="w3 mu">3d</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Rate limit pause shows wrong time</span><span class="w1 mu t">acme/api</span><span class="w2 mu">mira</span><span class="w2"><span class="dot g"></span> 6/6</span><span class="w3 mu">+22</span><span class="w3 mu">4d</span></div>
+    <div class="row"><span class="dot g"></span><span class="t">Explore: following feed</span><span class="w1 mu t">acme/web</span><span class="w2 mu">lee</span><span class="w2"><span class="dot y"></span> 1/4</span><span class="w3 mu">+340</span><span class="w3 mu">5d</span></div>
+    <div style="flex:1"></div>
+    <div class="ft"><span><span class="kbd">Enter</span> open</span><span><span class="kbd">Space</span> peek</span><span><span class="kbd">X</span> select</span><span><span class="kbd">Ctrl K</span> commands</span><span style="margin-left:auto"><span class="dot g"></span> Synced</span></div>
+    <div class="pal">
+      <div class="row mono" style="padding:8px 10px"><span class="mu">&gt;</span><span class="t">appr</span><span class="kbd">Esc</span></div>
+      <div class="row sel"><span class="t">Approve #482 Fix pager cursor on empty page</span><span class="kbd">A</span></div>
+      <div class="row"><span class="t">Approve and merge (squash)</span><span class="kbd">Shift A</span></div>
+      <div class="row"><span class="t">Request changes…</span></div>
+      <div class="row" style="border:0"><span class="t mu">Go to: Approved by me</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- D -->
+<div class="m">
+  <h3>D. Review desk</h3>
+  <p>Built around code review. Lanes by what is blocked on you, diff in the centre, threads beside it.</p>
+  <div class="win">
+    <div class="tb"><span class="b">Forkline</span><span class="badge" style="background:var(--primary);color:var(--primary-foreground)">Needs your review 3</span><span class="badge">Waiting on others 5</span><span class="badge">Ready to merge 2</span><span class="badge">Issues 9</span><div class="search" style="max-width:130px;margin:0 0 0 auto"><span>Search</span><span class="kbd">/</span></div></div>
+    <div class="body">
+      <div class="col" style="width:158px;flex:none;border-right:1px solid var(--border);padding:6px;background:var(--card)">
+        <div class="card" style="border-color:var(--primary)"><div class="b t">Fix pager cursor on empty page</div><div class="mu t">acme/api #482 · mira</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><div class="bar"><span class="g" style="width:80%"></span><span class="r" style="width:20%"></span></div><span class="mu">+48 −12</span><span class="dot g" style="margin-left:auto"></span></div></div>
+        <div class="card"><div class="b t">Add retry budget to sync worker</div><div class="mu t">acme/api #479 · devon</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><div class="bar"><span class="g" style="width:65%"></span><span class="r" style="width:35%"></span></div><span class="mu">+210 −96</span><span class="dot r" style="margin-left:auto"></span></div></div>
+        <div class="card"><div class="b t">Diff: wrap long lines</div><div class="mu t">acme/web #460 · sam</div><div style="display:flex;align-items:center;gap:6px;margin-top:4px"><div class="bar"><span class="g" style="width:90%"></span><span class="r" style="width:10%"></span></div><span class="mu">+31 −3</span><span class="dot y" style="margin-left:auto"></span></div></div>
+        <div class="cap" style="margin-left:2px">Files · 1 of 4 viewed</div>
+        <div class="nav on mono"><span class="t">sync/pager.rs</span><span>+31</span></div>
+        <div class="nav mono"><span class="t">sync/engine.rs</span><span class="mu">+9</span></div>
+        <div class="nav mono"><span class="t">tests/sync.rs</span><span class="mu">+8</span></div>
+        <div class="nav mono mu"><span class="t">✓ CHANGELOG.md</span><span>+1</span></div>
+      </div>
+      <div class="col" style="flex:1">
+        <div class="row" style="background:var(--card)"><span class="mono t">crates/fl-sync/src/pager.rs</span><span class="mu">Unified ▾</span><span class="btn">Viewed <span class="kbd">V</span></span></div>
+        <div class="dl hunk"><span class="ln"></span>@@ -208,9 +208,14 @@ impl Pager</div>
+        <div class="dl"><span class="ln">208</span>     let page = self.fetch(cursor).await?;</div>
+        <div class="dl"><span class="ln">209</span>     if page.nodes.is_empty() {</div>
+        <div class="dl del"><span class="ln">210</span>-        return Ok(Step::Again(cursor));</div>
+        <div class="dl add"><span class="ln">210</span>+        self.cursor = None;</div>
+        <div class="dl add"><span class="ln">211</span>+        return Ok(Step::Done);</div>
+        <div class="dl"><span class="ln">212</span>     }</div>
+        <div class="dl add sel"><span class="ln">213</span>+    let next = page.end_cursor.filter(|_| page.has_next);</div>
+        <div class="dl add"><span class="ln">214</span>+    self.cursor = next.clone();</div>
+        <div class="dl"><span class="ln">215</span>     self.store.save(&amp;page.nodes)?;</div>
+        <div class="dl del"><span class="ln">216</span>-    Ok(Step::Again(page.end_cursor))</div>
+        <div class="dl add"><span class="ln">216</span>+    Ok(match next {</div>
+        <div class="dl add"><span class="ln">217</span>+        Some(c) =&gt; Step::Again(c),</div>
+        <div class="dl add"><span class="ln">218</span>+        None =&gt; Step::Done,</div>
+        <div class="dl add"><span class="ln">219</span>+    })</div>
+        <div class="dl"><span class="ln">220</span> }</div>
+        <div style="flex:1"></div>
+        <div class="ft" style="height:30px;gap:8px"><span class="btn pri">Approve <span class="kbd">A</span></span><span class="btn">Request changes</span><span class="btn">Comment <span class="kbd">C</span></span><span style="margin-left:auto"><span class="kbd">]</span> next file</span></div>
+      </div>
+      <div class="col" style="width:176px;flex:none;border-left:1px solid var(--border);padding:8px">
+        <div class="b">Threads <span class="mu">2 open</span></div>
+        <div class="cmt"><div class="h"><span class="mono">pager.rs:213</span></div><div class="c"><span class="b">devon</span> Does has_next ever lie on the last page?<div class="mu" style="margin-top:4px"><span class="b">mira</span> Yes, GitHub does this for empty pages.</div></div></div>
+        <div class="cmt"><div class="h"><span class="mono">tests/sync.rs:88</span></div><div class="c"><span class="b">devon</span> Rename the test to say what it checks.</div></div>
+        <div class="cap" style="margin-left:0">Checks</div>
+        <div class="nav" style="padding-left:0"><span><span class="dot g"></span> clippy</span><span class="mu">41 s</span></div>
+        <div class="nav" style="padding-left:0"><span><span class="dot g"></span> test</span><span class="mu">2 m</span></div>
+        <div class="nav" style="padding-left:0"><span><span class="dot g"></span> bench</span><span class="mu">3 m</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

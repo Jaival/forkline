@@ -1,4 +1,5 @@
-//! Token lookup, OS credential store and the OAuth device flow.
+//! Token lookup (env, OS credential store, GitHub CLI) and the OAuth device
+//! flow. The device flow goes away with the Tauri app (ADR 0001).
 
 use fl_types::{AuthPoll, DeviceCode};
 
@@ -15,10 +16,11 @@ pub const SCOPES: &str = "repo read:org notifications";
 const SERVICE: &str = "dev.forkline.app";
 const USER: &str = "github";
 
-/// The signed-in user's GitHub token, if any. Reads the OS credential
-/// store (or `FORKLINE_GITHUB_TOKEN` in dev). Never log the result.
+/// The signed-in user's GitHub token, if any: `FORKLINE_GITHUB_TOKEN` (dev),
+/// then a token the user saved (Windows Credential Manager), then the GitHub
+/// CLI's token. Never log the result.
 pub fn token() -> Option<String> {
-    env_token().or_else(stored_token)
+    env_token().or_else(stored_token).or_else(gh_token)
 }
 
 pub fn env_token() -> Option<String> {
@@ -28,6 +30,25 @@ pub fn env_token() -> Option<String> {
 /// Token from Windows Credential Manager. Store errors read as "no token".
 pub fn stored_token() -> Option<String> {
     entry().ok()?.get_password().ok().filter(|t| !t.is_empty())
+}
+
+/// Token of the GitHub CLI (`gh auth token`), read once per process.
+pub fn gh_token() -> Option<String> {
+    static GH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    GH.get_or_init(|| {
+        let mut cmd = std::process::Command::new("gh");
+        cmd.args(["auth", "token", "--hostname", "github.com"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().ok().filter(|o| o.status.success())?;
+        let token = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+        (!token.is_empty()).then_some(token)
+    })
+    .clone()
 }
 
 pub fn store_token(token: &str) -> Result<()> {

@@ -2,14 +2,14 @@
 //! Other agents: do not edit; ask the owner.
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 
 use crate::{DiffSide, IssueRow, Label, Timestamp};
 
 /// Everything the PR view needs except review threads (see `ReviewThread`).
 /// Comments are capped at `PAGE_MAX`; `row.comments` is the full count so
 /// the UI can say "n more on GitHub".
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrDetail {
     pub row: IssueRow,
     pub body_html: Option<String>,
@@ -41,7 +41,8 @@ pub struct PrDetail {
     pub commits: Vec<PrCommit>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrComment {
     /// Negative = local optimistic comment.
     pub id: i64,
@@ -51,7 +52,8 @@ pub struct PrComment {
     pub created_at: Timestamp,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrReview {
     pub id: i64,
     pub author: String,
@@ -62,7 +64,8 @@ pub struct PrReview {
     pub submitted_at: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrCheck {
     pub id: i64,
     pub name: String,
@@ -73,7 +76,8 @@ pub struct PrCheck {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrCommit {
     pub oid: String,
     pub headline: String,
@@ -83,7 +87,8 @@ pub struct PrCommit {
 
 /// One inline review thread. `line` is `None` when the thread is outdated
 /// and no longer maps to a line of the current diff.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ReviewThread {
     pub id: i64,
     pub path: String,
@@ -98,7 +103,8 @@ pub struct ReviewThread {
     pub comments: Vec<ReviewThreadComment>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ReviewThreadComment {
     pub id: i64,
     pub author: String,
