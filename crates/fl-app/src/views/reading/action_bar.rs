@@ -1,4 +1,6 @@
-//! Action bar of the reading pane and its keys: `A` approve, `R` reply,
+//! Action bar of the reading pane and its keys: `A` approve, `R` reply (on
+//! an open pull request the box is the review composer: Comment, Approve,
+//! Request changes),
 //! `X` close / reopen, `E` done, `H` snooze; Merge (button only: it asks
 //! for a confirm).
 //!
@@ -16,10 +18,11 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_fl
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, Window, actions, div, px,
+    SharedString, Styled as _, TestSupportExt as _, Window, actions, div, px,
 };
 use rusqlite::Connection;
 
+use super::pickers::{EditAssignees, EditLabels};
 use super::{Detail, ReadingPane};
 use crate::store::Store;
 
@@ -62,9 +65,25 @@ impl ReadingPane {
 
     pub(crate) fn approve(&mut self, _: &Approve, _: &mut Window, cx: &mut Context<Self>) {
         let Some(pr_id) = self.open_pr() else { return };
-        let action =
-            Action::SubmitReview { pr_id, event: ReviewEvent::Approve, body_md: String::new(), comments: Vec::new() };
-        self.enqueue(action, cx);
+        self.submit_review(pr_id, ReviewEvent::Approve, String::new(), cx);
+    }
+
+    /// Inline comments drafted in the Files tab, waiting for the review.
+    pub(super) fn draft_count(&self, cx: &gpui_kit::App) -> usize {
+        self.files.as_ref().map_or(0, |f| f.read(cx).drafts.len())
+    }
+
+    /// Send a review with the Files tab drafts. The drafts leave the tab; a
+    /// rejected review puts them back.
+    fn submit_review(&mut self, pr_id: i64, event: ReviewEvent, body_md: String, cx: &mut Context<Self>) {
+        let files = self.files.clone();
+        let comments = files.as_ref().map(|f| f.update(cx, |f, cx| f.take_drafts(cx))).unwrap_or_default();
+        let back = comments.clone();
+        self.enqueue_or(Action::SubmitReview { pr_id, event, body_md, comments }, cx, move |_, cx| {
+            if let Some(files) = files {
+                files.update(cx, |f, cx| f.restore_drafts(back, cx));
+            }
+        });
     }
 
     pub(super) fn merge_state(&self) -> MergeState {
@@ -126,8 +145,11 @@ impl ReadingPane {
                     state
                 });
                 let subscription = cx.subscribe_in(&state, window, |this, _, ev: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { secondary: true, .. } = ev {
-                        this.send_reply(window, cx);
+                    match ev {
+                        InputEvent::PressEnter { secondary: true, .. } => this.send_reply(window, cx),
+                        // Request changes needs text.
+                        InputEvent::Change => cx.notify(),
+                        _ => {}
                     }
                 });
                 self.reply = Some(state.clone());
@@ -142,15 +164,38 @@ impl ReadingPane {
         cx.notify();
     }
 
+    /// The text in the reply box, trimmed.
+    fn reply_body(&self, cx: &Context<Self>) -> Option<String> {
+        Some(self.reply.as_ref()?.read(cx).value().trim().to_owned())
+    }
+
+    /// `Ctrl+Enter` / Comment: a comment on the item. On an open PR with
+    /// inline drafts it is a `COMMENT` review that carries them.
     fn send_reply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(state), Some(detail)) = (&self.reply, &self.detail) else { return };
-        let body_md = state.read(cx).value().trim().to_owned();
+        let (Some(body_md), Some(detail)) = (self.reply_body(cx), &self.detail) else { return };
+        let issue_id = detail.row().id;
+        if let Some(pr_id) = self.open_pr().filter(|_| self.draft_count(cx) > 0) {
+            self.close_reply(window, cx);
+            self.submit_review(pr_id, ReviewEvent::Comment, body_md, cx);
+            return;
+        }
         if body_md.is_empty() {
             return;
         }
-        let issue_id = detail.row().id;
         self.close_reply(window, cx);
         self.enqueue(Action::Comment { issue_id, body_md }, cx);
+    }
+
+    /// Approve or Request changes from the composer, with its text as the
+    /// review body and the inline drafts. GitHub rejects Request changes with
+    /// neither.
+    pub(super) fn send_review(&mut self, event: ReviewEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(body_md), Some(pr_id)) = (self.reply_body(cx), self.open_pr()) else { return };
+        if body_md.is_empty() && event != ReviewEvent::Approve && self.draft_count(cx) == 0 {
+            return;
+        }
+        self.close_reply(window, cx);
+        self.submit_review(pr_id, event, body_md, cx);
     }
 
     pub(crate) fn cancel_reply(&mut self, _: &CancelReply, window: &mut Window, cx: &mut Context<Self>) {
@@ -203,7 +248,17 @@ impl ReadingPane {
 
     /// Queue `action`. It applies to the local rows at once; a rejected
     /// action shows its error in the bar.
-    fn enqueue(&mut self, action: Action, cx: &mut Context<Self>) {
+    pub(super) fn enqueue(&mut self, action: Action, cx: &mut Context<Self>) {
+        self.enqueue_or(action, cx, |_, _| {});
+    }
+
+    /// `enqueue`, then `on_error` when the queue rejects the action.
+    fn enqueue_or(
+        &mut self,
+        action: Action,
+        cx: &mut Context<Self>,
+        on_error: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
         self.notice = None;
         let store = Store::global(cx).read(cx);
         let engine = store.sync().clone();
@@ -216,6 +271,7 @@ impl ReadingPane {
             };
             let _ = this.update(cx, |this, cx| {
                 this.notice = Some(error.into());
+                on_error(this, cx);
                 cx.notify();
             });
         })
@@ -264,6 +320,15 @@ impl ReadingPane {
                         button("action-reply", "Reply", "R")
                             .on_click(cx.listener(|this, _, window, cx| this.reply(&Reply, window, cx))),
                     )
+                })
+                .when(reply, |d| {
+                    d.child(
+                        button("action-labels", "Labels", "L")
+                            .on_click(cx.listener(|this, _, window, cx| this.edit_labels(&EditLabels, window, cx))),
+                    )
+                    .child(button("action-assignees", "Assignees", "").on_click(
+                        cx.listener(|this, _, window, cx| this.edit_assignees(&EditAssignees, window, cx)),
+                    ))
                 })
                 .when_some(state_button, |d, (id, label)| {
                     d.child(
@@ -345,9 +410,13 @@ impl ReadingPane {
         Some(el)
     }
 
-    /// The reply box, when open.
+    /// The reply box, when open. On an open pull request it also submits a
+    /// review.
     pub(super) fn reply_box(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let state = self.reply.as_ref()?;
+        let review = self.open_pr().is_some();
+        let drafts = if review { self.draft_count(cx) } else { 0 };
+        let empty = self.reply_body(cx).is_none_or(|b| b.is_empty()) && drafts == 0;
         let theme = cx.theme();
         Some(
             v_flex()
@@ -366,7 +435,38 @@ impl ReadingPane {
                         .text_xs()
                         .text_color(theme.muted_foreground)
                         .child("Ctrl+Enter to send, Esc to cancel")
+                        .when(drafts > 0, |d| {
+                            let s = if drafts == 1 { "" } else { "s" };
+                            d.child(
+                                div()
+                                    .id("review-drafts")
+                                    .test_support()
+                                    .text_color(theme.foreground)
+                                    .child(format!("{drafts} inline comment{s} go with it")),
+                            )
+                        })
                         .child(div().flex_1())
+                        .when(review, |d| {
+                            d.child(
+                                Button::new("review-request-changes")
+                                    .small()
+                                    .ghost()
+                                    .label("Request changes")
+                                    .disabled(empty)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.send_review(ReviewEvent::RequestChanges, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("review-approve")
+                                    .small()
+                                    .ghost()
+                                    .label("Approve")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.send_review(ReviewEvent::Approve, window, cx)
+                                    })),
+                            )
+                        })
                         .child(
                             Button::new("reply-send")
                                 .small()

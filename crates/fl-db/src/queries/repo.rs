@@ -89,9 +89,16 @@ pub fn full_name(conn: &Connection, id: RepoId) -> rusqlite::Result<Option<Strin
 }
 
 /// Local write. Returns false if the repo does not exist.
+/// Pinning also makes an Explore-only repo a synced one (migration 0008);
+/// unpinning leaves the flags to sync.
 pub fn set_pinned(conn: &Connection, id: RepoId, pinned: bool) -> rusqlite::Result<bool> {
     Ok(conn
-        .prepare_cached("UPDATE repos SET pinned = ?2 WHERE id = ?1")?
+        .prepare_cached(
+            "UPDATE repos SET pinned = ?2,
+               explore_only = CASE WHEN ?2 THEN 0 ELSE explore_only END,
+               sync_enabled = CASE WHEN ?2 AND explore_only = 1 THEN 1 ELSE sync_enabled END
+             WHERE id = ?1",
+        )?
         .execute((id, pinned))?
         > 0)
 }

@@ -12,7 +12,9 @@ mod repos;
 pub(crate) mod search;
 
 pub use queue::{FocusFilter, SaveView, SelectNext};
-pub use reading::{Approve, Done, NextFile, PrevFile, Reply, ShowFiles, Snooze, ToggleState, ToggleViewed};
+pub use reading::{
+    Approve, Done, EditAssignees, EditLabels, NextFile, PrevFile, Reply, ShowFiles, Snooze, ToggleState, ToggleViewed,
+};
 
 use fl_types::{QueueKind, QueueQuery};
 use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window, actions};
@@ -64,6 +66,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("a", reading::Approve, Some(TRIAGE)),
         KeyBinding::new("r", reading::Reply, Some(TRIAGE)),
         KeyBinding::new("x", reading::ToggleState, Some(TRIAGE)),
+        KeyBinding::new("l", reading::EditLabels, Some(TRIAGE)),
         KeyBinding::new("e", reading::Done, Some(TRIAGE)),
         KeyBinding::new("h", reading::Snooze, Some(TRIAGE)),
         // Files tab of a PR: act only while it is on show.
@@ -71,6 +74,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("[", reading::PrevFile, Some(TRIAGE)),
         KeyBinding::new("v", reading::ToggleViewed, Some(TRIAGE)),
         KeyBinding::new("escape", reading::CancelReply, Some("Reply")),
+        KeyBinding::new("escape", reading::ClosePicker, Some("Picker")),
     ]);
 }
 

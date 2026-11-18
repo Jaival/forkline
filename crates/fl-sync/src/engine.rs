@@ -306,7 +306,8 @@ impl Engine {
         if !has_viewer {
             sync::viewer(&self.gh, &token, &self.db).await?;
         }
-        if repos + REPOS_EVERY <= now {
+        let repos_due = repos + REPOS_EVERY <= now;
+        if repos_due {
             sync::repos(&self.gh, &token, &self.db, now, &emit).await?;
         }
         if notes <= now {
@@ -327,6 +328,15 @@ impl Engine {
                     })
                     .await?;
                 }
+            }
+        }
+        // Explore goes last on the repo tick: it is the first thing to skip
+        // when the budget is low.
+        if repos_due && !self.gh.rate().is_some_and(|(remaining, _)| remaining < LOW_REMAINING) {
+            match sync::explore(&self.gh, &token, &self.db, now, &emit).await {
+                Ok(()) => {}
+                Err(e @ (Error::RateLimited { .. } | Error::Unauthorized | Error::Network(_) | Error::Db(_))) => return Err(e),
+                Err(e) => repo_error = repo_error.or(Some(format!("Explore: {e}"))),
             }
         }
         match repo_error {

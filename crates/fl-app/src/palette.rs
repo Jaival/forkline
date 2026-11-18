@@ -21,7 +21,7 @@ use gpui_kit::{
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::views::{
-    Approve, Done, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleState, ToggleViewed,
+    Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleState, ToggleViewed,
 };
 use crate::workspace::{GoTo, NewTab, NextTab, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
 
@@ -137,6 +137,8 @@ impl Palette {
             action("Approve", Some("A"), Approve),
             action("Reply", Some("R"), Reply),
             action("Close or reopen", Some("X"), ToggleState),
+            action("Edit labels", Some("L"), EditLabels),
+            action("Edit assignees", None, EditAssignees),
             action("Mark done", Some("E"), Done),
             action("Snooze for a day", Some("H"), Snooze),
             action("Show files", None, ShowFiles),

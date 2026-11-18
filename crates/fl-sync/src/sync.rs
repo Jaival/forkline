@@ -4,6 +4,7 @@
 //! - `deep`: labels, overview, issues and PRs of one pinned repo (GraphQL,
 //!   incremental by `updatedAt` cursor stored in `sync_state`).
 //! - `notifications`: inbox threads (REST, `If-Modified-Since`, `X-Poll-Interval`).
+//! - `explore`: people the user follows and their recent stars (REST, ETag).
 //!
 //! Upserts never overwrite fields that have a row in `pending_fields`.
 //! Every page is one transaction; issues are re-indexed for search in it.
@@ -230,6 +231,11 @@ pub async fn repos(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<
                 [ids_json(&ids)],
             )?;
         }
+        // A repo in the user's own or starred lists is not Explore-only (0008).
+        tx.execute(
+            "UPDATE repos SET explore_only = 0 WHERE explore_only = 1 AND id IN (SELECT value FROM json_each(?1))",
+            [ids_json(&seen)],
+        )?;
         // GitHub has no star history API: keep one snapshot per repo and day.
         tx.execute(
             "INSERT INTO star_history (repo_id, day, stars)
@@ -242,6 +248,117 @@ pub async fn repos(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<
     })
     .await?;
     emit(&["repos", "sync"]);
+    Ok(())
+}
+
+// ---- explore -----------------------------------------------------------------
+
+/// Followed users read per run.
+pub const MAX_FOLLOWING: usize = 200;
+/// Stars older than this leave `explore_stars`.
+pub const EXPLORE_DAYS: i64 = 90;
+/// Stars read per followed user: the first page.
+const STARS_PER_USER: u32 = 30;
+
+/// The people the user follows (`following`) and the first page of each
+/// one's stars (`explore_stars`, last `EXPLORE_DAYS`). A repo first seen here
+/// is Explore-only and not synced (`explore_only = 1`, `sync_enabled = 0`);
+/// Explore-only repos no star references any more are deleted. Stops early,
+/// without an error, when the REST budget runs low; the next run goes on.
+pub async fn explore(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<'_>) -> Result<()> {
+    let mut changed = false;
+    if let Some(mut users) = list_cached(gh, token, db, "following", "/user/following?per_page=100", now).await? {
+        users.truncate(MAX_FOLLOWING);
+        write(db, move |c| {
+            let tx = c.transaction()?;
+            let mut ids = Vec::with_capacity(users.len());
+            for u in &users {
+                ids.extend(user(&tx, u)?);
+            }
+            // Unfollowing cascades to the user's stars.
+            tx.execute("DELETE FROM following WHERE user_id NOT IN (SELECT value FROM json_each(?1))", [ids_json(&ids)])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO following (user_id) SELECT value FROM json_each(?1)",
+                [ids_json(&ids)],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+        changed = true;
+    }
+
+    let followed: Vec<(i64, String)> = read(db, |c| {
+        Ok(c.prepare("SELECT u.id, u.login FROM following f JOIN users u ON u.id = f.user_id ORDER BY u.id")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    })
+    .await?;
+    for (user_id, login) in followed {
+        if gh.rate().is_some_and(|(remaining, _)| remaining < crate::github::LOW_REMAINING) {
+            break;
+        }
+        let key = format!("explore:{user_id}");
+        let k = key.clone();
+        let old = read(db, move |c| Ok(state(c, &k)?)).await?;
+        let mut headers = vec![("Accept", "application/vnd.github.star+json")];
+        headers.extend(old.etag.as_deref().map(|e| ("If-None-Match", e)));
+        let path = format!("/users/{login}/starred?per_page={STARS_PER_USER}");
+        let resp = gh.rest(token, Method::GET, &path, None, &headers).await?;
+        let etag = resp.header("etag").map(str::to_owned);
+        let stars = (resp.status != 304).then(|| resp.body.as_array().cloned().unwrap_or_default());
+        changed |= stars.is_some();
+        write(db, move |c| {
+            let tx = c.transaction()?;
+            if let Some(stars) = &stars {
+                tx.execute("DELETE FROM explore_stars WHERE user_id = ?1", [user_id])?;
+                for s in stars {
+                    let at = s["starred_at"].as_str().map_or(0, parse_ts);
+                    if at < now - EXPLORE_DAYS * 86_400 {
+                        continue;
+                    }
+                    let known = s["repo"]["id"]
+                        .as_i64()
+                        .map(|id| tx.query_row("SELECT 1 FROM repos WHERE id = ?1", [id], |_| Ok(())).optional())
+                        .transpose()?
+                        .flatten()
+                        .is_some();
+                    let Some(repo_id) = repo(&tx, &s["repo"], true)? else { continue };
+                    if !known {
+                        tx.execute("UPDATE repos SET explore_only = 1, sync_enabled = 0 WHERE id = ?1", [repo_id])?;
+                    }
+                    tx.execute(
+                        "INSERT OR REPLACE INTO explore_stars (user_id, repo_id, starred_at) VALUES (?1, ?2, ?3)",
+                        params![user_id, repo_id, at],
+                    )?;
+                }
+            }
+            save_state(&tx, &key, &State { etag, ..touched(now) })?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+    }
+
+    write(db, move |c| {
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM explore_stars WHERE starred_at < ?1", [now - EXPLORE_DAYS * 86_400])?;
+        // Explore-only repos nothing points at any more. Pinning clears the
+        // flag; a notification or an issue keeps the row.
+        tx.execute(
+            "DELETE FROM repos WHERE explore_only = 1 AND pinned = 0
+               AND NOT EXISTS (SELECT 1 FROM explore_stars e WHERE e.repo_id = repos.id)
+               AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.repo_id = repos.id)
+               AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.repo_id = repos.id)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await?;
+    if changed {
+        emit(&["repos"]);
+    }
     Ok(())
 }
 

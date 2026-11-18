@@ -758,7 +758,7 @@ Reply R, Close X, Merge menu button. Not checked by eye: the open menu,
 the confirm row, a blocked Merge, Reopen, the Unread toggle (needs a click
 or the Inbox tab on show), light theme.
 
-Open decisions (step 1):
+Step-1 decisions (settled 2026-11-18, see "Decided (2026-11-18, steps 1-5)"):
 
 - `X` closes without a confirm (Reopen undoes it). Merge has a confirm and
   no key.
@@ -772,9 +772,181 @@ Changed files (step 1): `crates/fl-search/src/{lib,query,tests}.rs`,
 reading/action_bar.rs, reading/tests.rs, list_view.rs, mod.rs, search.rs}`,
 `crates/fl-app/src/{workspace,palette}.rs`.
 
-Next: parity step 2, the review composer (gap 4), then labels and
-assignees (2), threads (6), inline comments (5); then Explore sync (plan
-above). The Tauri app stays until the gaps are closed (user, 2026-11-18).
+Done (parity step 2, review composer, 2026-11-18, branch `gpui-parity`):
+
+- Gap 4: on an open PR the `R` box is the review composer. Buttons
+  `reply-send` (Comment, `Ctrl+Enter`), `review-approve`,
+  `review-request-changes` (disabled while the box is empty; GitHub rejects
+  an empty request). Approve and Request changes send
+  `Action::SubmitReview` with the text as the body; the local review row
+  shows at once. An issue or a closed PR keeps the plain reply box. `A`
+  still approves with no body.
+- Comment without inline drafts stays a plain PR comment
+  (`Action::Comment`), not a `COMMENT` review. Step 5 sends a `COMMENT`
+  review when drafts exist.
+- Tests: reading `request_changes_sends_the_body_as_a_review`,
+  `approve_from_the_composer_keeps_the_body`,
+  `request_changes_needs_a_body`, `an_issue_reply_has_no_review_buttons`.
+
+Done (parity step 3, labels and assignees, 2026-11-18):
+
+- Gap 2: `reading/pickers.rs`. `L` or the bar button `action-labels` opens
+  the label picker; `action-assignees` the assignee picker (no key: `A` is
+  Approve). Palette "Edit labels" / "Edit assignees". The picker sits under
+  the action bar (inline, not floating): a search box (case-insensitive
+  substring; Enter toggles the first match) and rows `("pick", id)` with a
+  check mark and the label colour. Esc (context `Picker`) closes it and
+  focus returns. Another item drops it.
+- Each click sends the whole set (`SetLabels` / `SetAssignees`), as the
+  Tauri view does; a newer set supersedes one not sent yet. The picker keeps
+  its own set, so fast clicks do not read a stale reload. Works on issues
+  and PRs.
+- Header: `Assigned: a, b`, and `labels pending` / `assignees pending`
+  pills (`labels-pending`, `assignees-pending`) from `pending_fields`.
+- `fl_db::queries::issue::assignees` (new, used by `thread` and the pane).
+  The pane reads assignees for PRs too (`PrDetail` has none; the DTO is
+  unchanged, so the Tauri bindings stay as they are).
+- Choices: `issue::edit_options` (Tauri parity): the repo's labels, and the
+  first 100 known users by login. A user past 100 cannot be picked yet.
+- Tests: reading `l_opens_the_labels_of_the_repo_and_a_click_sends_the_set`,
+  `the_assignee_search_and_enter_pick_the_first_match`,
+  `escape_closes_the_picker_and_another_item_drops_it`.
+
+Done (parity step 4, threads, 2026-11-18):
+
+- Gap 6: Files rail cards (`reading/files.rs`) have `("thread-reply", ix)`
+  and `("thread-resolve", ix)` (Resolve / Unresolve). Reply opens one box
+  under the card (`Ctrl+Enter` or `thread-reply-send`; Esc or
+  `thread-reply-cancel`; focus returns). `Action::ReplyThread` /
+  `Action::ResolveThread` through the queue; a second Resolve click
+  supersedes one not sent yet.
+- The tab now subscribes to `DataChanged`: a `pr` change re-reads the
+  threads (not the patch). Cards keep their order; new threads go last.
+- Cards show every comment of an open thread (before: 3) and the first
+  comment of a resolved one, as GitHub does; a local reply shows `sending`,
+  a queued resolve `syncing`. Errors show at the top of the rail
+  (`files-notice`). Only the header part of a card scrolls the diff.
+- Tauri parity: no reply on a resolved thread.
+- Tests: files `resolve_then_unresolve_a_thread`,
+  `reply_in_a_thread_with_ctrl_enter`, `escape_cancels_a_thread_reply`.
+
+Done (parity step 5, inline review comments, 2026-11-18):
+
+- Gap 5: the pinned gpui-component `Diff` has what it needs:
+  `on_add_annotation` (an add button beside the hovered line and at the end
+  of a line-number selection), `annotations` + `render_annotation` (content
+  under a line). No fork or workaround.
+- Select lines by a click or drag on the line numbers; then the add button
+  at the end of the selection, or the toolbar `files-comment` (Comment),
+  opens the box. The add button is not shown on hover without a selection:
+  with `on_add_annotation` set, the `Diff` builds a hidden button (with a
+  formatted label) on every visible line each frame, and
+  `diff_scroll_fps` fell from 240 to 72-77. It is set only while
+  `selected_lines()` is some (a `DiffEvent` subscription re-renders).
+- `reading/files.rs`: the add button opens a box under the line
+  (`draft-composer`; `Ctrl+Enter` or `draft-add` "Add to review"; Esc or
+  `draft-cancel`). A draft is a dashed card under its line with
+  `("draft-remove", ix)`. Drafts live in the Files tab (`FilesTab::drafts`)
+  and are dropped when another item shows (as in Tauri, where they are
+  component state). The Files tab label reads `Files 3 · 2 pending`.
+- Range rules (`draft_for`): a range on one side is a multi-line comment
+  (`start_line` < `line`, any drag order); a Unified range across removed
+  and added lines is a comment on its last line.
+- Sending: the `R` composer says `N inline comments go with it`
+  (`review-drafts`). With drafts, Comment (`Ctrl+Enter`, empty text allowed)
+  sends a `COMMENT` review; Approve, Request changes and `A` carry them too.
+  The drafts leave the tab when queued; a rejected review puts them back.
+  Local apply turns them into threads; the rail reloads on `pr`.
+- Known gap stays: a range across two hunks is sent as is; GitHub rejects
+  it and the review rolls back.
+- Tests: files `a_range_on_one_side_is_a_multi_line_draft`,
+  `drafts_go_with_the_next_review`, `approve_takes_the_drafts_too`,
+  `escape_cancels_the_box_and_remove_drops_a_draft`.
+  `cargo test -p fl-app`: 140 pass. Workspace clippy and tests pass.
+
+Done (Explore sync, 2026-11-18, the plan above):
+
+- `fl_sync::sync::explore`, last on the 30-min repo tick (engine
+  `try_sync`), skipped when REST remaining < `LOW_REMAINING`; the per-user
+  loop also stops there (no error; the next tick goes on).
+  `GET /user/following` (ETag, `list_cached`, at most `MAX_FOLLOWING` = 200)
+  replaces `following` (unfollow cascades the stars). Per followed user:
+  first page of `/users/{login}/starred?per_page=30`, Accept
+  `application/vnd.github.star+json`, ETag in `sync_state`
+  `explore:{user_id}`; a 200 replaces that user's `explore_stars`, stars
+  older than `EXPLORE_DAYS` (90) are skipped and pruned.
+- A repo first seen there gets `explore_only = 1`, `sync_enabled = 0`.
+  `sync::repos` clears `explore_only` for repos in the user's own or
+  starred lists. Explore-only, unpinned repos no star, notification or
+  issue references are deleted at the end of the run.
+- `Github::rest`: an `Accept` in `extra` replaces the default media type.
+- `repo::set_pinned`: pinning sets `explore_only = 0` and turns sync on for
+  an Explore-only repo (a normal repo keeps its `sync_enabled`). Unpin
+  leaves the flags.
+- Explore view: `p` and `("explore-pin", ix)` Pin / Unpin per row, pin
+  icon. `ExploreRow.pinned` (new field; no Tauri binding uses the type).
+- Explore errors other than rate limit / auth / network / db show in the
+  footer status (`Explore: ...`) and do not stop the rest of the tick.
+- Tests: fl-sync `explore_reads_following_and_their_recent_stars`,
+  `explore_sends_the_star_etag_and_a_listed_repo_clears_explore_only`
+  (common env mounts an empty `/user/following` at the lowest priority);
+  fl-db `pinning_an_explore_only_repo_syncs_it`; fl-app explore
+  `p_pins_an_explore_repo_and_so_syncs_it`, `the_pin_button_pins_its_row`.
+
+Bench after Explore sync and the add-button fix (AC power, 5 runs, run 1
+cold): `diff_scroll_fps` 240, `switch_tab_ms` 4.0-4.1, `search_p95_ms`
+14.6-14.9, `app_startup_ms` 47-48, warm `launch_ms` 498-556 (600). The
+launch rise over the run below is platform start (`main` to
+`run_callback` 410-470 ms), before Forkline code runs.
+
+Bench (2026-11-18, after parity steps 2-5, release, fake data, ON AC
+POWER, `PowerOnline` True; 3 runs, run 1 cold): warm `launch_ms` 400-421
+(600), `app_startup_ms` 40-42 (60), `switch_tab_ms` 4.1-4.2 (8),
+`diff_scroll_fps` 240 (120), `search_p95_ms` 11.4-11.5 (30),
+`open_cached_item_ms` 5.8-5.9 (30). Run 1 (first start after the build)
+missed launch at 713 ms: `main` came 355 ms after spawn (exe load), as in
+earlier cold runs. The step-1 battery misses are gone on AC.
+
+Not checked by eye (parity steps 2-5): the composer buttons, the pickers,
+the thread buttons, draft cards. Opening them needs a click or a key in the
+running app; covered by UI tests only.
+
+Decided (2026-11-18, steps 1-5, with the user):
+
+- `X` closes with no confirm (Reopen undoes it).
+- Merge sends at once; no wait for checks or reviews (GitHub branch
+  protection refuses; the failed action shows the error). Show the check
+  state beside the Merge button (add it if it is not there).
+- Remember the merge method per repo: local state, migration 0011. Before
+  the first merge in a repo the method is merge commit. Save the method
+  when the merge is sent (not on GitHub confirm).
+- Comment without inline drafts stays a plain PR comment.
+- Assignee picker: first 100 known users, no server search.
+- Pickers stay inline under the action bar.
+- No key for assignees.
+- The add button shows only while lines are selected (scroll fps).
+- Drafts: keep them in memory per PR for the session (no DB). A "drafts"
+  mark shows on the PR's list row. A warning shows on app quit and on
+  reading-tab close when drafts are not sent; no dialog on item switch.
+  Drafts do not move when the PR gets new commits; if GitHub rejects them,
+  show the error and keep them (the existing restore path).
+- Gap 11 rest, grouped / flat toggle: in every queue that groups now (like
+  Unread). Default grouped. "Grouped" button, `g` key (do not make `g` a
+  prefix key later) and a palette entry. Saved per queue tab in the layout
+  state; `LAYOUT_VERSION` stays 2. Flat rows show the repo name. (Tauri:
+  Inbox only, default flat, not saved.)
+
+Next (build order, each part with UI tests, checks, a bench run and a
+handoff note):
+
+1. Grouped / flat toggle (gap 11 rest).
+2. Drafts in memory per PR, the list-row drafts mark, the quit / tab-close
+   warning.
+3. Merge method per repo (migration 0011), then the check state beside
+   Merge.
+
+Then a manual pass on fake data, then the Tauri removal (`app/`, `ui/`)
+and the rename of `fl-app` to `forkline` (ask first, ADR 0001).
 
 Decided (2026-11-16):
 

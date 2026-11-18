@@ -104,6 +104,7 @@ pub struct ExploreRow {
     pub stars: u32,
     /// Starred by the user too.
     pub starred: bool,
+    pub pinned: bool,
     /// Followed users who starred it, newest first, at most three.
     pub starred_by: Vec<String>,
     pub starred_by_count: u32,

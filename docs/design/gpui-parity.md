@@ -18,15 +18,15 @@ Viewed files. Settings is a placeholder in both apps.
 Writes (actions the Tauri UI sends, GPUI does not):
 
 1. ~~**Issue state**~~: done 2026-11-18 (button and `X`).
-2. **Labels and assignees**: edit pickers on the issue view
-   (`SetLabels`, `SetAssignees`), with a pending marker per field.
+2. ~~**Labels and assignees**~~: done 2026-11-18 (pickers under the
+   header, `L`, pending marker per field).
 3. ~~**PR merge**~~: done 2026-11-18 (menu, then confirm).
-4. **Review events**: Request changes and Comment with a body. GPUI sends
-   Approve only (`A`).
-5. **Inline review comments**: select diff lines (Shift+click range), add
-   drafts, send them with the review (`SubmitReview.comments`).
-6. **Threads**: reply to a review thread (`ReplyThread`), resolve /
-   unresolve (`ResolveThread`). GPUI shows threads read-only in the Files rail.
+4. ~~**Review events**~~: done 2026-11-18; the `R` box on an open PR has
+   Comment / Approve / Request changes.
+5. ~~**Inline review comments**~~: done 2026-11-18 (diff add button, drafts
+   under their lines, sent with the `R` / `A` review).
+6. ~~**Threads**~~: done 2026-11-18 (Reply and Resolve / Unresolve on the
+   Files rail cards).
 7. ~~**Notification done on GitHub**~~: done 2026-11-18; `E` also sends
    `NotificationDone`.
 
@@ -71,6 +71,10 @@ first).
 
 Step 1 is done (2026-11-18). Decided for 7: send it (GitHub "done" also
 returns on new activity, like the local `done_at`).
+
+Steps 2-5 and Explore sync are done (2026-11-18). Left: gap 11 rest
+(grouped / flat toggle), agreed with the user 2026-11-18; see HANDOFF.md
+"Decided (2026-11-18, steps 1-5)".
 
 ## Recommendation (step 7 check)
 

@@ -1,6 +1,6 @@
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
-use fl_types::IssueState;
+use fl_types::{IssueState, ReviewEvent};
 use rusqlite::Connection;
 
 use super::*;
@@ -550,4 +550,162 @@ fn merge_is_blocked_for_a_draft_or_a_conflict(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(!kinds(cx).contains(&"merge".to_owned()));
+}
+
+// ---- review composer (parity step 2) ---------------------------------------
+
+fn count(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> usize {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find_all(id).len()
+    })
+    .unwrap()
+}
+
+fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn request_changes_sends_the_body_as_a_review(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| window.input("please split this", cx)).unwrap();
+    click(cx, handle, "review-request-changes");
+    assert!(!reply_open(cx, &reading));
+    wait_for(cx, "review queued", |cx| kinds(cx).contains(&"submit_review".to_owned()));
+    let review = actions(cx).into_iter().find(|(kind, _)| kind == "submit_review").unwrap().1;
+    assert!(review.contains("REQUEST_CHANGES") && review.contains("please split this"), "payload: {review}");
+    assert!(!kinds(cx).contains(&"comment".to_owned()));
+    let state: String = read_db(cx, |c| c.query_row("SELECT state FROM reviews WHERE pr_id = 3", [], |r| r.get(0)));
+    assert_eq!(state, "CHANGES_REQUESTED");
+}
+
+#[gpui_kit::test]
+fn approve_from_the_composer_keeps_the_body(cx: &mut TestAppContext) {
+    let (handle, _, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| window.input("nice work", cx)).unwrap();
+    click(cx, handle, "review-approve");
+    wait_for(cx, "review queued", |cx| kinds(cx).contains(&"submit_review".to_owned()));
+    let review = actions(cx).into_iter().find(|(kind, _)| kind == "submit_review").unwrap().1;
+    assert!(review.contains("APPROVE") && review.contains("nice work"), "payload: {review}");
+}
+
+#[gpui_kit::test]
+fn request_changes_needs_a_body(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    press(cx, handle, "r");
+    cx.update_window(handle, |_, window, cx| {
+        reading.update(cx, |pane, cx| pane.send_review(ReviewEvent::RequestChanges, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(reply_open(cx, &reading), "an empty request keeps the box open");
+    assert!(!kinds(cx).contains(&"submit_review".to_owned()), "{:?}", kinds(cx));
+}
+
+#[gpui_kit::test]
+fn an_issue_reply_has_no_review_buttons(cx: &mut TestAppContext) {
+    let (handle, _, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    press(cx, handle, "r");
+    assert_eq!(count(cx, handle, "reply-send"), 1);
+    assert_eq!(count(cx, handle, "review-approve"), 0);
+    assert_eq!(count(cx, handle, "review-request-changes"), 0);
+}
+
+// ---- labels and assignees (parity step 3) ----------------------------------
+
+const LABELS: &str = "INSERT INTO labels(id, repo_id, name, color) VALUES (1, 1, 'bug', 'd73a4a'), (2, 1, 'docs', '0075ca'),
+    (3, 2, 'other repo', 'ffffff');";
+
+fn picker_kind(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> Option<pickers::PickerKind> {
+    cx.read(|cx| reading.read(cx).picker.as_ref().map(|p| p.kind))
+}
+
+fn choices_loaded(cx: &mut TestAppContext, reading: &Entity<ReadingPane>) -> bool {
+    cx.read(|cx| reading.read(cx).picker.as_ref().is_some_and(|p| p.choices.is_some()))
+}
+
+fn payloads(cx: &mut TestAppContext, kind: &str) -> Vec<String> {
+    actions(cx).into_iter().filter(|(k, _)| k == kind).map(|(_, p)| p).collect()
+}
+
+fn click_pick(cx: &mut TestAppContext, handle: AnyWindowHandle, id: usize) {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("pick", id), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn l_opens_the_labels_of_the_repo_and_a_click_sends_the_set(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    crate::test_support::write(cx, LABELS, &[]);
+    press(cx, handle, "l");
+    assert_eq!(picker_kind(cx, &reading), Some(pickers::PickerKind::Labels));
+    wait_for(cx, "choices", |cx| choices_loaded(cx, &reading));
+    // The labels of this repo only.
+    let ids: Vec<i64> = cx.read(|cx| reading.read(cx).visible_choices(cx).iter().map(|c| c.id).collect());
+    assert_eq!(ids, [1, 2]);
+
+    click_pick(cx, handle, 1);
+    wait_for(cx, "labels queued", |cx| !payloads(cx, "set_labels").is_empty());
+    // Applied at once; the header marks the field pending.
+    wait_for(cx, "pending", |cx| cx.read(|cx| reading.read(cx).field_pending(pickers::PickerKind::Labels)));
+    assert_eq!(count(cx, handle, "labels-pending"), 1);
+    let on: i64 = crate::test_support::query_i64(cx, "SELECT COUNT(*) FROM issue_labels WHERE issue_id = 1 AND label_id = 1");
+    assert_eq!(on, 1);
+
+    // A second click sends the whole set and supersedes the first.
+    click_pick(cx, handle, 2);
+    wait_for(cx, "second set", |cx| payloads(cx, "set_labels").last().is_some_and(|p| p.contains("[1,2]")));
+    let pending: i64 = crate::test_support::query_i64(
+        cx,
+        "SELECT COUNT(*) FROM pending_fields WHERE table_name = 'issues' AND row_id = 1 AND field = 'labels'",
+    );
+    assert_eq!(pending, 1);
+}
+
+#[gpui_kit::test]
+fn the_assignee_search_and_enter_pick_the_first_match(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Issue { id: 1 }, 1);
+    click(cx, handle, "action-assignees");
+    assert_eq!(picker_kind(cx, &reading), Some(pickers::PickerKind::Assignees));
+    wait_for(cx, "choices", |cx| choices_loaded(cx, &reading));
+    // Keys type into the search box; `l` does not act.
+    cx.update_window(handle, |_, window, cx| window.input("BO", cx)).unwrap();
+    let ids: Vec<i64> = cx.read(|cx| reading.read(cx).visible_choices(cx).iter().map(|c| c.id).collect());
+    assert_eq!(ids, [2]);
+    press(cx, handle, "enter");
+    wait_for(cx, "assignees queued", |cx| !payloads(cx, "set_assignees").is_empty());
+    assert!(payloads(cx, "set_assignees")[0].contains("[2]"), "{:?}", payloads(cx, "set_assignees"));
+    wait_for(cx, "assigned", |cx| cx.read(|cx| reading.read(cx).assignees.iter().any(|u| u.login == "bob")));
+}
+
+#[gpui_kit::test]
+fn escape_closes_the_picker_and_another_item_drops_it(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (queue, reading) = show(cx, handle, &ws, "101", 3);
+    press(cx, handle, "l");
+    assert!(picker_kind(cx, &reading).is_some());
+    press(cx, handle, "escape");
+    assert!(picker_kind(cx, &reading).is_none());
+    // Focus is back on the queue.
+    press(cx, handle, "j");
+    cx.read(|cx| assert_eq!(queue.read(cx).selected_key(), Some("102")));
+    wait_for(cx, "issue", |cx| detail_id(cx, &reading) == Some(1));
+    press(cx, handle, "l");
+    assert!(picker_kind(cx, &reading).is_some());
+    reading.update(cx, |pane, cx| pane.set_item(None, cx));
+    assert!(picker_kind(cx, &reading).is_none());
+    assert!(payloads(cx, "set_labels").is_empty());
 }

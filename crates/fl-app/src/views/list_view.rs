@@ -10,7 +10,8 @@ use gpui_kit::{
 use super::Built;
 use super::queue::{FocusFilter, Queue, QueueEvent, SaveView};
 use super::reading::{
-    Approve, Done, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleState, ToggleViewed,
+    Approve, Done, EditAssignees, EditLabels, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleState,
+    ToggleViewed,
 };
 use crate::store::Store;
 
@@ -65,6 +66,14 @@ impl ListView {
         self.reading.update(cx, |pane, cx| pane.toggle_state(a, window, cx));
     }
 
+    fn edit_labels(&mut self, a: &EditLabels, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.edit_labels(a, window, cx));
+    }
+
+    fn edit_assignees(&mut self, a: &EditAssignees, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.edit_assignees(a, window, cx));
+    }
+
     fn done(&mut self, a: &Done, window: &mut Window, cx: &mut Context<Self>) {
         self.reading.update(cx, |pane, cx| pane.done(a, window, cx));
     }
@@ -106,6 +115,8 @@ impl Render for ListView {
             .on_action(cx.listener(Self::approve))
             .on_action(cx.listener(Self::reply))
             .on_action(cx.listener(Self::toggle_state))
+            .on_action(cx.listener(Self::edit_labels))
+            .on_action(cx.listener(Self::edit_assignees))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
             .on_action(cx.listener(Self::next_file))

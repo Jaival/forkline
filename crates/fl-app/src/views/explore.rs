@@ -1,11 +1,12 @@
 //! Explore: repos the people you follow starred lately, newest star first.
-//! `Enter` opens the repo.
+//! `Enter` opens the repo; `p` or the row button pins it (and so syncs it).
 
 use std::sync::Arc;
 
 use fl_db::queries::explore;
 use fl_types::{DataChanged, ExploreRow, PAGE_MAX};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -13,7 +14,8 @@ use gpui_kit::{
     ParentElement as _, Render, Styled as _, Subscription, Window, div, px,
 };
 
-use super::Built;
+use super::repos::set_pinned;
+use super::{Built, TogglePin};
 use super::queue::age;
 use super::rows::{self, HasRows, Rows};
 use crate::bench;
@@ -54,9 +56,16 @@ impl ExploreView {
         Built { view: view.into(), focus }
     }
 
+    fn toggle_pin(&mut self, _: &TogglePin, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row) = self.rows.selected_row() {
+            set_pinned(row.repo_id, !row.pinned, cx);
+        }
+    }
+
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let r = &self.rows.items[ix];
+        let (id, pinned) = (r.repo_id, r.pinned);
         let muted = theme.muted_foreground;
         rows::row_shell("explore-row", ix, ROW_HEIGHT, self, cx)
             .child(Icon::new(IconName::BookMarked).with_size(px(14.)).text_color(muted))
@@ -73,7 +82,8 @@ impl ExploreView {
                             .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(r.name.clone()))
                             .when(r.starred, |d| {
                                 d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.warning))
-                            }),
+                            })
+                            .when(pinned, |d| d.child(Icon::new(IconName::Pin).with_size(px(12.)).text_color(muted))),
                     )
                     .child(
                         div()
@@ -106,6 +116,14 @@ impl ExploreView {
                             .child(Icon::new(IconName::Star).with_size(px(12.)))
                             .child(r.stars.to_string()),
                     ),
+            )
+            .child(
+                Button::new(("explore-pin", ix))
+                    .ghost()
+                    .xsmall()
+                    .w(px(52.))
+                    .label(if pinned { "Unpin" } else { "Pin" })
+                    .on_click(move |_, _, cx| set_pinned(id, !pinned, cx)),
             )
             .into_any_element()
     }
@@ -160,7 +178,13 @@ impl Render for ExploreView {
         } else {
             rows::list("explore-list", cx, self, Self::row)
         };
-        let root = v_flex().key_context("List").track_focus(&self.focus).size_full().child(header).child(body);
+        let root = v_flex()
+            .key_context("List")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::toggle_pin))
+            .size_full()
+            .child(header)
+            .child(body);
         rows::list_keys(root, cx)
     }
 }
