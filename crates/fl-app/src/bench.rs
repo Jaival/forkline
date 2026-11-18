@@ -12,9 +12,11 @@
 //! the Issues queue with 20 `/` queries (`search_p95_ms`: p95 of change ->
 //! first filtered page painted, 10 rounds after one warm-up round), scroll
 //! the 10k-line diff (`diff_scroll_fps`: the Files tab of the fake PR
-//! `tune-generated`, `diff::ScrollDown` every frame for two seconds), open
-//! each step 7 view once (`open_<key>_ms`: open -> `<key>_painted`; no
-//! budget yet).
+//! `tune-generated`, `diff::ScrollDown` every frame for two seconds), scroll
+//! a Conversation tab (`conversation_scroll_fps`: the fake PR with the most
+//! comments, 40 px a frame down and back up for two seconds), open each
+//! step 7 view once (`open_<key>_ms`: open -> `<key>_painted`; no budget
+//! yet).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::diff::DiffState;
 use fl_types::QueueKind;
-use gpui_kit::{AnyView, App, AsyncWindowContext, Entity, Focusable as _, Global, Window};
+use gpui_kit::{AnyView, App, AsyncWindowContext, Entity, Focusable as _, Global, ListState, Window, px};
 use rusqlite::OptionalExtension as _;
 use serde::Serialize;
 
@@ -51,6 +53,10 @@ const DIFF_SCROLL_MS: f64 = 2_000.;
 /// `diff::ScrollDown` moves 1.5 rem (24 px); two per frame, like the Tauri
 /// bench's 40 px per frame.
 const SCROLLS_PER_FRAME: usize = 2;
+/// Frames to wait for a Conversation tab to show its entries.
+const CONVERSATION_LOAD_MAX_FRAMES: usize = 120;
+const CONVERSATION_SCROLL_MS: f64 = 2_000.;
+const CONVERSATION_SCROLL_PX: f32 = 40.;
 
 #[derive(Default, Serialize)]
 struct Report {
@@ -67,6 +73,8 @@ struct Bench {
     diff: Option<Entity<DiffState>>,
     /// The last Issues list view built, for the search step.
     issues: Option<AnyView>,
+    /// The list of the last Conversation tab filled, for its scroll step.
+    conversation: Option<ListState>,
 }
 
 impl Global for Bench {}
@@ -83,7 +91,7 @@ pub fn init(out: PathBuf, early: &[(&str, f64)], cx: &mut App) {
         report.marks.insert((*name).into(), *ms);
     }
     report.marks.insert("app_init".into(), epoch_ms());
-    cx.set_global(Bench { out, report, diff: None, issues: None });
+    cx.set_global(Bench { out, report, diff: None, issues: None, conversation: None });
 }
 
 /// Record a startup phase (e.g. `store_ready`). No-op outside bench mode.
@@ -122,6 +130,14 @@ pub fn diff_shown(diff: &Entity<DiffState>, window: &Window, cx: &mut App) {
         cx.global_mut::<Bench>().diff = Some(diff.clone());
     }
     ready("diff", window, cx);
+}
+
+/// A Conversation tab was filled: keep its list for the scroll step. No-op
+/// outside bench mode.
+pub fn conversation_shown(state: &ListState, cx: &mut App) {
+    if cx.has_global::<Bench>() {
+        cx.global_mut::<Bench>().conversation = Some(state.clone());
+    }
 }
 
 /// Wait until a frame with the current changes has been painted.
@@ -193,9 +209,18 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         }
     }
 
+    // The Inbox reading pane, beside its queue, shows the last item opened.
+    let inbox_state = cx.update(|_, cx| cx.global::<Bench>().conversation.clone()).ok().flatten();
+    let inbox_conversation_fps = match inbox_state {
+        Some(state) if state.item_count() > 0 => Some(scroll_list(&state, &mut cx).await),
+        _ => None,
+    };
+
     let views = open_views(&ws, &mut cx).await;
 
     let search = search_p95(&ws, &mut cx).await;
+
+    let conversation_fps = scroll_conversation(&ws, &mut cx).await;
 
     let fps = scroll_big_diff(&ws, &mut cx).await;
 
@@ -203,6 +228,12 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         let bench = cx.global_mut::<Bench>();
         if let Some(fps) = fps {
             bench.report.durations.insert("diff_scroll_fps".into(), vec![fps]);
+        }
+        if let Some(fps) = conversation_fps {
+            bench.report.durations.insert("conversation_scroll_fps".into(), vec![fps]);
+        }
+        if let Some(fps) = inbox_conversation_fps {
+            bench.report.durations.insert("inbox_conversation_scroll_fps".into(), vec![fps]);
         }
         bench.report.durations.insert("switch_tab_ms".into(), vec![median(samples)]);
         if let Some(ms) = search {
@@ -292,6 +323,63 @@ async fn search_p95(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> Opti
     }
     samples.sort_by(f64::total_cmp);
     Some(samples[samples.len() * 95 / 100])
+}
+
+/// Open the fake PR with the most comments in a PR tab, then scroll its
+/// Conversation tab down and back up for two seconds and count painted
+/// frames. `None` when the data has no PR with comments.
+async fn scroll_conversation(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> Option<f64> {
+    let pr: i64 = cx
+        .update(|_, cx| {
+            crate::store::Store::global(cx).read(cx).db().read(|c| {
+                c.query_row(
+                    "SELECT c.issue_id FROM comments c JOIN issues i ON i.id = c.issue_id WHERE i.is_pr = 1 \
+                     GROUP BY c.issue_id ORDER BY count(*) DESC, c.issue_id LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+            })
+        })
+        .ok()?
+        .ok()??;
+    let _ = cx.update(|_, cx| cx.global_mut::<Bench>().conversation = None);
+    let _ = cx.update(|window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id: pr }, window, cx)));
+    let mut state = None;
+    for _ in 0..CONVERSATION_LOAD_MAX_FRAMES {
+        painted(cx).await;
+        state = cx.update(|_, cx| cx.global::<Bench>().conversation.clone()).ok()?.filter(|s| s.item_count() > 0);
+        if state.is_some() {
+            break;
+        }
+    }
+    Some(scroll_list(&state?, cx).await)
+}
+
+/// Scroll `state` 40 px a frame, down and back up, for two seconds; the
+/// painted frames per second.
+async fn scroll_list(state: &ListState, cx: &mut AsyncWindowContext) -> f64 {
+    // Let the bodies lay out (the list measures them as they show).
+    for _ in 0..10 {
+        painted(cx).await;
+    }
+    let mut frames = 0u32;
+    let mut down = true;
+    let start = epoch_ms();
+    while epoch_ms() - start < CONVERSATION_SCROLL_MS {
+        let top = -state.scroll_px_offset_for_scrollbar().y;
+        let max = state.max_offset_for_scrollbar().y;
+        if down && top >= max {
+            down = false;
+        } else if !down && top <= px(0.) {
+            down = true;
+        }
+        let step = px(CONVERSATION_SCROLL_PX).min(if down { max - top } else { top });
+        state.scroll_by(if down { step } else { -step });
+        painted(cx).await;
+        frames += 1;
+    }
+    f64::from(frames) * 1000. / (epoch_ms() - start)
 }
 
 /// Open the big fake diff in a PR tab, then scroll it for two seconds and

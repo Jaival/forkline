@@ -1021,6 +1021,29 @@ one `app_startup_ms` 60.6). An interleaved A/B with the pre-removal
 12-24 vs 12-32, `diff_scroll_fps` 240 / 86 / 79 vs 204 / 85 / 82,
 `switch_tab_ms` about 4 in both. Machine noise, not the removal.
 
+Smooth wheel scroll (2026-11-18, found in the manual pass: the Conversation
+tab "moves in jumps" with a mouse wheel):
+
+- Cause: frames are fast (a frame log of a real scroll: 3.4 ms p50, 4.5 ms
+  p99 from render to painted; an idle pane renders 0 times a second). GPUI
+  on Windows turns a wheel notch into 3 lines, and `list` moves all 60 px
+  in one frame. GPUI and gpui-component have no smooth wheel scroll.
+- Fix: `crates/fl-app/src/smooth_scroll.rs` (`SmoothWheel`). A canvas
+  under the list takes line-based wheel events in the capture phase and
+  plays the distance over about 100 ms (ease-out, time constant 35 ms). A
+  turn the other way drops the rest. Pixel deltas (touchpads) and
+  horizontal scrolls go to the list as before. Used by the Conversation
+  tab only.
+- Test: `a_wheel_notch_scrolls_the_conversation_smoothly` (red without the
+  fix: "the notch landed in one frame: 60").
+- Bench: new steps `conversation_scroll_fps` (PR tab of the fake PR with
+  the most comments) and `inbox_conversation_scroll_fps` (Inbox reading
+  pane), 40 px a frame down and back up for 2 s; no budget. 132-240 fps.
+  They call `ListState::scroll_by`, so they measure drawing, not the wheel.
+- Not done (the user: "not for now"): the same smooth scroll for the queue
+  lists and the Files diff, which still jump one notch at a time. About 5
+  lines per list.
+
 Next: register the GitHub OAuth App, then the manual pass against a real
 account (see "Next" near the top).
 

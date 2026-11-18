@@ -777,3 +777,39 @@ fn the_check_state_shows_beside_merge(cx: &mut TestAppContext) {
     });
     assert_eq!(count(cx, handle, "merge-checks"), 1);
 }
+
+/// A wheel notch over the Conversation scrolls over a few frames, not in one
+/// jump, and ends where the jump would have.
+#[gpui_kit::test]
+fn a_wheel_notch_scrolls_the_conversation_smoothly(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let comments: String = (10..40)
+        .map(|id| {
+            format!(
+                "INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at) \
+                 VALUES ({id},3,2,'one\n\ntwo\n\nthree',{id},{id});"
+            )
+        })
+        .collect();
+    let (handle, ws) = open_seeded(cx, dir.path(), &format!("{SEED}{comments}"));
+    cx.run_until_parked();
+    let (_, reading) = show(cx, handle, &ws, "101", 3);
+    let frame = |cx: &mut TestAppContext| cx.update_window(handle, |_, window, cx| window.render_frame(cx)).unwrap();
+    let top = |cx: &mut TestAppContext| cx.read(|cx| reading.read(cx).conversation.scroll_top());
+    frame(cx);
+    assert_eq!(top(cx), 0.);
+
+    // One notch: three lines of 20 px.
+    cx.update_window(handle, |_, window, cx| window.scroll("conversation", ScrollDelta::Lines(point(0., -3.)), cx))
+        .unwrap();
+    let first = top(cx);
+    assert!(first < 59., "the notch landed in one frame: {first}");
+    let start = Instant::now();
+    while top(cx) < 59.5 && start.elapsed() < Duration::from_secs(2) {
+        frame(cx);
+    }
+    assert!((top(cx) - 60.).abs() < 0.5, "ended at {}", top(cx));
+}

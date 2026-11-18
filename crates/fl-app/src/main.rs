@@ -10,6 +10,7 @@ mod palette;
 mod panel;
 mod rail;
 mod signin;
+mod smooth_scroll;
 mod store;
 #[cfg(test)]
 mod test_support;

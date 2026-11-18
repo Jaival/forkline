@@ -9,11 +9,12 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, FontWeight, IntoElement as _, ListAlignment, ListState, ParentElement as _, SharedString,
-    Styled as _, div, list, px,
+    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ListAlignment, ListState,
+    ParentElement as _, SharedString, Styled as _, TestSupportExt as _, div, list, px,
 };
 
 use super::Detail;
+use crate::smooth_scroll::SmoothWheel;
 use crate::views::queue::age;
 
 enum Body {
@@ -133,22 +134,34 @@ fn entries(detail: &Detail) -> Vec<Entry> {
 pub(super) struct Conversation {
     entries: Rc<Vec<Entry>>,
     state: ListState,
+    wheel: SmoothWheel,
 }
 
 impl Conversation {
     pub(super) fn new() -> Self {
-        Self { entries: Rc::default(), state: ListState::new(0, ListAlignment::Top, px(800.)) }
+        Self {
+            entries: Rc::default(),
+            state: ListState::new(0, ListAlignment::Top, px(800.)),
+            wheel: SmoothWheel::default(),
+        }
     }
 
     /// Forget the item (the pane shows another one next).
     pub(super) fn clear(&mut self) {
         self.entries = Rc::default();
         self.state.reset(0);
+        self.wheel.stop();
+    }
+
+    /// How far the list is scrolled down.
+    #[cfg(test)]
+    pub(super) fn scroll_top(&self) -> f32 {
+        f32::from(-self.state.scroll_px_offset_for_scrollbar().y)
     }
 
     /// Show `detail`. Called again with fresh data for the same item (keep
     /// the scroll position), and after `clear` for a new item (start at the top).
-    pub(super) fn set(&mut self, detail: &Detail, _cx: &mut App) {
+    pub(super) fn set(&mut self, detail: &Detail, cx: &mut App) {
         let refresh = !self.entries.is_empty();
         self.entries = Rc::new(entries(detail));
         let top = self.state.logical_scroll_top();
@@ -156,6 +169,7 @@ impl Conversation {
         if refresh {
             self.state.scroll_to(top);
         }
+        crate::bench::conversation_shown(&self.state, cx);
     }
 
     pub(super) fn render(&self, _cx: &App) -> AnyElement {
@@ -229,7 +243,15 @@ impl Conversation {
             item.child(content).into_any_element()
         })
         .size_full();
-        div().relative().size_full().child(list).vertical_scrollbar(&self.state).into_any_element()
+        div()
+            .id("conversation")
+            .test_support()
+            .relative()
+            .size_full()
+            .child(self.wheel.element(&self.state))
+            .child(list)
+            .vertical_scrollbar(&self.state)
+            .into_any_element()
     }
 }
 
