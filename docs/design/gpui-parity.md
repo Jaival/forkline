@@ -75,8 +75,9 @@ returns on new activity, like the local `done_at`).
 
 Steps 2-5 and Explore sync are done (2026-11-18). Gap 11 rest (grouped /
 flat), session drafts and the merge method per repo are done too (G1 parts
-1-3, 2026-11-18; see HANDOFF.md). No gap is left; next is the manual pass on
-fake data, then the Tauri removal (ask first).
+1-3, 2026-11-18; see HANDOFF.md). No gap is left. The manual pass on fake
+data passed, and the Tauri app was deleted (2026-11-18); the binary is now
+`forkline`. This document is kept as the record of the comparison.
 
 ## Recommendation (step 7 check)
 

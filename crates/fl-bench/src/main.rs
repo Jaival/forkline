@@ -4,8 +4,8 @@
 //!   GPUI app in bench mode, time process start to Inbox painted (`launch_ms`)
 //!   and GPUI-ready to Inbox painted (`app_startup_ms`), and check the
 //!   report against `bench/budgets-gpui.json`. `--partial` reports budgets no
-//!   scenario measures yet instead of failing on them.
-//! - `fl-bench [report.json] [budgets.json]`: check a Tauri app report.
+//!   scenario measures yet instead of failing on them. The `gpui` word is
+//!   optional.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,25 +28,12 @@ const RUST_TESTED: &[&str] = &["optimistic_action_network_wait_ms"];
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().map(String::as_str) == Some("gpui") {
-        return gpui(&args[1..]);
-    }
-    let mut it = args.into_iter();
-    let report_path = it.next().map_or_else(|| "bench/report.json".into(), PathBuf::from);
-    let budgets_path = it.next().map_or_else(|| "bench/budgets.json".into(), PathBuf::from);
-    if it.next().is_some() {
-        bail!("usage: fl-bench [report.json] [budgets.json] | fl-bench gpui [--app <exe>] [--data-dir <dir>] [--partial]");
-    }
-    let report: Report = read_json(&report_path)?;
-    // Informational only: includes WebView2 startup, so it has no budget.
-    if let (Some(start), Some(painted)) = (report.marks.get("process_main"), report.marks.get("home_painted")) {
-        println!("process start to home: {:.1} ms (not budgeted)", painted - start);
-    }
-    check(&report, &read_json(&budgets_path)?, false)
+    let args = args.strip_prefix(&["gpui".to_owned()]).unwrap_or(&args);
+    gpui(args)
 }
 
 fn gpui(args: &[String]) -> anyhow::Result<()> {
-    let mut app = PathBuf::from("target/release/fl-app.exe");
+    let mut app = PathBuf::from("target/release/forkline.exe");
     let mut data_dir = PathBuf::from("fake-data");
     let mut partial = false;
     let mut it = args.iter();
@@ -55,7 +42,7 @@ fn gpui(args: &[String]) -> anyhow::Result<()> {
             "--app" => app = it.next().context("--app needs a path")?.into(),
             "--data-dir" => data_dir = it.next().context("--data-dir needs a path")?.into(),
             "--partial" => partial = true,
-            other => bail!("unknown argument: {other}"),
+            other => bail!("unknown argument: {other} (usage: fl-bench [gpui] [--app <exe>] [--data-dir <dir>] [--partial])"),
         }
     }
     let out = std::env::temp_dir().join(format!("forkline-bench-{}.json", std::process::id()));
@@ -68,7 +55,7 @@ fn gpui(args: &[String]) -> anyhow::Result<()> {
         .arg("--bench")
         .arg(&out)
         .status()
-        .with_context(|| format!("start {} (build it with cargo build -p fl-app --release)", app.display()))?;
+        .with_context(|| format!("start {} (build it with cargo build --release -p fl-app)", app.display()))?;
     if !status.success() {
         bail!("{} exited with {status}", app.display());
     }

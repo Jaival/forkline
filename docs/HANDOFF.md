@@ -5,25 +5,20 @@
 - `crates/fl-types`: shared DTOs and command errors.
 - `crates/fl-db`: SQLite connection setup, migration 1, query modules.
 - `crates/fl-sync`: GitHub auth (token order: `FORKLINE_GITHUB_TOKEN`, saved
-  token in Windows Credential Manager, `gh auth token`; device flow until the
-  Tauri app goes), REST/GraphQL client, sync engine, optimistic action queue.
+  token in Windows Credential Manager, `gh auth token`; device flow from the
+  sign-in dialog), REST/GraphQL client, sync engine, optimistic action queue.
 - `crates/fl-git`: `GitStore` over the `git` CLI (bare blobless clones, diffs).
 - `crates/fl-search`: FTS5 indexing (`index_issue`) and query parser (`search`).
 - `crates/fl-fake`: isolated deterministic fixture data generator.
 - `crates/fl-bench`: budget checker (`fl-bench gpui` for the GPUI app).
-- `crates/fl-app`: the GPUI app (binary `fl-app`; renamed `forkline` at parity).
-- `app`: Tauri startup, typed command registration, and event boundary.
-- `ui`: React shell, generated Tauri bindings, and client-side layout state.
+- `crates/fl-app`: the GPUI app (binary `forkline`).
 
 ## Shared rules
 
-- The UI moves to GPUI + gpui-component on branch `gpui`; see
-  `docs/adr/0001-gpui.md` for the stack, pins and changed decisions. The
-  Tauri + React app (`app/`, `ui/`) stays until GPUI parity, then is deleted.
-  Do not change the stack without asking.
-- Keep each feature's backend implementation in its matching command/query
-  module. Register commands centrally in `app/src/lib.rs`.
-- Regenerate `ui/src/bindings.ts` with `bun run bindings`; do not hand edit it.
+- The UI is GPUI + gpui-component; see `docs/adr/0001-gpui.md` for the
+  stack, pins and changed decisions. The Tauri + React app (`app/`, `ui/`)
+  was deleted on 2026-11-18. Do not change the stack without asking.
+- Keep each feature's backend implementation in its matching query module.
 - Keep fake fixtures and all SQLite database files out of Git. Use `--data-dir`
   to isolate fixture databases from the real user database.
 - UI commands must page collections and return no more than 100 rows per call.
@@ -139,13 +134,12 @@ Done:
   (system / light / dark, setting `theme`, `ToggleTheme` action), sidebar
   (nav + pinned repos with open PR / issue counts), dock with tabs and split
   panes, footer with sync status. Layout saved under settings key
-  `gpui_layout` (not `ui_layout`, which the Tauri app still owns).
+  `gpui_layout` (not `ui_layout`, the removed Tauri app's row).
 - Keys: `Ctrl+T` new tab, `Ctrl+W` close tab, `Ctrl+\` split right.
   Covered by UI tests in `crates/fl-app/src/workspace.rs`.
 - `Store` global (`crates/fl-app/src/store.rs`): `read` runs SQLite on a
   background thread, `run` runs engine futures on the tokio runtime, and the
   store emits `DataChanged { scopes }` for sync and action changes.
-- `fl-types`: specta derives behind the `specta` feature (Tauri app only).
 - Migration 0008: `following`, `explore_stars`, `repos.explore_only`. The
   Repositories list hides explore-only repos.
 - `fl-fake`: 50 repos, 20,000 issues and PRs, about 97k comments, Explore
@@ -995,8 +989,13 @@ both). No difference between the builds within noise.
 Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-g1`,
 image `target/tmp/g1-grouped.png`): Inbox with the Grouped button on and the
 group headers. The `/` placeholder is cut shorter now ("Filter: is:open
-aut"). Not checked by eye: flat mode, the drafts mark, the tab close button,
-the prompts, the split Merge button, the check state (need clicks or keys).
+aut").
+
+Manual pass (2026-11-18, by the user, release, `--offline` on a copy of
+fake data): flat mode (`g`, button, palette), flat saved per tab across a
+restart, the drafts mark, drafts kept across an item switch, the PR tab
+close button and `Ctrl+W` prompt, the quit prompt, the split Merge button
+with the repo's method, the check state. All work.
 
 Open decisions (G1 parts 1-3):
 
@@ -1005,8 +1004,25 @@ Open decisions (G1 parts 1-3):
 - While a PR tab has drafts the dock's own X is replaced by the tab's
   button, drawn in the tab title.
 
-Next: a manual pass on fake data, then the Tauri removal (`app/`, `ui/`)
-and the rename of `fl-app` to `forkline` (ask first, ADR 0001).
+Tauri removal (2026-11-18, with the user): deleted `app/`, `ui/`, the Bun /
+Vite / ESLint / TypeScript config, `bench/budgets.json`, the `specta`
+feature of `fl-types` and the Tauri / specta workspace dependencies.
+`fl-bench` checks only the GPUI app (`gpui` is optional). The `fl-app`
+package keeps its name; its binary is `forkline` (ADR 0001), so the app is
+`target/release/forkline.exe`. The device flow stays: the GPUI sign-in
+dialog uses it. The `ui_layout` settings row of old databases is left
+unused. Cargo.lock lost 167 packages; no kept package changed version.
+
+Bench after the removal (release, fake data, AC power): 3 single runs missed
+at random (`search_p95_ms` 62-64, `diff_scroll_fps` 30, one `launch_ms` 659,
+one `app_startup_ms` 60.6). An interleaved A/B with the pre-removal
+`fl-app.exe` (3 pairs) gave the same numbers in each pair: `launch_ms`
+427-486 vs 435-492, `app_startup_ms` 45-47 vs 46-50, `search_p95_ms`
+12-24 vs 12-32, `diff_scroll_fps` 240 / 86 / 79 vs 204 / 85 / 82,
+`switch_tab_ms` about 4 in both. Machine noise, not the removal.
+
+Next: register the GitHub OAuth App, then the manual pass against a real
+account (see "Next" near the top).
 
 Decided (2026-11-16):
 

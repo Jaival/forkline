@@ -1,6 +1,6 @@
 //! Background sync and action worker. The app creates one `Engine`, sets
 //! the `data-changed` emitter, and spawns `run_sync` and `run_actions` on
-//! the Tauri (tokio) runtime. Commands call the other methods.
+//! a tokio runtime. The UI calls the other methods.
 
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;

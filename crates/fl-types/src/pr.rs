@@ -9,7 +9,6 @@ use crate::{DiffSide, IssueRow, Label, Timestamp};
 /// Comments are capped at `PAGE_MAX`; `row.comments` is the full count so
 /// the UI can say "n more on GitHub".
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrDetail {
     pub row: IssueRow,
     pub body_html: Option<String>,
@@ -42,7 +41,6 @@ pub struct PrDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrComment {
     /// Negative = local optimistic comment.
     pub id: i64,
@@ -53,7 +51,6 @@ pub struct PrComment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrReview {
     pub id: i64,
     pub author: String,
@@ -65,7 +62,6 @@ pub struct PrReview {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrCheck {
     pub id: i64,
     pub name: String,
@@ -77,7 +73,6 @@ pub struct PrCheck {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PrCommit {
     pub oid: String,
     pub headline: String,
@@ -88,7 +83,6 @@ pub struct PrCommit {
 /// One inline review thread. `line` is `None` when the thread is outdated
 /// and no longer maps to a line of the current diff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ReviewThread {
     pub id: i64,
     pub path: String,
@@ -104,7 +98,6 @@ pub struct ReviewThread {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct ReviewThreadComment {
     pub id: i64,
     pub author: String,

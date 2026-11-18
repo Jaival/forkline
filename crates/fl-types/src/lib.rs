@@ -1,7 +1,5 @@
 //! Shared data types between the backend crates and the UI.
 //!
-//! With the `specta` feature (Tauri app only) every type derives
-//! `specta::Type`, and `tauri-specta` exports them to `ui/src/bindings.ts`.
 //! IDs and timestamps are `i64`.
 //!
 //! Timestamps are unix seconds (UTC).
@@ -38,14 +36,12 @@ pub const PAGE_MAX: u32 = 100;
 
 /// One page of rows. `next` is the offset of the following page, if any.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub next: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct PageReq {
     pub offset: u32,
     pub limit: u32,
@@ -62,7 +58,6 @@ impl PageReq {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum IssueState {
     Open,
@@ -90,7 +85,6 @@ impl IssueState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct RepoSummary {
     pub id: RepoId,
     pub owner: String,
@@ -101,7 +95,6 @@ pub struct RepoSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct Label {
     pub id: i64,
     pub name: String,
@@ -110,7 +103,6 @@ pub struct Label {
 
 /// One row in any issue / PR list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct IssueRow {
     pub id: IssueId,
     pub repo_id: RepoId,
@@ -126,7 +118,6 @@ pub struct IssueRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct IssueDetail {
     pub row: IssueRow,
     pub body_html: Option<String>,
@@ -136,7 +127,6 @@ pub struct IssueDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct SyncStatus {
     pub last_synced_at: Option<Timestamp>,
     pub pending_actions: u32,
@@ -148,14 +138,12 @@ pub struct SyncStatus {
 /// Emitted when sync or an action changed rows. The UI invalidates queries
 /// whose key starts with one of `scopes` (e.g. "issues", "repos").
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct DataChanged {
     pub scopes: Vec<String>,
 }
 
 /// Error type returned by every command.
 #[derive(Debug, thiserror::Error, Serialize)]
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", content = "message")]
 pub enum CmdError {
     #[error("database error: {0}")]

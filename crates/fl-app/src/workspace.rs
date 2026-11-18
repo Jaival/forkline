@@ -55,8 +55,8 @@ pub struct SetViewRef(pub ViewRef);
 #[action(namespace = forkline, no_json)]
 pub struct RemoveTab(pub gpui_kit::EntityId);
 
-/// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
-/// to the Tauri app until it is removed (ADR 0001).
+/// Settings key of the saved dock layout. Not `ui_layout`: that row was the
+/// removed Tauri app's layout.
 const LAYOUT_KEY: &str = "gpui_layout";
 /// Bump when the default layout changes in a way old saved layouts break.
 const LAYOUT_VERSION: usize = 2;

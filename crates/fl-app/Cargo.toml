@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "forkline"
+path = "src/main.rs"
+
 [dependencies]
 fl-types.workspace = true
 fl-db.workspace = true
