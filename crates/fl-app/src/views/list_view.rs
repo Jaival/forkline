@@ -9,7 +9,7 @@ use gpui_kit::{
 
 use super::Built;
 use super::queue::{Queue, QueueEvent};
-use super::reading::{Approve, Done, ReadingPane, Reply, Snooze};
+use super::reading::{Approve, Done, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleViewed};
 use crate::store::Store;
 
 pub struct ListView {
@@ -64,6 +64,22 @@ impl ListView {
     fn snooze(&mut self, a: &Snooze, window: &mut Window, cx: &mut Context<Self>) {
         self.reading.update(cx, |pane, cx| pane.snooze(a, window, cx));
     }
+
+    fn next_file(&mut self, a: &NextFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.next_file(a, window, cx));
+    }
+
+    fn prev_file(&mut self, a: &PrevFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.prev_file(a, window, cx));
+    }
+
+    fn toggle_viewed(&mut self, a: &ToggleViewed, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.toggle_viewed(a, window, cx));
+    }
+
+    fn show_files(&mut self, a: &ShowFiles, window: &mut Window, cx: &mut Context<Self>) {
+        self.reading.update(cx, |pane, cx| pane.show_files(a, window, cx));
+    }
 }
 
 impl Render for ListView {
@@ -74,6 +90,10 @@ impl Render for ListView {
             .on_action(cx.listener(Self::reply))
             .on_action(cx.listener(Self::done))
             .on_action(cx.listener(Self::snooze))
+            .on_action(cx.listener(Self::next_file))
+            .on_action(cx.listener(Self::prev_file))
+            .on_action(cx.listener(Self::toggle_viewed))
+            .on_action(cx.listener(Self::show_files))
             .child(
                 h_resizable("list-view")
                     .child(
