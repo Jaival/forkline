@@ -9,12 +9,13 @@
 //! also sent to GitHub (`NotificationDone`); snooze is local only (GitHub has
 //! no snooze). The queue hides the row until it updates or the snooze ends.
 
-use fl_db::queries::inbox;
-use fl_types::{Action, IssueState, MergeMethod, ReviewEvent};
+use fl_db::queries::{inbox, repo};
+use fl_types::{Action, CheckState, IssueState, MergeMethod, ReviewEvent};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -24,6 +25,7 @@ use rusqlite::Connection;
 
 use super::pickers::{EditAssignees, EditLabels};
 use super::{Detail, ReadingPane};
+use crate::drafts::Drafts;
 use crate::store::Store;
 
 actions!(reading, [Approve, Reply, ToggleState, Done, Snooze, CancelReply]);
@@ -68,21 +70,20 @@ impl ReadingPane {
         self.submit_review(pr_id, ReviewEvent::Approve, String::new(), cx);
     }
 
-    /// Inline comments drafted in the Files tab, waiting for the review.
+    /// Inline comments drafted for the PR on show, waiting for the review.
     pub(super) fn draft_count(&self, cx: &gpui_kit::App) -> usize {
-        self.files.as_ref().map_or(0, |f| f.read(cx).drafts.len())
+        let Some(pr) = self.detail.as_ref().and_then(Detail::pr) else { return 0 };
+        Drafts::global(cx).read(cx).count(pr.row.id)
     }
 
-    /// Send a review with the Files tab drafts. The drafts leave the tab; a
+    /// Send a review with the PR's drafts. The drafts leave the store; a
     /// rejected review puts them back.
     fn submit_review(&mut self, pr_id: i64, event: ReviewEvent, body_md: String, cx: &mut Context<Self>) {
-        let files = self.files.clone();
-        let comments = files.as_ref().map(|f| f.update(cx, |f, cx| f.take_drafts(cx))).unwrap_or_default();
+        let drafts = Drafts::global(cx);
+        let comments = drafts.update(cx, |d, cx| d.take(pr_id, cx));
         let back = comments.clone();
         self.enqueue_or(Action::SubmitReview { pr_id, event, body_md, comments }, cx, move |_, cx| {
-            if let Some(files) = files {
-                files.update(cx, |f, cx| f.restore_drafts(back, cx));
-            }
+            drafts.update(cx, |d, cx| d.restore(pr_id, back, cx));
         });
     }
 
@@ -128,7 +129,18 @@ impl ReadingPane {
             return;
         }
         let Some(pr_id) = self.open_pr() else { return };
+        let Some(repo_id) = self.detail.as_ref().map(|d| d.row().repo_id) else { return };
+        // Remember it for the repo now, not on GitHub's answer.
+        self.merge_method = method;
+        let db = Store::global(cx).read(cx).db().clone();
+        cx.background_spawn(async move { db.write(|c| repo::set_merge_method(c, repo_id, method)) }).detach();
         self.enqueue(Action::Merge { pr_id, method }, cx);
+    }
+
+    /// The PR's combined check state, beside Merge.
+    pub(super) fn check_state(&self) -> Option<CheckState> {
+        let pr = self.detail.as_ref().and_then(Detail::pr)?;
+        CheckState::parse(pr.check_state.as_deref()?)
     }
 
     /// Open the reply box under the item and focus it.
@@ -355,10 +367,27 @@ impl ReadingPane {
         )
     }
 
-    /// Merge: a menu of methods, then Confirm / Cancel; disabled with the
-    /// reason when GitHub would refuse.
+    /// Merge: the repo's method as a button and the other methods in a menu,
+    /// then Confirm / Cancel; disabled with the reason when GitHub would
+    /// refuse. The PR's check state sits beside it.
     fn merge_element(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
+        let checks = self.check_state().map(|state| {
+            let (icon, color, text) = match state {
+                CheckState::Success => (IconName::Check, theme.success, "Checks pass"),
+                CheckState::Failure => (IconName::X, theme.danger, "Checks fail"),
+                CheckState::Pending => (IconName::Clock, theme.warning, "Checks running"),
+            };
+            h_flex()
+                .id("merge-checks")
+                .test_support()
+                .gap(px(3.))
+                .items_center()
+                .text_xs()
+                .text_color(color)
+                .child(Icon::new(icon).with_size(px(12.)))
+                .child(text)
+        });
         let el = match (self.merge_state(), self.merge_confirm) {
             (MergeState::None, _) => return None,
             (MergeState::Blocked(reason), _) => h_flex()
@@ -390,24 +419,33 @@ impl ReadingPane {
                 .into_any_element(),
             (MergeState::Ready, None) => {
                 let pane = cx.weak_entity();
-                Button::new("action-merge")
-                    .small()
-                    .ghost()
-                    .label("Merge")
-                    .dropdown_caret(true)
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for (method, label) in METHODS {
-                            let pane = pane.clone();
-                            menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                                let _ = pane.update(cx, |pane, cx| pane.pick_merge(method, cx));
-                            }));
-                        }
-                        menu
-                    })
+                let current = self.merge_method;
+                h_flex()
+                    .items_center()
+                    .child(
+                        Button::new("action-merge")
+                            .small()
+                            .ghost()
+                            .label(method_label(current))
+                            .on_click(cx.listener(move |this, _, _, cx| this.pick_merge(current, cx))),
+                    )
+                    .child(Button::new("action-merge-method").small().ghost().dropdown_caret(true).dropdown_menu(
+                        move |mut menu, _, _| {
+                            for (method, label) in METHODS {
+                                let pane = pane.clone();
+                                menu = menu.item(PopupMenuItem::new(label).checked(method == current).on_click(
+                                    move |_, _, cx| {
+                                        let _ = pane.update(cx, |pane, cx| pane.pick_merge(method, cx));
+                                    },
+                                ));
+                            }
+                            menu
+                        },
+                    ))
                     .into_any_element()
             }
         };
-        Some(el)
+        Some(h_flex().gap(px(6.)).items_center().child(el).children(checks).into_any_element())
     }
 
     /// The reply box, when open. On an open pull request it also submits a

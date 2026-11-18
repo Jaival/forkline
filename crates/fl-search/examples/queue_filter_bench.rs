@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     let path = std::env::args().nth(1).unwrap_or_else(|| "fake-data/forkline.db".into());
     let conn = fl_db::open_conn(std::path::Path::new(&path))?;
     for kind in QueueKind::ALL {
-        let q = QueueQuery { kind, repo_id: None };
+        let q = QueueQuery { kind, repo_id: None, flat: false };
         let mut ms = Vec::new();
         let mut with_counts = Vec::new();
         for round in 0..11 {

@@ -43,6 +43,7 @@ pub fn open_with(
         workspace::init(cx);
         views::init(cx);
         signin::init(cx);
+        crate::drafts::Drafts::init(cx);
         Store::init(dir, fl_sync::Config::test(api), true, false, cx).unwrap();
         let store = Store::global(cx);
         store.read(cx).sync().set_test_token(token);

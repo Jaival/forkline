@@ -320,7 +320,7 @@ fn open_composer(cx: &mut TestAppContext, handle: AnyWindowHandle, tab: &Entity<
 }
 
 fn drafts(cx: &mut TestAppContext, tab: &Entity<FilesTab>) -> Vec<fl_types::DraftReviewComment> {
-    cx.read(|cx| tab.read(cx).drafts.clone())
+    cx.read(|cx| tab.read(cx).drafts(cx).to_vec())
 }
 
 #[test]
@@ -422,4 +422,128 @@ fn toolbar_comment_opens_the_box_for_the_selected_lines(cx: &mut TestAppContext)
     press(cx, handle, "ctrl-enter");
     let d = drafts(cx, &tab);
     assert_eq!((d[0].path.as_str(), d[0].line, d[0].start_line), ("a.txt", 3, Some(2)));
+}
+
+// ---- drafts kept per PR for the session (parity G1 part 2) ------------------
+
+fn add_draft(cx: &mut TestAppContext, handle: AnyWindowHandle, tab: &Entity<FilesTab>, text: &str) {
+    open_composer(cx, handle, tab, DiffLineRange::new("b.txt", DiffSide::Modified, 2, 2));
+    cx.update_window(handle, |_, window, cx| window.input(text, cx)).unwrap();
+    press(cx, handle, "ctrl-enter");
+}
+
+fn store_count(cx: &mut TestAppContext, pr: i64) -> usize {
+    cx.read(|cx| crate::drafts::Drafts::global(cx).read(cx).count(pr))
+}
+
+#[gpui_kit::test]
+fn drafts_stay_with_the_pr_across_an_item_switch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (reading, tab) = open_files(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "keep me");
+    let (queue, _) = panes(cx, handle, &ws);
+    // The PR's row (Inbox row 0, `101`) carries the mark; the next does not.
+    let marks = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find_all(("queue-drafts", 1usize)).is_empty());
+            window.find_all(("queue-drafts", 0usize)).len()
+        })
+        .unwrap()
+    };
+    assert_eq!(marks(cx), 1);
+
+    // Another item: no dialog, the drafts stay in the store.
+    select(cx, handle, &queue, "102");
+    wait_for(cx, "issue detail", |cx| cx.read(|cx| reading.read(cx).files.is_none()));
+    assert_eq!(store_count(cx, 3), 1);
+    assert_eq!(marks(cx), 1);
+
+    // Back on the PR: the rebuilt Files tab shows the draft and the
+    // composer still sends it.
+    press(cx, handle, "k");
+    assert_eq!(cx.read(|cx| queue.read(cx).selected_key().map(str::to_owned)).as_deref(), Some("101"));
+    wait_for(cx, "PR detail", |cx| is_pr_detail(cx, &reading));
+    reading.update(cx, |pane, cx| pane.set_tab(PaneTab::Files, cx));
+    let tab = files_tab(cx, &reading);
+    wait_for(cx, "files ready", |cx| ready(cx, &tab));
+    assert_eq!(drafts(cx, &tab)[0].body_md, "keep me");
+    press(cx, handle, "a");
+    wait_for(cx, "review queued", |cx| kinds(cx).iter().any(|(k, _)| k == "submit_review"));
+    assert!(kinds(cx).into_iter().any(|(k, p)| k == "submit_review" && p.contains("keep me")));
+    assert_eq!(store_count(cx, 3), 0);
+    assert_eq!(marks(cx), 0);
+}
+
+/// Open PR 3 in its own tab and show its Files tab once loaded.
+fn open_pr_tab(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>) -> Entity<FilesTab> {
+    cx.update_window(handle, |_, window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id: 3 }, window, cx)))
+        .unwrap();
+    let reading = active_pane(cx, handle, ws);
+    wait_for(cx, "PR detail", |cx| is_pr_detail(cx, &reading));
+    reading.update(cx, |pane, cx| pane.set_tab(PaneTab::Files, cx));
+    let tab = files_tab(cx, &reading);
+    wait_for(cx, "files ready", |cx| ready(cx, &tab));
+    tab
+}
+
+fn tab_titles(cx: &mut TestAppContext, ws: &Entity<Workspace>) -> Vec<String> {
+    cx.read(|cx| ws.read(cx).tab_groups(cx).into_iter().flatten().collect())
+}
+
+#[gpui_kit::test]
+fn closing_a_pr_tab_with_drafts_asks_first(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let tab = open_pr_tab(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "unsent");
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+
+    // Ctrl+W asks; Cancel keeps the tab.
+    press(cx, handle, "ctrl-w");
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+
+    // The tab's own close button asks too; Close tab closes it. The
+    // drafts stay for the session.
+    click(cx, handle, "tab-close-drafts");
+    assert!(cx.has_pending_prompt());
+    cx.simulate_prompt_answer("Close tab");
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["*Inbox"]);
+    assert_eq!(store_count(cx, 3), 1);
+}
+
+#[gpui_kit::test]
+fn a_pr_tab_without_drafts_closes_at_once(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    open_pr_tab(cx, handle, &ws);
+    press(cx, handle, "ctrl-w");
+    assert!(!cx.has_pending_prompt());
+    cx.run_until_parked();
+    assert_eq!(tab_titles(cx, &ws), ["*Inbox"]);
+}
+
+#[gpui_kit::test]
+fn quit_with_drafts_asks_first(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    add_draft(cx, handle, &tab, "unsent");
+    let mut window = gpui_kit::VisualTestContext::from_window(handle, cx);
+
+    assert!(!window.simulate_close());
+    assert!(window.has_pending_prompt());
+    window.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+
+    assert!(!window.simulate_close());
+    window.simulate_prompt_answer("Quit");
+    cx.run_until_parked();
+    assert!(cx.update(|cx| cx.windows().is_empty()));
 }

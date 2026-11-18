@@ -48,7 +48,7 @@ fn seed_inbox(db: &Db) {
 }
 
 fn q(kind: QueueKind, repo_id: Option<i64>) -> QueueQuery {
-    QueueQuery { kind, repo_id }
+    QueueQuery { kind, repo_id, flat: false }
 }
 
 fn rows(db: &Db, q: QueueQuery) -> Vec<QueueRow> {
@@ -92,6 +92,17 @@ fn inbox_groups_and_order() {
     // PR without author or check state.
     let aut = &r[4];
     assert!(aut.author.is_none() && aut.checks.is_none());
+}
+
+#[test]
+fn flat_inbox_is_newest_first() {
+    let (_d, db) = fresh();
+    seed(&db);
+    seed_inbox(&db);
+    let r = rows(&db, QueueQuery { flat: true, ..q(QueueKind::Inbox, None) });
+    assert_eq!(keys(&r), ["unk", "sub", "team", "men", "asg", "aut", "rev", "rel"]);
+    // The rows keep their group; only the order changes.
+    assert_eq!(r[0].group, QueueGroup::Other);
 }
 
 #[test]

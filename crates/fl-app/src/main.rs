@@ -4,6 +4,7 @@
 
 mod assets;
 mod bench;
+mod drafts;
 mod footer;
 mod palette;
 mod panel;
@@ -74,6 +75,7 @@ fn main() {
         workspace::init(cx);
         views::init(cx);
         signin::init(cx);
+        drafts::Drafts::init(cx);
         if let Some(out) = bench_out.clone() {
             bench::init(out, &[("main", main_ms), ("app_created", app_ms), ("run_callback", run_ms), ("kit_init", kit_ms)], cx);
         }

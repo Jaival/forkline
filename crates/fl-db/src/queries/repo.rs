@@ -1,12 +1,31 @@
 //! Repository queries. Owner: agent 2.
 
 use fl_types::{
-    CommitRow, ContributorRow, LanguageShare, Page, PageReq, ReleaseRow, RepoFilter, RepoId,
+    CommitRow, ContributorRow, LanguageShare, MergeMethod, Page, PageReq, ReleaseRow, RepoFilter, RepoId,
     RepoOverview, RepoRow, RepoSummary, StarPoint,
 };
 use rusqlite::{Connection, OptionalExtension};
 
 use super::page;
+
+/// The merge method last sent in this repository, if any.
+pub fn merge_method(conn: &Connection, id: RepoId) -> rusqlite::Result<Option<MergeMethod>> {
+    let method: Option<String> = conn
+        .prepare_cached("SELECT method FROM repo_merge_methods WHERE repo_id = ?1")?
+        .query_row([id], |r| r.get(0))
+        .optional()?;
+    Ok(method.as_deref().and_then(MergeMethod::parse))
+}
+
+/// Remember `method` for the repository's next merge.
+pub fn set_merge_method(conn: &Connection, id: RepoId, method: MergeMethod) -> rusqlite::Result<()> {
+    conn.prepare_cached(
+        "INSERT INTO repo_merge_methods (repo_id, method) VALUES (?1, ?2)
+         ON CONFLICT(repo_id) DO UPDATE SET method = excluded.method",
+    )?
+    .execute((id, method.as_str()))?;
+    Ok(())
+}
 
 /// Pinned repositories with open PR / issue counts, for the sidebar.
 pub fn pinned(conn: &Connection) -> rusqlite::Result<Vec<RepoSummary>> {

@@ -75,12 +75,15 @@ fn from_where(q: &QueueQuery, cond: Option<&Cond>, joins: bool) -> (String, Vec<
 pub fn queue_sql(q: &QueueQuery, cond: Option<&Cond>, req: PageReq) -> (String, Vec<Value>) {
     let (from_where, mut args) = from_where(q, cond, true);
     let sql = match q.kind {
-        QueueKind::Inbox => format!(
-            "SELECT n.id, {INBOX_RANK}, n.issue_id, n.repo_id, r.owner || '/' || r.name, i.number, \
-             COALESCE(i.is_pr, n.subject_type = 'PullRequest'), i.state, n.title, u.login, \
-             d.check_state, n.updated_at, n.unread \
-             FROM {from_where} ORDER BY 2, n.updated_at DESC, n.id LIMIT ? OFFSET ?"
-        ),
+        QueueKind::Inbox => {
+            let group_first = if q.flat { "" } else { "2, " };
+            format!(
+                "SELECT n.id, {INBOX_RANK}, n.issue_id, n.repo_id, r.owner || '/' || r.name, i.number, \
+                 COALESCE(i.is_pr, n.subject_type = 'PullRequest'), i.state, n.title, u.login, \
+                 d.check_state, n.updated_at, n.unread \
+                 FROM {from_where} ORDER BY {group_first}n.updated_at DESC, n.id LIMIT ? OFFSET ?"
+            )
+        }
         kind => {
             let rank = if kind == QueueKind::Reviews { 0 } else { 5 };
             format!(

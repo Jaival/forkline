@@ -38,8 +38,9 @@ Shell:
 9. ~~**Failed actions**~~: done 2026-11-18: footer failed list with Retry /
    Discard, account box with Sign out.
 10. ~~**Keys**~~: done 2026-11-18 (`Ctrl+Tab` / `Ctrl+Shift+Tab`).
-11. **Inbox toggles**: unread done 2026-11-18 (`is:unread`, Unread
-    toggle in every queue). Grouped / flat not done: GPUI is always grouped.
+11. ~~**Inbox toggles**~~: done 2026-11-18. Unread (`is:unread`, Unread
+    toggle in every queue); Grouped / flat (`Grouped` button, `g`, palette,
+    saved per queue tab).
 
 Not gaps: list filters (GPUI `/` covers state, author, label, repo,
 assignee), repo pin (GPUI has Pin and `p`), search (GPUI is paged with
@@ -72,9 +73,10 @@ first).
 Step 1 is done (2026-11-18). Decided for 7: send it (GitHub "done" also
 returns on new activity, like the local `done_at`).
 
-Steps 2-5 and Explore sync are done (2026-11-18). Left: gap 11 rest
-(grouped / flat toggle), agreed with the user 2026-11-18; see HANDOFF.md
-"Decided (2026-11-18, steps 1-5)".
+Steps 2-5 and Explore sync are done (2026-11-18). Gap 11 rest (grouped /
+flat), session drafts and the merge method per repo are done too (G1 parts
+1-3, 2026-11-18; see HANDOFF.md). No gap is left; next is the manual pass on
+fake data, then the Tauri removal (ask first).
 
 ## Recommendation (step 7 check)
 

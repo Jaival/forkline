@@ -1,6 +1,6 @@
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
-use fl_types::{IssueState, ReviewEvent};
+use fl_types::{CheckState, IssueState, ReviewEvent};
 use rusqlite::Connection;
 
 use super::*;
@@ -708,4 +708,72 @@ fn escape_closes_the_picker_and_another_item_drops_it(cx: &mut TestAppContext) {
     reading.update(cx, |pane, cx| pane.set_item(None, cx));
     assert!(picker_kind(cx, &reading).is_none());
     assert!(payloads(cx, "set_labels").is_empty());
+}
+
+// ---- merge method per repo, check state (parity G1 part 3) -----------------
+
+fn open_pr_in(cx: &mut TestAppContext, handle: AnyWindowHandle, ws: &Entity<Workspace>, id: i64) -> Entity<ReadingPane> {
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id }, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let reading = active_pane(cx, handle, ws);
+    wait_for(cx, "detail", |cx| detail_id(cx, &reading) == Some(id) && is_pr_detail(cx, &reading));
+    reading
+}
+
+fn saved_method(cx: &mut TestAppContext, repo_id: i64) -> Option<String> {
+    read_db(cx, move |c| {
+        use rusqlite::OptionalExtension as _;
+        c.query_row("SELECT method FROM repo_merge_methods WHERE repo_id = ?1", [repo_id], |r| r.get(0)).optional()
+    })
+}
+
+#[gpui_kit::test]
+fn the_merge_button_offers_the_method_last_sent_in_the_repo(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    crate::test_support::write(
+        cx,
+        "INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at) VALUES
+           (7,'I',2,3,1,'open','second PR',2,0,40), (8,'I',1,2,1,'open','other repo',2,0,40);
+         INSERT INTO pr_details(issue_id,base_ref,head_ref,base_oid,head_oid,changed_files)
+           VALUES (7,'main','t2','b1','h7',1), (8,'main','t3','b1','h8',1);",
+        &["issues"],
+    );
+    // First merge in the repo: a merge commit.
+    let reading = open_pr_in(cx, handle, &ws, 3);
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_method, fl_types::MergeMethod::Merge));
+    click(cx, handle, "action-merge");
+    cx.read(|cx| assert_eq!(reading.read(cx).merge_confirm, Some(fl_types::MergeMethod::Merge)));
+    click(cx, handle, "action-merge-cancel");
+    // Another method from the menu; saved when sent, before GitHub answers.
+    reading.update(cx, |pane, cx| pane.pick_merge(fl_types::MergeMethod::Squash, cx));
+    click(cx, handle, "action-merge-confirm");
+    wait_for(cx, "method saved", |cx| saved_method(cx, 2).as_deref() == Some("squash"));
+    assert!(actions(cx).into_iter().any(|(k, p)| k == "merge" && p.contains("squash")));
+
+    // The next PR in that repo offers squash; a PR in another repo does not.
+    let next = open_pr_in(cx, handle, &ws, 7);
+    cx.read(|cx| assert_eq!(next.read(cx).merge_method, fl_types::MergeMethod::Squash));
+    click(cx, handle, "action-merge");
+    cx.read(|cx| assert_eq!(next.read(cx).merge_confirm, Some(fl_types::MergeMethod::Squash)));
+    let other = open_pr_in(cx, handle, &ws, 8);
+    cx.read(|cx| assert_eq!(other.read(cx).merge_method, fl_types::MergeMethod::Merge));
+}
+
+#[gpui_kit::test]
+fn the_check_state_shows_beside_merge(cx: &mut TestAppContext) {
+    let (handle, reading, _dir) = open_item(cx, ViewRef::Pr { id: 3 }, 3);
+    assert_eq!(count(cx, handle, "merge-checks"), 0, "no combined state yet");
+    crate::test_support::write(cx, "UPDATE pr_details SET check_state = 'FAILURE' WHERE issue_id = 3", &["issues"]);
+    wait_for(cx, "checks", |cx| cx.read(|cx| reading.read(cx).check_state() == Some(CheckState::Failure)));
+    assert_eq!(count(cx, handle, "merge-checks"), 1);
+    // Also beside a blocked Merge.
+    crate::test_support::write(cx, "UPDATE pr_details SET is_draft = 1 WHERE issue_id = 3", &["issues"]);
+    wait_for(cx, "draft", |cx| {
+        cx.read(|cx| reading.read(cx).merge_state() == action_bar::MergeState::Blocked("Draft"))
+    });
+    assert_eq!(count(cx, handle, "merge-checks"), 1);
 }

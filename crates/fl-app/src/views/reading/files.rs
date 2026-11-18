@@ -17,8 +17,9 @@
 //! the last line. The add button shows only while lines are selected: with
 //! a handler set the `Diff` builds one per visible line every frame, which
 //! halves the scroll rate. "Add to
-//! review" keeps the comment as a draft in this tab; the `R` composer sends
-//! the drafts with the review (`SubmitReview.comments`).
+//! review" keeps the comment as a draft for the PR (`crate::drafts`, memory
+//! only, kept across item switches); the `R` composer sends the drafts with
+//! the review (`SubmitReview.comments`).
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -43,6 +44,7 @@ use gpui_kit::{
 use super::action_bar::CancelReply;
 use super::tabs;
 use crate::bench;
+use crate::drafts::Drafts;
 use crate::store::Store;
 
 /// Review threads read per PR; the rail says when there are more.
@@ -73,8 +75,6 @@ pub struct FilesTab {
     _reply_subscription: Option<Subscription>,
     /// Focus before Reply; it returns there when the box closes.
     return_focus: Option<FocusHandle>,
-    /// Inline comments for the next review, in the order written.
-    pub(super) drafts: Vec<DraftReviewComment>,
     /// The open inline comment box: its range and text.
     pub(super) composer: Option<(DiffLineRange, Entity<TextareaState>)>,
     _composer_subscription: Option<Subscription>,
@@ -83,6 +83,7 @@ pub struct FilesTab {
     _store: Subscription,
     /// Line selection changes of the diff (they show the add button).
     _diff_events: Option<Subscription>,
+    _drafts: Subscription,
 }
 
 struct Loaded {
@@ -99,6 +100,7 @@ impl FilesTab {
                 this.reload_threads(cx);
             }
         });
+        let drafts = cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify());
         let this = Self {
             pr_id,
             load: Load::Loading,
@@ -112,12 +114,12 @@ impl FilesTab {
             reply: None,
             _reply_subscription: None,
             return_focus: None,
-            drafts: Vec::new(),
             composer: None,
             _composer_subscription: None,
             notice: None,
             _store: store,
             _diff_events: None,
+            _drafts: drafts,
         };
         this.start_load(cx);
         this
@@ -293,7 +295,8 @@ impl FilesTab {
         if body_md.is_empty() {
             return;
         }
-        self.drafts.push(draft_for(range, body_md));
+        let (pr, draft) = (self.pr_id, draft_for(range, body_md));
+        Drafts::global(cx).update(cx, |d, cx| d.push(pr, draft, cx));
         self.close_composer(window, cx);
     }
 
@@ -307,28 +310,18 @@ impl FilesTab {
     }
 
     pub(super) fn remove_draft(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix < self.drafts.len() {
-            self.drafts.remove(ix);
-            cx.notify();
-        }
+        let pr = self.pr_id;
+        Drafts::global(cx).update(cx, |d, cx| d.remove(pr, ix, cx));
     }
 
-    /// The drafts, handed to a review that is being sent.
-    pub fn take_drafts(&mut self, cx: &mut Context<Self>) -> Vec<DraftReviewComment> {
-        cx.notify();
-        std::mem::take(&mut self.drafts)
-    }
-
-    /// Put back drafts of a review the queue rejected, before any new ones.
-    pub fn restore_drafts(&mut self, mut drafts: Vec<DraftReviewComment>, cx: &mut Context<Self>) {
-        drafts.append(&mut self.drafts);
-        self.drafts = drafts;
-        cx.notify();
+    /// The drafts of this PR, in the order written.
+    pub(super) fn drafts<'a>(&self, cx: &'a App) -> &'a [DraftReviewComment] {
+        Drafts::global(cx).read(cx).of(self.pr_id)
     }
 
     /// Draft cards and the open box, under their lines.
-    fn annotations(&self) -> Vec<DiffAnnotation> {
-        let drafts = self.drafts.iter().enumerate().map(|(ix, d)| {
+    fn annotations(&self, cx: &App) -> Vec<DiffAnnotation> {
+        let drafts = self.drafts(cx).iter().enumerate().map(|(ix, d)| {
             let side = match d.side {
                 fl_types::DiffSide::Left => DiffSide::Original,
                 fl_types::DiffSide::Right => DiffSide::Modified,
@@ -807,7 +800,7 @@ impl Render for FilesTab {
         let body = Diff::new(&diff)
             .size_full()
             .decorations(self.decorations(cx))
-            .annotations(self.annotations())
+            .annotations(self.annotations(cx))
             .render_annotation(annotate)
             .when(selecting, |d| d.on_add_annotation(add))
             .render_header_suffix(move |file, _, cx| {
@@ -912,8 +905,10 @@ fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &
             )
             .into_any_element();
     }
-    let ix = tab.read(cx).annotations().iter().position(|a| a.id() == annotation.id());
-    let Some(draft) = ix.and_then(|ix| tab.read(cx).drafts.get(ix)) else { return div().into_any_element() };
+    let ix = tab.read(cx).annotations(cx).iter().position(|a| a.id() == annotation.id());
+    let Some(draft) = ix.and_then(|ix| tab.read(cx).drafts(cx).get(ix)).cloned() else {
+        return div().into_any_element();
+    };
     let ix = ix.unwrap_or_default();
     let place = match draft.start_line {
         Some(start) => format!("Pending comment on lines {start}\u{2013}{}", draft.line),

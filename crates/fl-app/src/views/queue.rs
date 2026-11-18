@@ -1,4 +1,4 @@
-//! The work queue: one grouped, virtualized list behind Inbox, Pull requests,
+//! The work queue: one grouped (or flat), virtualized list behind Inbox, Pull requests,
 //! Issues and Review requests.
 
 use std::rc::Rc;
@@ -26,11 +26,12 @@ use gpui_kit::{
 use rusqlite::Connection;
 
 use crate::bench;
+use crate::drafts::Drafts;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
-use crate::workspace::{OpenView, SetViewRef};
+use crate::workspace::{OpenView, SaveLayout, SetViewRef};
 
-actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView]);
+actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView, ToggleGrouped]);
 
 const HEADER_HEIGHT: f32 = 26.;
 const ROW_HEIGHT: f32 = 46.;
@@ -48,8 +49,12 @@ enum Item {
     Row(usize),
 }
 
-/// One header before the first row of each group. Rows arrive ordered by group.
-fn flatten(rows: &[QueueRow]) -> Vec<Item> {
+/// One header before the first row of each group. Rows arrive ordered by
+/// group. `flat`: rows only, no headers.
+fn flatten(rows: &[QueueRow], flat: bool) -> Vec<Item> {
+    if flat {
+        return (0..rows.len()).map(Item::Row).collect();
+    }
     let mut items = Vec::with_capacity(rows.len() + QueueGroup::ALL.len());
     let mut group = None;
     for (ix, row) in rows.iter().enumerate() {
@@ -128,6 +133,8 @@ pub struct Queue {
     views: Vec<SavedView>,
     _store: Subscription,
     _input: Subscription,
+    /// Rows mark PRs with unsent inline drafts.
+    _drafts: Subscription,
 }
 
 impl EventEmitter<QueueEvent> for Queue {}
@@ -182,6 +189,7 @@ impl Queue {
             views: saved,
             _store: subscription,
             _input: input_subscription,
+            _drafts: cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify()),
         };
         if let Some(snap) = snap {
             this.rows = snap.rows;
@@ -194,7 +202,7 @@ impl Queue {
     }
 
     fn rebuild(&mut self) {
-        self.items = flatten(&self.rows);
+        self.items = flatten(&self.rows, self.query.flat);
         let sizes = self.items.iter().map(|item| {
             let height = if matches!(item, Item::Header(_)) { HEADER_HEIGHT } else { ROW_HEIGHT };
             size(px(0.), px(height))
@@ -275,6 +283,19 @@ impl Queue {
         self.rebuild();
         cx.emit(QueueEvent::Selected(None));
         cx.notify();
+    }
+
+    pub(super) fn flat(&self) -> bool {
+        self.query.flat
+    }
+
+    /// `g`, the Grouped button, the palette: show the groups or one list,
+    /// newest first. Reads again like a repo change; the tab saves it.
+    pub(super) fn toggle_grouped(&mut self, _: &ToggleGrouped, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.flat = !self.query.flat;
+        let repo_id = self.query.repo_id;
+        self.set_repo(repo_id, cx);
+        window.dispatch_action(Box::new(SaveLayout), cx);
     }
 
     /// Show `text` in the query bar and filter by it.
@@ -494,6 +515,7 @@ impl Queue {
         if let Some(author) = &row.author {
             sub.push_str(&format!(" \u{b7} {author}"));
         }
+        let drafts = row.issue_id.filter(|_| row.is_pr).is_some_and(|id| Drafts::global(cx).read(cx).count(id) > 0);
         let check = row.checks.map(|state| match state {
             CheckState::Success => (IconName::Check, theme.success),
             CheckState::Failure => (IconName::X, theme.danger),
@@ -557,6 +579,20 @@ impl Queue {
                     .items_center()
                     .text_xs()
                     .text_color(theme.muted_foreground)
+                    .when(drafts, |d| {
+                        d.child(
+                            div()
+                                .id(("queue-drafts", row_ix))
+                                .test_support()
+                                .px(px(5.))
+                                .rounded(px(3.))
+                                .border_1()
+                                .border_dashed()
+                                .border_color(theme.warning)
+                                .text_color(theme.warning)
+                                .child("drafts"),
+                        )
+                    })
                     .when(row.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.primary)))
                     .child(age(fl_sync::now(), row.updated_at)),
             )
@@ -617,6 +653,14 @@ impl Queue {
                     .items_center()
                     .child(div().text_color(theme.muted_foreground).child("/"))
                     .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
+                    .child(
+                        Button::new("queue-grouped")
+                            .ghost()
+                            .small()
+                            .label("Grouped")
+                            .selected(!self.query.flat)
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle_grouped(&ToggleGrouped, window, cx))),
+                    )
                     .child(
                         Button::new("queue-unread")
                             .ghost()
@@ -685,6 +729,11 @@ impl Queue {
     #[cfg(test)]
     pub(super) fn view_queries(&self) -> Vec<&str> {
         self.views.iter().map(|v| v.query.as_str()).collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn headers(&self) -> usize {
+        self.items.iter().filter(|item| matches!(item, Item::Header(_))).count()
     }
 
     #[cfg(test)]
@@ -786,6 +835,7 @@ impl Render for Queue {
             .on_action(cx.listener(Self::open_selected))
             .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::save_view))
+            .on_action(cx.listener(Self::toggle_grouped))
             .size_full()
             .child(header)
             .child(self.query_bar(cx))

@@ -1,5 +1,7 @@
 //! The main window: rail, dock (tabs + split panes), footer.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use fl_db::queries::{inbox, layout, repo, views};
@@ -12,10 +14,11 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
-    FocusHandle, MouseButton, ParentElement as _, Render, Styled as _, Subscription, Task, Window, actions,
+    FocusHandle, MouseButton, ParentElement as _, PromptLevel, Render, Styled as _, Subscription, Task, Window, actions,
     deferred, div, px,
 };
 
+use crate::drafts::{self, Drafts};
 use crate::footer::{Footer, FooterEvent};
 use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
@@ -25,6 +28,9 @@ use crate::store::Store;
 use crate::view_ref::ViewRef;
 
 actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, NextTab, PrevTab]);
+
+// A tab's view changed state the saved layout holds (e.g. a queue went flat).
+actions!(forkline, [SaveLayout]);
 
 /// Ask the workspace to show a view, so child views need no workspace handle.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
@@ -42,6 +48,12 @@ pub struct GoTo(pub ViewRef);
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
 #[action(namespace = forkline, no_json)]
 pub struct SetViewRef(pub ViewRef);
+
+/// Remove the tab of this `ViewPanel` entity, past its `closable` (the PR
+/// tab sends it after its drafts warning).
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = forkline, no_json)]
+pub struct RemoveTab(pub gpui_kit::EntityId);
 
 /// Settings key of the saved dock layout. Not `ui_layout`: that row belongs
 /// to the Tauri app until it is removed (ADR 0001).
@@ -112,6 +124,8 @@ impl Workspace {
                     cx.notify();
                 }
             }),
+            // A PR tab with drafts draws its own close button: redraw the tab bars.
+            cx.observe(&Drafts::global(cx), |this, _, cx| this.dock.update(cx, |_, cx| cx.notify())),
             cx.subscribe(&store, |this, _, ev: &DataChanged, cx| {
                 if ev.scopes.iter().any(|s| s == "repos" || s == "issues") {
                     this.load_pinned(cx);
@@ -139,6 +153,7 @@ impl Workspace {
         };
         this.load_pinned(cx);
         this.load_inbox_unread(cx);
+        warn_on_quit(window, cx);
         crate::bench::mark("workspace_built", cx);
         // Keys need a focused element; start on the active tab.
         cx.defer_in(window, |this, window, cx| {
@@ -251,6 +266,15 @@ impl Workspace {
         self.schedule_save(window, cx);
         self.dock.update(cx, |_, cx| cx.notify());
         cx.notify();
+    }
+
+    fn on_save_layout(&mut self, _: &SaveLayout, window: &mut Window, cx: &mut Context<Self>) {
+        self.schedule_save(window, cx);
+    }
+
+    fn on_remove_tab(&mut self, action: &RemoveTab, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.panel(PanelId::from(action.0), cx) else { return };
+        self.dock.update(cx, |dock, cx| dock.remove_panel(panel, window, cx));
     }
 
     fn on_open_palette(&mut self, _: &OpenPalette, window: &mut Window, cx: &mut Context<Self>) {
@@ -531,6 +555,36 @@ impl Workspace {
     }
 }
 
+/// Closing the window with unsent inline drafts asks first: they live in
+/// memory only. "Quit" closes the window (the app quits with its last one).
+fn warn_on_quit(window: &mut Window, cx: &App) {
+    let prompting = Rc::new(Cell::new(false));
+    let confirmed = Rc::new(Cell::new(false));
+    window.on_window_should_close(cx, move |window, cx| {
+        let (prs, n) = Drafts::global(cx).read(cx).totals();
+        if n == 0 || confirmed.get() {
+            return true;
+        }
+        if !prompting.get() {
+            prompting.set(true);
+            let detail = format!("{}. Quitting drops them.", drafts::warning(prs, n));
+            let answer =
+                window.prompt(PromptLevel::Warning, "Quit Forkline?", Some(&detail), &["Quit", "Cancel"], cx);
+            let (prompting, confirmed) = (prompting.clone(), confirmed.clone());
+            window
+                .spawn(cx, async move |cx| {
+                    prompting.set(false);
+                    if answer.await == Ok(0) {
+                        confirmed.set(true);
+                        let _ = cx.update(|window, _| window.remove_window());
+                    }
+                })
+                .detach();
+        }
+        false
+    });
+}
+
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.focused_group(window, cx).and_then(|(_, id)| self.view_ref_of(id, cx));
@@ -544,6 +598,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_view))
             .on_action(cx.listener(Self::on_go_to))
             .on_action(cx.listener(Self::on_set_view_ref))
+            .on_action(cx.listener(Self::on_save_layout))
+            .on_action(cx.listener(Self::on_remove_tab))
             .on_action(cx.listener(Self::on_open_palette))
             .on_action(cx.listener(Self::on_open_sign_in))
             .on_action(cx.listener(Self::on_next_tab))
@@ -707,6 +763,41 @@ mod tests {
                 gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
                     .unwrap();
             assert_eq!(groups(ws2.read(cx), cx), [["Inbox", "*Pull request 7"]]);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_flat_queue_tab_restores_flat(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("g", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let json = cx
+            .update_window(handle, |_, window, cx| {
+                let view = ws.read(cx).active_view(window, cx).unwrap();
+                assert_eq!(crate::views::flat_of(&view, cx), Some(true));
+                serde_json::to_string(&ws.read(cx).dock.read(cx).dump(cx)).unwrap()
+            })
+            .unwrap();
+        assert!(json.contains(r#""kind":"inbox","flat":true"#), "{json}");
+        cx.update(|cx| {
+            let db = Store::global(cx).read(cx).db().clone();
+            db.write(|c| layout::set_setting(c, LAYOUT_KEY, &json)).unwrap();
+            let options = WindowOptions::default();
+            let (handle2, ws2) =
+                gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
+                    .unwrap();
+            handle2
+                .update(cx, |_, window, cx| {
+                    let view = ws2.read(cx).active_view(window, cx).unwrap();
+                    assert_eq!(crate::views::flat_of(&view, cx), Some(true));
+                })
+                .unwrap();
         });
     }
 

@@ -21,7 +21,7 @@ use gpui_kit::{
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::views::{
-    Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleState, ToggleViewed,
+    Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
 use crate::workspace::{GoTo, NewTab, NextTab, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
 
@@ -147,6 +147,7 @@ impl Palette {
             action("Toggle viewed", Some("V"), ToggleViewed),
             action("Filter queue", Some("/"), FocusFilter),
             action("Save filter as view", None, SaveView),
+            action("Grouped or flat", Some("G"), ToggleGrouped),
         ]
         .into_iter()
         .filter(|cmd| match &cmd.run {

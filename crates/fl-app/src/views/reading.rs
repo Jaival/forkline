@@ -14,8 +14,8 @@ mod tabs;
 #[cfg(test)]
 mod tests;
 
-use fl_db::queries::{issue, pr};
-use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, PrDetail, QueueRow, User};
+use fl_db::queries::{issue, pr, repo};
+use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, MergeMethod, PrDetail, QueueRow, User};
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::component::input::TextareaState;
@@ -31,6 +31,7 @@ use self::conversation::Conversation;
 use self::files::FilesTab;
 use super::Built;
 use crate::bench;
+use crate::drafts::Drafts;
 use crate::store::Store;
 
 /// Everything the pane shows for one item.
@@ -56,8 +57,11 @@ impl Detail {
     }
 }
 
-/// The item and its assignees.
-fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<Option<(Detail, Vec<User>)>> {
+/// The item, its assignees, and for a PR the merge method last sent in its
+/// repository.
+type Read = (Detail, Vec<User>, Option<MergeMethod>);
+
+fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<Option<Read>> {
     // A pull request without `pr_details` (not synced in depth yet) shows as
     // its conversation alone.
     let pr = if is_pr { pr::get(conn, id)? } else { None };
@@ -68,7 +72,11 @@ fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<
             Detail::Issue { detail, thread: issue::thread(conn, id)? }
         }
     };
-    Ok(Some((detail, issue::assignees(conn, id)?)))
+    let merge_method = match &detail {
+        Detail::Pr(pr) => repo::merge_method(conn, pr.row.repo_id)?,
+        Detail::Issue { .. } => None,
+    };
+    Ok(Some((detail, issue::assignees(conn, id)?, merge_method)))
 }
 
 /// Tabs of a pull request. An issue shows the conversation only.
@@ -116,9 +124,14 @@ pub struct ReadingPane {
     /// The last action error, shown in the action bar.
     pub(super) notice: Option<SharedString>,
     /// The merge method picked, waiting for Confirm.
-    pub(super) merge_confirm: Option<fl_types::MergeMethod>,
+    pub(super) merge_confirm: Option<MergeMethod>,
+    /// What the Merge button offers: the method last sent in the PR's repo,
+    /// else a merge commit.
+    pub(super) merge_method: MergeMethod,
     pub focus: FocusHandle,
     _store: Subscription,
+    /// The Files tab label and the composer count the PR's drafts.
+    _drafts: Subscription,
 }
 
 impl ReadingPane {
@@ -146,8 +159,10 @@ impl ReadingPane {
             return_focus: None,
             notice: None,
             merge_confirm: None,
+            merge_method: MergeMethod::Merge,
             focus: cx.focus_handle(),
             _store: subscription,
+            _drafts: cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify()),
         }
     }
 
@@ -206,8 +221,12 @@ impl ReadingPane {
                     return;
                 }
                 let Ok(detail) = detail else { return };
-                let (detail, assignees) = detail.unzip();
-                this.assignees = assignees.unwrap_or_default();
+                let (detail, assignees, merge_method) = match detail {
+                    Some((detail, assignees, method)) => (Some(detail), assignees, method),
+                    None => (None, Vec::new(), None),
+                };
+                this.assignees = assignees;
+                this.merge_method = merge_method.unwrap_or(MergeMethod::Merge);
                 this.missing = detail.is_none();
                 if let Some(detail) = &detail {
                     this.conversation.set(detail, cx);

@@ -150,7 +150,7 @@ mod queue_filter {
 
     use super::*;
 
-    const ISSUES: QueueQuery = QueueQuery { kind: QueueKind::Issues, repo_id: None };
+    const ISSUES: QueueQuery = QueueQuery { kind: QueueKind::Issues, repo_id: None, flat: false };
 
     fn keys(c: &Connection, q: QueueQuery, filter: &str) -> Vec<String> {
         let cond = crate::queue_filter(c, filter, q.kind).unwrap();
@@ -188,7 +188,7 @@ mod queue_filter {
         assert_eq!(keys(&c, ISSUES, "repo:acme/api"), ["4"]);
         assert_eq!(keys(&c, ISSUES, "assignee:hubot crash"), ["1"]);
         assert!(keys(&c, ISSUES, "is:pr").is_empty());
-        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None };
+        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None, flat: false };
         assert!(keys(&c, pulls, "").is_empty(), "the only PR is merged");
     }
 
@@ -206,7 +206,7 @@ mod queue_filter {
         assert_eq!(keys(&c, ISSUES, "is:unread"), ["4"]);
         assert_eq!(keys(&c, ISSUES, "-is:unread"), ["1"]);
         // The Inbox follows the notification's flag, like its unread mark.
-        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None };
+        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None, flat: false };
         assert_eq!(keys(&c, inbox, "is:unread"), ["11"]);
         assert_eq!(keys(&c, inbox, "-is:unread"), ["14"]);
         // Search: every issue but the one opened since its update.
@@ -262,11 +262,11 @@ mod queue_filter {
                ('3',1,'Release',NULL,'crash release','subscribed',1,0,30);",
         )
         .unwrap();
-        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None };
+        let inbox = QueueQuery { kind: QueueKind::Inbox, repo_id: None, flat: false };
         assert_eq!(keys(&c, inbox, ""), ["2", "1", "3"]);
         assert_eq!(keys(&c, inbox, "crash"), ["1"]);
         assert_eq!(keys(&c, inbox, "repo:acme/api"), ["2"]);
-        let in_api = QueueQuery { kind: QueueKind::Inbox, repo_id: Some(2) };
+        let in_api = QueueQuery { kind: QueueKind::Inbox, repo_id: Some(2), flat: false };
         assert!(keys(&c, in_api, "crash").is_empty());
     }
 }

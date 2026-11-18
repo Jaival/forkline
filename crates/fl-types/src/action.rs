@@ -59,6 +59,21 @@ pub enum MergeMethod {
     Rebase,
 }
 
+impl MergeMethod {
+    /// Stable text form, as serde writes it; stored in `repo_merge_methods`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Squash => "squash",
+            Self::Rebase => "rebase",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::Merge, Self::Squash, Self::Rebase].into_iter().find(|m| m.as_str() == s)
+    }
+}
+
 /// Inline comment in a review. Lines are file line numbers on `side`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]

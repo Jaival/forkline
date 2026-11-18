@@ -936,16 +936,76 @@ Decided (2026-11-18, steps 1-5, with the user):
   state; `LAYOUT_VERSION` stays 2. Flat rows show the repo name. (Tauri:
   Inbox only, default flat, not saved.)
 
-Next (build order, each part with UI tests, checks, a bench run and a
-handoff note):
+Done (G1 parts 1-3, 2026-11-18, branch `gpui-parity`, not committed):
 
-1. Grouped / flat toggle (gap 11 rest).
-2. Drafts in memory per PR, the list-row drafts mark, the quit / tab-close
-   warning.
-3. Merge method per repo (migration 0011), then the check state beside
-   Merge.
+1. Grouped / flat (gap 11 rest). Every queue has a `queue-grouped` button
+   ("Grouped", on when grouped), `g` (`queue::ToggleGrouped`, context
+   `(Queue || Reading) && !Input`, forwarded by `ListView`) and palette
+   "Grouped or flat". Default grouped. `QueueQuery.flat` (new,
+   `#[serde(default)]`): the Inbox reads `ORDER BY updated_at DESC` with no
+   group first; Pulls / Issues / Reviews keep their order and lose their one
+   header. Toggling reads again like a repo change (selection drops) and
+   keeps the `/` filter. Saved per tab: `ViewPanel::dump` adds `"flat": true`
+   beside the `ViewRef` fields (`ViewRef` unchanged, it ignores the key);
+   `LAYOUT_VERSION` stays 2. New `workspace::SaveLayout` action. Rows already
+   show `owner/name #n` in both modes.
+2. Drafts per PR for the session: `crates/fl-app/src/drafts.rs` (global
+   `Drafts` entity, `HashMap<pr id, Vec<DraftReviewComment>>`, memory only).
+   The Files tab, the Files label count, the `R` composer and `A` read it, so
+   drafts outlive an item switch (no dialog) and a closed tab. Queue rows of
+   a PR with drafts show a dashed `drafts` mark (`("queue-drafts", ix)`). A
+   PR tab with drafts reports `closable = false` (the dock draws no X and
+   ignores `Ctrl+W`), draws its own `tab-close-drafts` button, and `Ctrl+W`
+   or that button asks "Close this tab?" (platform prompt); "Close tab" sends
+   `workspace::RemoveTab`. Window close with drafts asks "Quit Forkline?"
+   (`on_window_should_close`). New commits leave drafts as they are. A
+   review the queue rejects puts its drafts back (`Drafts::restore`); a
+   review GitHub rejects later rolls back and stays in the failed list
+   (Retry resends the same comments), as before.
+3. Merge method per repo: migration 0011 `repo_merge_methods` (repo_id PK,
+   cascade on repo delete); `repo::merge_method` / `set_merge_method`;
+   `MergeMethod::as_str` / `parse`. The bar shows `action-merge` labelled with
+   the repo's method (merge commit before the first merge) and
+   `action-merge-method` (caret menu, current method checked); both go to the
+   confirm row. Confirm saves the method at once, then queues the merge.
+   `merge-checks` beside Merge (also when blocked): Checks pass / fail /
+   running from `pr_details.check_state`; nothing when it is NULL.
 
-Then a manual pass on fake data, then the Tauri removal (`app/`, `ui/`)
+Tests: queue `g_and_the_grouped_button_switch_to_one_list`,
+`g_works_from_the_reading_pane_and_keeps_the_filter`; workspace
+`a_flat_queue_tab_restores_flat`; fl-db `flat_inbox_is_newest_first`,
+`merge_method_is_kept_per_repo` (schema plan test covers flat queries);
+files `drafts_stay_with_the_pr_across_an_item_switch`,
+`closing_a_pr_tab_with_drafts_asks_first`,
+`a_pr_tab_without_drafts_closes_at_once`, `quit_with_drafts_asks_first`;
+reading `the_merge_button_offers_the_method_last_sent_in_the_repo`,
+`the_check_state_shows_beside_merge`. `cargo test -p fl-app`: 152 pass.
+Workspace clippy (`-D warnings`) and tests pass.
+
+Bench (2026-11-18, release, fake data, AC power, `PowerOnline` True). The
+machine was noisy (single runs of both builds missed launch, diff fps and
+search at random), so HEAD `88dcf10` was built in a temp worktree and run
+interleaved with this build, 7 pairs. Warm runs, base vs new: `launch_ms`
+447-539 vs 476-518 (600), `app_startup_ms` 50.6-63.9 vs 51.2-58.2 (60),
+`switch_tab_ms` 3.9-4.2 vs 3.9-4.2, `search_p95_ms` 14.6-14.9 vs 14.6-14.8
+(one 62 ms outlier each), `open_cached_item_ms` 6.1-9.1 vs 6.0-9.5,
+`diff_scroll_fps` 240 in most runs of both (81 / 74 / 155 / 177 outliers in
+both). No difference between the builds within noise.
+
+Checked by eye (PrintWindow, dark, `--offline` on `target/tmp/shot-g1`,
+image `target/tmp/g1-grouped.png`): Inbox with the Grouped button on and the
+group headers. The `/` placeholder is cut shorter now ("Filter: is:open
+aut"). Not checked by eye: flat mode, the drafts mark, the tab close button,
+the prompts, the split Merge button, the check state (need clicks or keys).
+
+Open decisions (G1 parts 1-3):
+
+- Only `ViewRef::Pr` tabs warn on close. A queue tab whose reading pane
+  shows a PR with drafts closes at once (the drafts stay in memory).
+- While a PR tab has drafts the dock's own X is replaced by the tab's
+  button, drawn in the tab title.
+
+Next: a manual pass on fake data, then the Tauri removal (`app/`, `ui/`)
 and the rename of `fl-app` to `forkline` (ask first, ADR 0001).
 
 Decided (2026-11-16):

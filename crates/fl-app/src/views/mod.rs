@@ -11,7 +11,7 @@ mod repo;
 mod repos;
 pub(crate) mod search;
 
-pub use queue::{FocusFilter, SaveView, SelectNext};
+pub use queue::{FocusFilter, SaveView, SelectNext, ToggleGrouped};
 pub use reading::{
     Approve, Done, EditAssignees, EditLabels, NextFile, PrevFile, Reply, ShowFiles, Snooze, ToggleState, ToggleViewed,
 };
@@ -69,6 +69,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("l", reading::EditLabels, Some(TRIAGE)),
         KeyBinding::new("e", reading::Done, Some(TRIAGE)),
         KeyBinding::new("h", reading::Snooze, Some(TRIAGE)),
+        // Queue lists: grouped or flat. A plain key; never make `g` a prefix.
+        KeyBinding::new("g", queue::ToggleGrouped, Some(TRIAGE)),
         // Files tab of a PR: act only while it is on show.
         KeyBinding::new("]", reading::NextFile, Some(TRIAGE)),
         KeyBinding::new("[", reading::PrevFile, Some(TRIAGE)),
@@ -95,10 +97,16 @@ pub fn filter_of(view: &AnyView, cx: &App) -> Option<String> {
     Some(list.read(cx).queue.read(cx).filter().to_owned())
 }
 
-/// Build the view for one tab.
-pub fn build(view_ref: &ViewRef, window: &mut Window, cx: &mut App) -> Built {
+/// Whether `view` is a queue list shown flat; `None` for any other view.
+pub fn flat_of(view: &AnyView, cx: &App) -> Option<bool> {
+    let list = view.clone().downcast::<list_view::ListView>().ok()?;
+    Some(list.read(cx).queue.read(cx).flat())
+}
+
+/// Build the view for one tab. `flat` applies to queue lists only.
+pub fn build(view_ref: &ViewRef, flat: bool, window: &mut Window, cx: &mut App) -> Built {
     let mut list = |kind, repo_id| {
-        list_view::ListView::build(QueueQuery { kind, repo_id }, view_ref.title(), window, cx)
+        list_view::ListView::build(QueueQuery { kind, repo_id, flat }, view_ref.title(), window, cx)
     };
     match view_ref {
         ViewRef::Inbox => list(QueueKind::Inbox, None),

@@ -8,7 +8,7 @@ use gpui_kit::{
 };
 
 use super::Built;
-use super::queue::{FocusFilter, Queue, QueueEvent, SaveView};
+use super::queue::{FocusFilter, Queue, QueueEvent, SaveView, ToggleGrouped};
 use super::reading::{
     Approve, Done, EditAssignees, EditLabels, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleState,
     ToggleViewed,
@@ -106,6 +106,10 @@ impl ListView {
     fn save_view(&mut self, a: &SaveView, window: &mut Window, cx: &mut Context<Self>) {
         self.queue.update(cx, |queue, cx| queue.save_view(a, window, cx));
     }
+
+    fn toggle_grouped(&mut self, a: &ToggleGrouped, window: &mut Window, cx: &mut Context<Self>) {
+        self.queue.update(cx, |queue, cx| queue.toggle_grouped(a, window, cx));
+    }
 }
 
 impl Render for ListView {
@@ -125,6 +129,7 @@ impl Render for ListView {
             .on_action(cx.listener(Self::show_files))
             .on_action(cx.listener(Self::focus_filter))
             .on_action(cx.listener(Self::save_view))
+            .on_action(cx.listener(Self::toggle_grouped))
             .child(
                 h_resizable("list-view")
                     .child(
