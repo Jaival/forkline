@@ -1198,9 +1198,9 @@ syntax colours (the Files shots still show the removed custom bar). Images: `tar
 
 Open items from step 1:
 
-- Exe size: 23.5 MB -> 49 MB, almost all from the tree-sitter grammars. Fewer
-  languages, or the `syntect` feature, would shrink it; decide before the
-  fonts step adds 8-12 MB more.
+- Exe size: 23.5 MB -> 49 MB, almost all from the tree-sitter grammars.
+  Decided (2026-11-19): keep all 17 languages; the size is accepted, also
+  with the 8-12 MB the fonts step adds.
 - The dock's active tab is square: the kit's `Tab` variant has no radius and
   the dock builds its own tabs. Rounded needs a custom `DockAreaRenderer`.
 - Action buttons are the kit's `small` size (about 24 px); the board has
