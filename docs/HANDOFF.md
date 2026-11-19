@@ -1248,9 +1248,59 @@ overview; High contrast Files tab.
 
 Open items from step 2 (not theme work; seen in the shots):
 
-- Home and Explore rows (`rows.rs`): the time / stars / Pin columns follow
-  the text width, not the pane's right edge, so they do not line up.
-- PR #9 in fake data: the header says `1 of 4 checks` failing while the
-  merge row says "Checks pass".
-- The native title bar follows the Windows app mode, so it stays dark in
-  the light themes.
+- Fixed (`335b2f0`): Home / Repositories / Starred / Explore / Search rows
+  are full width again (step 1 had dropped `w_full` when it added the
+  inset; the inset is now the list's padding), so their right-hand columns
+  line up.
+- Fixed (`335b2f0`): the reading header's check icon follows GitHub's
+  roll-up `check_state`, as the merge row does (the check list decides
+  only without one); `fl-fake` derives the roll-up from its checks.
+  Regenerate fake data to see consistent states.
+- Open: the native title bar follows the Windows app mode (GPUI calls
+  `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` from the OS
+  appearance only), so it stays dark in the light themes. The fix is one
+  DWM call with the window's HWND after each `theme::apply`, which needs
+  `unsafe`; the workspace has `unsafe_code = "forbid"`. Waiting for a
+  decision.
+
+Done (step 3, repository colours, 2026-11-19):
+
+- Migration 0012: `repos.color` (0-9, NULL = from the name's hash; sync's
+  upsert does not list it, so it survives a re-sync).
+  `fl_db::queries::repo::{colors, set_color}`; `issue::tab_label` also
+  returns `owner/name`.
+- `theme.rs`: `REPO_HUES` (10 hues with names), `Palette::repo(index)`
+  (per-theme saturation / lightness in `Palette::repo`; a hue within 15
+  degrees of the accent moves 15 degrees away), `RepoColors` global
+  (picked colours, loaded in `main.rs` at startup; index = pick, else FNV
+  hash of `owner/name` % 10), `theme::repo_color(full_name, cx)`.
+- `repo_color.rs`: `dot` (8 px), `set` (updates the global, saves in the
+  background, refreshes windows), `menu_items` ("Automatic" + the ten
+  colours, the pick checked).
+- Dots: queue rows (before the repo name), Issue / PR tabs (after the state
+  icon), the pinned-repos menu, the queue's repo filter (button and menu),
+  the repo header. "Colour" submenu (per pinned repo) at the end of the
+  pinned-repos menu; a "Colour" button next to Pin in the repo header.
+
+Tests: every repo colour >= 3:1 on bg, surface, selected and menu in all
+eight themes and >= 15 degrees from the accent; the name hash is stable and
+spreads 50 fake names over >= 8 hues; a pick overrides and clears; DB
+`set_color` / `colors` and the 0-9 check; a pick survives a repo re-sync
+(`fl-sync` `repo_metadata_pages_starred_and_etag`); UI: a pick shows at
+once and is saved, "Automatic" clears it. Clippy passes; `cargo test
+--workspace` 258 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/shots.sh` with repo 1
+set to Pink; images `target/tmp/g2s3-*.png`): Midnight Inbox, repo header
+and PR tab; Paper Inbox and repo header. Not checked by eye: the opened
+menus (pinned "Colour" submenu, repo header menu, repo filter menu); they
+need a click, and keystrokes / clicks are not sent to the real window.
+
+Open items from step 3:
+
+- In a narrow queue pane the dot (14 px with its gap) truncates long author
+  logins sooner.
+- Midnight's Blue repo dot (moved to 213 degrees) is still close to the
+  indigo unread dot; a larger gap would push it onto Cyan.
+- Home and Search rows show a repo name without a dot (the plan lists only
+  queue rows).

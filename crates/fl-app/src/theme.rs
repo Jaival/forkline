@@ -126,6 +126,8 @@ pub struct Palette {
     pub scrollbar_thumb: Hsla,
     /// Avatar fill and initials: (saturation, lightness) for each.
     avatar: (f32, f32, f32, f32),
+    /// Repository dots: (saturation, lightness) of every [`REPO_HUES`] hue.
+    repo: (f32, f32),
 }
 
 const fn hsl(h: f32, s: f32, l: f32) -> Hsla {
@@ -190,6 +192,7 @@ pub const MIDNIGHT: Palette = Palette {
         punctuation: hsl(222., 8., 66.),
     },
     scrollbar_thumb: hsl_a(222., 8., 60., 0.35),
+    repo: (70., 62.),
     avatar: (45., 24., 85., 82.),
 };
 
@@ -243,6 +246,7 @@ pub const DAYLIGHT: Palette = Palette {
         punctuation: hsl(222., 10., 38.),
     },
     scrollbar_thumb: hsl_a(222., 10., 42., 0.3),
+    repo: (75., 33.),
     avatar: (60., 90., 50., 29.),
 };
 
@@ -296,6 +300,7 @@ pub const GRAPHITE: Palette = Palette {
         punctuation: hsl(35., 6., 66.),
     },
     scrollbar_thumb: hsl_a(35., 5., 61., 0.35),
+    repo: (65., 64.),
     avatar: (40., 24., 80., 82.),
 };
 
@@ -349,6 +354,7 @@ pub const FJORD: Palette = Palette {
         punctuation: hsl(215., 14., 72.),
     },
     scrollbar_thumb: hsl_a(215., 14., 68., 0.35),
+    repo: (60., 67.),
     avatar: (35., 28., 75., 84.),
 };
 
@@ -402,6 +408,7 @@ pub const FOREST: Palette = Palette {
         punctuation: hsl(155., 7., 66.),
     },
     scrollbar_thumb: hsl_a(155., 7., 61., 0.35),
+    repo: (65., 64.),
     avatar: (40., 22., 80., 82.),
 };
 
@@ -455,6 +462,7 @@ pub const ROSE: Palette = Palette {
         punctuation: hsl(310., 8., 68.),
     },
     scrollbar_thumb: hsl_a(310., 7., 63., 0.35),
+    repo: (65., 64.),
     avatar: (40., 24., 82., 83.),
 };
 
@@ -508,6 +516,7 @@ pub const HIGH_CONTRAST: Palette = Palette {
         punctuation: hsl(0., 0., 88.),
     },
     scrollbar_thumb: hsl_a(0., 0., 82., 0.5),
+    repo: (100., 78.),
     avatar: (50., 22., 90., 88.),
 };
 
@@ -561,6 +570,7 @@ pub const PAPER: Palette = Palette {
         punctuation: hsl(30., 10., 34.),
     },
     scrollbar_thumb: hsl_a(30., 8., 35., 0.3),
+    repo: (70., 33.),
     avatar: (55., 85., 50., 26.),
 };
 
@@ -573,6 +583,60 @@ pub trait ActivePalette {
 impl ActivePalette for App {
     fn palette(&self) -> &Palette {
         self.global::<Palette>()
+    }
+}
+
+/// The dot colour of the repository `owner/name` in the active theme.
+pub fn repo_color(full_name: &str, cx: &App) -> Hsla {
+    let index = cx.try_global::<RepoColors>().map_or_else(|| RepoColors::default().index(full_name), |c| c.index(full_name));
+    cx.palette().repo(index)
+}
+
+/// The colours a repository can take: hue and name. A repo's index comes
+/// from a hash of `owner/name` unless the user picked one (`repos.color`).
+pub const REPO_HUES: [(f32, &str); 10] = [
+    (0., "Red"),
+    (25., "Orange"),
+    (48., "Yellow"),
+    (90., "Lime"),
+    (140., "Green"),
+    (172., "Teal"),
+    (198., "Cyan"),
+    (220., "Blue"),
+    (265., "Purple"),
+    (315., "Pink"),
+];
+
+/// A repo hue keeps at least this far (degrees) from the theme's accent, so
+/// a repo dot is not read as an unread dot.
+const REPO_ACCENT_GAP: f32 = 15.;
+
+/// Repository colours the user picked: `owner/name` -> index into
+/// [`REPO_HUES`]. Loaded at startup; changed by [`RepoColors::set`].
+#[derive(Clone, Debug, Default)]
+pub struct RepoColors(std::collections::HashMap<String, u8>);
+
+impl Global for RepoColors {}
+
+impl RepoColors {
+    pub fn new(picked: Vec<(String, u8)>) -> Self {
+        Self(picked.into_iter().collect())
+    }
+
+    /// The repo's hue index: the picked one, else from the name's hash.
+    pub fn index(&self, full_name: &str) -> u8 {
+        self.picked(full_name).unwrap_or((stable_hash(full_name) % REPO_HUES.len() as u32) as u8)
+    }
+
+    pub fn picked(&self, full_name: &str) -> Option<u8> {
+        self.0.get(full_name).copied()
+    }
+
+    pub fn set(&mut self, full_name: &str, index: Option<u8>) {
+        match index {
+            Some(i) => self.0.insert(full_name.to_owned(), i),
+            None => self.0.remove(full_name),
+        };
     }
 }
 
@@ -620,6 +684,19 @@ impl Choices {
 }
 
 impl Palette {
+
+    /// Colour of repo hue `index` (see [`REPO_HUES`]) in this theme, moved
+    /// away from the accent's hue when it is too close.
+    pub fn repo(&self, index: u8) -> Hsla {
+        let mut hue = REPO_HUES[index as usize % REPO_HUES.len()].0;
+        let accent = self.accent.h * 360.;
+        let d = (hue - accent + 540.) % 360. - 180.;
+        if d.abs() < REPO_ACCENT_GAP {
+            hue = (accent + REPO_ACCENT_GAP.copysign(d) + 360.) % 360.;
+        }
+        let (s, l) = self.repo;
+        hsl(hue, s, l)
+    }
 
     /// Avatar fill and initials colour for `login`.
     pub fn avatar(&self, login: &str) -> (Hsla, Hsla) {

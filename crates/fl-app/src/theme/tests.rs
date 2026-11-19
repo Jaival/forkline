@@ -90,6 +90,38 @@ fn avatars_and_labels_pass_for_every_hue() {
 }
 
 #[test]
+fn every_repo_colour_passes_on_every_theme() {
+    for p in PALETTES {
+        let accent = p.accent.h * 360.;
+        for (i, (_, name)) in REPO_HUES.iter().enumerate() {
+            let c = p.repo(i as u8);
+            for (bg, bg_name) in [(p.bg, "bg"), (p.surface, "surface"), (p.selected, "selected"), (p.control, "menu")] {
+                at_least(3., c, bg, &format!("repo {name} on {bg_name}"), p);
+            }
+            let d = ((c.h * 360. - accent + 540.) % 360. - 180.).abs();
+            assert!(d >= REPO_ACCENT_GAP - 0.01, "{}: repo {name} is {d:.1} degrees from the accent", p.name);
+        }
+    }
+}
+
+#[test]
+fn a_repo_colour_comes_from_its_name_unless_picked() {
+    let mut colors = RepoColors::default();
+    let auto = colors.index("acme/rocket");
+    assert_eq!(auto, RepoColors::new(vec![]).index("acme/rocket"), "the same on every run");
+    assert!((auto as usize) < REPO_HUES.len());
+    let other = (auto + 1) % REPO_HUES.len() as u8;
+    colors.set("acme/rocket", Some(other));
+    assert_eq!(colors.index("acme/rocket"), other);
+    assert_eq!(colors.picked("acme/rocket"), Some(other));
+    colors.set("acme/rocket", None);
+    assert_eq!(colors.index("acme/rocket"), auto);
+    // Different names spread over the hues.
+    let used: std::collections::HashSet<u8> = (0..50).map(|n| colors.index(&format!("forkline-demo/project-{n:03}"))).collect();
+    assert!(used.len() >= 8, "{used:?}");
+}
+
+#[test]
 fn an_avatar_colour_is_stable() {
     // FNV-1a, not std's randomly seeded hasher.
     assert_eq!(stable_hash("jaival"), stable_hash("jaival"));

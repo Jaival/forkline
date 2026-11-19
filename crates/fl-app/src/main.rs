@@ -9,6 +9,7 @@ mod footer;
 mod palette;
 mod panel;
 mod rail;
+mod repo_color;
 mod signin;
 mod smooth_scroll;
 mod store;
@@ -104,6 +105,8 @@ fn main() {
             .read(|c| Ok(["theme", "colors_dark", "colors_light"].map(|key| layout::setting(c, key).ok().flatten())))
             .unwrap_or_default();
         cx.set_global(theme::Choices::from_settings(dark.as_deref(), light.as_deref()));
+        let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
+        cx.set_global(theme::RepoColors::new(picked));
         theme::apply(theme::mode_from_setting(mode.as_deref()), None, cx);
 
         let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));

@@ -580,6 +580,7 @@ impl Queue {
                                     .line_height(LINE_LABEL)
                                     .text_color(p.text_muted)
                                     .overflow_hidden()
+                                    .when(!row.repo.is_empty(), |d| d.child(crate::repo_color::dot(&row.repo, cx)))
                                     .child(div().flex_none().font_family(mono).text_size(TEXT_LABEL).child(repo))
                                     .when_some(author, |d, author| d.child("\u{b7}").child(author))
                                     .when_some(check, |d, (icon, color)| {
@@ -632,19 +633,32 @@ impl Queue {
         };
         let repos = self.repos.clone();
         let queue = cx.weak_entity();
-        Button::new("queue-repo-filter").outline().small().label(label).dropdown_caret(true).dropdown_menu(
-            move |mut menu, _, _| {
-                let entries = std::iter::once(("All repos".to_owned(), None))
-                    .chain(repos.iter().map(|(name, id)| (name.clone(), Some(*id))));
-                for (label, repo_id) in entries {
-                    let queue = queue.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        let button = Button::new("queue-repo-filter").outline().small().dropdown_caret(true);
+        let button = match self.query.repo_id {
+            None => button.label(label),
+            Some(_) => button.child(
+                h_flex().gap(px(6.)).items_center().child(crate::repo_color::dot(&label, cx)).child(label),
+            ),
+        };
+        button.dropdown_menu(move |mut menu, _, _| {
+            let all = queue.clone();
+            menu = menu.item(PopupMenuItem::new("All repos").on_click(move |_, window, cx| {
+                let _ = all.update(cx, |q, cx| q.pick_repo(None, window, cx));
+            }));
+            for (name, id) in repos.iter() {
+                let queue = queue.clone();
+                let (name, repo_id) = (name.clone(), Some(*id));
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, cx| {
+                        h_flex().gap(px(8.)).items_center().child(crate::repo_color::dot(&name, cx)).child(name.clone())
+                    })
+                    .on_click(move |_, window, cx| {
                         let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
-                    }));
-                }
-                menu
-            },
-        )
+                    }),
+                );
+            }
+            menu
+        })
     }
 
     /// The `/` row under the header, and the result line when a filter is set.

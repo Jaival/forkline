@@ -6,6 +6,7 @@ use fl_db::queries::repo;
 use fl_types::{DataChanged, LanguageShare, RepoOverview};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -299,6 +300,7 @@ impl RepoView {
     fn overview_element(&self, o: &RepoOverview, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.palette();
         let (id, pinned) = (o.id, o.pinned);
+        let full_name = format!("{}/{}", o.owner, o.name);
         let stats = [
             format!("{} {} stars", if o.starred { "\u{2605}" } else { "\u{2606}" }, o.stars),
             format!("{} forks", o.forks),
@@ -317,9 +319,26 @@ impl RepoView {
                             .flex_1()
                             .gap(px(6.))
                             .text_xl()
+                            .items_center()
+                            .child(crate::repo_color::dot(&full_name, cx))
                             .child(div().text_color(theme.text_muted).child(format!("{} /", o.owner)))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(o.name.clone())),
                     )
+                    .child({
+                        let full_name = full_name.clone();
+                        Button::new("repo-color")
+                            .small()
+                            .outline()
+                            .dropdown_caret(true)
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .items_center()
+                                    .child(crate::repo_color::dot(&full_name, cx))
+                                    .child("Colour"),
+                            )
+                            .dropdown_menu(move |menu, _, cx| crate::repo_color::menu_items(menu, id, &full_name, cx))
+                    })
                     .child(
                         Button::new("repo-pin")
                             .small()

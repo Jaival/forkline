@@ -5,7 +5,7 @@ use fl_types::RepoSummary;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, v_flex};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -71,24 +71,45 @@ pub fn render(
         )
     });
 
-    let entries: Vec<(String, i64)> = pinned
+    // (owner/name, counts, id)
+    let entries: Vec<(String, String, i64)> = pinned
         .iter()
-        .map(|r| (format!("{}/{}    {} · {}", r.owner, r.name, r.open_prs, r.open_issues), r.id))
+        .map(|r| (format!("{}/{}", r.owner, r.name), format!("{} · {}", r.open_prs, r.open_issues), r.id))
         .collect();
     let ws_for_menu = ws.clone();
     let pinned_button = button("rail-pinned", IconName::Pin, "Pinned repositories", false).dropdown_menu(
-        move |mut menu, _, _| {
+        move |mut menu, window, cx| {
             if entries.is_empty() {
                 return menu.item(PopupMenuItem::new("No pinned repositories").disabled(true));
             }
-            for (label, repo_id) in &entries {
+            for (name, counts, repo_id) in &entries {
                 let ws = ws_for_menu.clone();
                 let repo_id = *repo_id;
-                menu = menu.item(PopupMenuItem::new(label.clone()).on_click(move |_, window, cx| {
-                    ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx));
-                }));
+                let (name, counts) = (name.clone(), counts.clone());
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, cx| {
+                        h_flex()
+                            .gap(px(8.))
+                            .items_center()
+                            .child(crate::repo_color::dot(&name, cx))
+                            .child(name.clone())
+                            .child(div().text_color(cx.palette().text_muted).child(counts.clone()))
+                    })
+                    .on_click(move |_, window, cx| {
+                        ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx));
+                    }),
+                );
             }
-            menu
+            let entries = entries.clone();
+            menu.separator().submenu("Colour", window, cx, move |mut menu, window, cx| {
+                for (name, _, repo_id) in &entries {
+                    let (name, repo_id) = (name.clone(), *repo_id);
+                    menu = menu.submenu(name.clone(), window, cx, move |menu, _, cx| {
+                        crate::repo_color::menu_items(menu, repo_id, &name, cx)
+                    });
+                }
+                menu
+            })
         },
     );
 

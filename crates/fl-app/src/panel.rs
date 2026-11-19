@@ -32,8 +32,9 @@ pub struct ViewPanel {
     /// `owner/name` of the tab's repo, if it has one and the cache knows it.
     /// The `ViewRef` holds only the id, so the title looks the name up.
     repo_name: Option<String>,
-    /// An Issue / PR tab's item: number, title, state. Read like `repo_name`.
-    item: Option<(i64, String, String)>,
+    /// An Issue / PR tab's item: number, title, state, `owner/name`. Read
+    /// like `repo_name`.
+    item: Option<(i64, String, String, String)>,
     content: AnyView,
     focus_handle: FocusHandle,
     /// The close warning is open (one prompt at a time).
@@ -91,7 +92,7 @@ impl ViewPanel {
     /// `#42 Split panes` for an item, else the view's name.
     pub fn title(&self) -> SharedString {
         match &self.item {
-            Some((number, title, _)) => format!("#{number} {title}").into(),
+            Some((number, title, ..)) => format!("#{number} {title}").into(),
             None => self.view_ref.title_with(self.repo_name.as_deref()),
         }
     }
@@ -190,7 +191,7 @@ impl Panel for ViewPanel {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let drafts = self.unsent_drafts(cx) > 0;
         let p = cx.palette();
-        let (icon, color) = match (&self.view_ref, self.item.as_ref().map(|(_, _, s)| s.as_str())) {
+        let (icon, color) = match (&self.view_ref, self.item.as_ref().map(|(_, _, s, _)| s.as_str())) {
             (ViewRef::Pr { .. }, Some("merged")) => (IconName::GitMerge, p.merged.fg),
             (ViewRef::Pr { .. }, Some("closed")) => (IconName::GitPullRequestClosed, p.closed.fg),
             (ViewRef::Issue { .. }, Some("closed" | "merged")) => (IconName::CircleCheck, p.merged.fg),
@@ -201,6 +202,7 @@ impl Panel for ViewPanel {
             .gap(px(8.))
             .text_size(crate::theme::TEXT_SECONDARY)
             .child(Icon::new(icon).with_size(px(13.)).text_color(color))
+            .when_some(self.item.as_ref(), |d, (.., repo)| d.child(crate::repo_color::dot(repo, cx)))
             .child(div().max_w(px(220.)).truncate().child(ViewPanel::title(self)))
             .when(drafts, |d| {
                 d.child(
