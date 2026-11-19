@@ -242,8 +242,8 @@ pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx
         .test_support()
         .relative()
         .flex()
+        .w_full()
         .h(px(height))
-        .mx(px(8.))
         .px(px(12.))
         .gap(px(12.))
         .items_center()
@@ -282,6 +282,8 @@ pub fn list<V: HasRows>(
         }),
     )
     .size_full()
+    // The rows' inset: rows are full width so their right-hand columns line up.
+    .px(px(8.))
     .track_scroll(&scroll);
     div().relative().flex_1().min_h_0().child(list).vertical_scrollbar(&scroll).into_any_element()
 }

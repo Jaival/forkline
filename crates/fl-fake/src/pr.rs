@@ -29,7 +29,6 @@ const DECISION: [Option<&str>; 4] = [
     Some("REVIEW_REQUIRED"),
     None,
 ];
-const CHECK_STATE: [&str; 4] = ["SUCCESS", "FAILURE", "PENDING", "ERROR"];
 const REVIEW_STATE: [&str; 4] = ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"];
 const MERGE_STATE: [&str; 4] = ["CLEAN", "DIRTY", "BLOCKED", "UNSTABLE"];
 
@@ -54,6 +53,27 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
         let head = oid(id);
         let base = oid(id + 1_000_000);
         let draft = id % 11 == 0;
+        // Checks on the head commit: (name, status, conclusion).
+        let checks: Vec<_> = ["build", "test", "lint", "audit"]
+            .iter()
+            .enumerate()
+            .take(2 + k % 3)
+            .map(|(n, name)| match (k + n) % 5 {
+                0 => (n, name, "IN_PROGRESS", None),
+                1 => (n, name, "QUEUED", None),
+                2 => (n, name, "COMPLETED", Some("FAILURE")),
+                3 => (n, name, "COMPLETED", Some("SKIPPED")),
+                _ => (n, name, "COMPLETED", Some("SUCCESS")),
+            })
+            .collect();
+        // GitHub's roll-up of those checks, so the app's two summaries agree.
+        let check_state = if checks.iter().any(|c| c.3 == Some("FAILURE")) {
+            "FAILURE"
+        } else if checks.iter().any(|c| c.3.is_none()) {
+            "PENDING"
+        } else {
+            "SUCCESS"
+        };
         tx.execute(
             "UPDATE pr_details SET base_oid = ?2, head_oid = ?3, head_ref = ?4, is_draft = ?5,
                     mergeable = ?6, merge_state = ?7, review_decision = ?8, check_state = ?9
@@ -67,7 +87,7 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
                 MERGEABLE[k % MERGEABLE.len()],
                 MERGE_STATE[k % MERGE_STATE.len()],
                 DECISION[(k / 3) % DECISION.len()],
-                CHECK_STATE[(k / 2) % CHECK_STATE.len()],
+                check_state,
             ],
         )?;
         tx.execute(
@@ -96,15 +116,7 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
             )?;
         }
 
-        // Checks on the head commit.
-        for (n, name) in ["build", "test", "lint", "audit"].iter().enumerate().take(2 + k % 3) {
-            let (status, conclusion) = match (k + n) % 5 {
-                0 => ("IN_PROGRESS", None),
-                1 => ("QUEUED", None),
-                2 => ("COMPLETED", Some("FAILURE")),
-                3 => ("COMPLETED", Some("SKIPPED")),
-                _ => ("COMPLETED", Some("SUCCESS")),
-            };
+        for (n, name, status, conclusion) in checks {
             tx.execute(
                 "INSERT INTO checks(id, repo_id, commit_oid, name, status, conclusion, url, started_at, completed_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",

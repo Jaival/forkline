@@ -1,6 +1,6 @@
 //! Header of the reading pane: repo and number, title, state and meta line.
 
-use fl_types::{IssueState, Label, PrDetail, QueueRow, User};
+use fl_types::{CheckState, IssueState, Label, PrDetail, QueueRow, User};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -170,17 +170,23 @@ fn pending(id: &'static str, text: &'static str, p: &Palette) -> impl gpui_kit::
         .child(SharedString::from(text))
 }
 
-/// An icon and `passed of total checks`.
+/// An icon and `passed of total checks`. The icon follows GitHub's roll-up
+/// state (as the merge row does); the check list decides only without one.
 fn check_summary(pr: &PrDetail, p: &Palette) -> Div {
     let passed = |c: &&fl_types::PrCheck| matches!(c.conclusion.as_deref(), Some("SUCCESS" | "NEUTRAL" | "SKIPPED"));
     let failed = |c: &fl_types::PrCheck| matches!(c.conclusion.as_deref(), Some("FAILURE" | "TIMED_OUT" | "CANCELLED"));
     let passed = pr.checks.iter().filter(passed).count();
-    let (icon, color) = if pr.checks.iter().any(failed) {
-        (IconName::CircleX, p.closed.fg)
+    let state = pr.check_state.as_deref().and_then(CheckState::parse).unwrap_or(if pr.checks.iter().any(failed) {
+        CheckState::Failure
     } else if passed == pr.checks.len() {
-        (IconName::CircleCheck, p.open.fg)
+        CheckState::Success
     } else {
-        (IconName::Clock, p.pending.fg)
+        CheckState::Pending
+    });
+    let (icon, color) = match state {
+        CheckState::Failure => (IconName::CircleX, p.closed.fg),
+        CheckState::Success => (IconName::CircleCheck, p.open.fg),
+        CheckState::Pending => (IconName::Clock, p.pending.fg),
     };
     h_flex()
         .gap(px(5.))
