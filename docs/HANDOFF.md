@@ -1208,3 +1208,49 @@ Open items from step 1:
 - The diff's add / remove backgrounds come from the kit (`success` /
   `danger` at 12 %); `diff_add_bg` / `diff_del_bg` are not used by it.
 - System mode does not follow a live OS theme change (as before).
+
+Done (step 2, all built-in themes, 2026-11-19):
+
+- `theme.rs` has all eight palettes: Midnight, Graphite, Fjord, Forest,
+  Rosé (`rose`), High contrast (`high-contrast`) dark; Daylight, Paper light.
+  `THEMES` lists them. Board values (`theme-options.html`) for bg, surface,
+  raised, selected, border, text, muted, accent, on-accent and star; the
+  other tokens are worked out per theme. Each theme has its own GitHub state
+  colours, diff colours and syntax colours (hue fixed, lightness tuned for
+  its backgrounds). Accent buttons on the dark themes other than Midnight use
+  the board's dark on-accent text, so `accent_fill` = the board's accent.
+  Paper's muted text is `hsl(30,8%,35%)`, not the board's 38 %: 38 % is
+  below 4.5:1 on `raised`.
+- Picking a theme: settings `colors_dark` / `colors_light`, value
+  `{"kind":"theme","name":"graphite"}` (the plan's model). `main.rs` reads
+  them with `theme` in one DB read and sets the `theme::Choices` global;
+  `theme::apply` uses it for the current mode. Missing, malformed or
+  unknown values, `{"kind":"accent"}` (until step 4) and a theme of the
+  other mode load as Midnight / Daylight. No UI yet (step 5); set the rows
+  with `sqlite3` to try one.
+- Repo view: commits without a status had a `border`-coloured dot, almost
+  invisible on the light themes; now `text_faint`.
+
+Tests: the contrast tests in `theme/tests.rs` run over all eight themes;
+new: unique names and exactly Daylight / Paper light, `Choices` parsing and
+fallbacks, `apply` uses the chosen theme in each mode (kit background too).
+Clippy passes; `cargo test --workspace` 254 pass.
+
+Checked by eye (PrintWindow, release, `--offline` on copies of
+`target/tmp/shot-data` with `theme` + `colors_*` set and a saved layout per
+view; scripts `target/tmp/g2/shots.sh` and `files.sh`; images
+`target/tmp/g2s2-*.png`): Paper: Home, Inbox, Pull requests, Issues,
+Reviews, Starred, Repositories, Explore, repo overview, issue, PR
+conversation, Search, Settings, and the Files tab (10k-line diff, during a
+`--bench` run on a copy of `fake-data`). Inbox and PR conversation in
+Graphite, Fjord, Forest, Rosé and High contrast; Daylight PR and repo
+overview; High contrast Files tab.
+
+Open items from step 2 (not theme work; seen in the shots):
+
+- Home and Explore rows (`rows.rs`): the time / stars / Pin columns follow
+  the text width, not the pane's right edge, so they do not line up.
+- PR #9 in fake data: the header says `1 of 4 checks` failing while the
+  merge row says "Checks pass".
+- The native title bar follows the Windows app mode, so it stays dark in
+  the light themes.

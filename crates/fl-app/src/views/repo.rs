@@ -235,7 +235,7 @@ fn commits(o: &RepoOverview, cx: &App) -> AnyElement {
                 Some("SUCCESS") => theme.open.fg,
                 Some("FAILURE" | "ERROR") => theme.closed.fg,
                 Some("PENDING") => theme.pending.fg,
-                _ => theme.border,
+                _ => theme.text_faint,
             };
             h_flex()
                 .gap(px(10.))

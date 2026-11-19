@@ -246,6 +246,324 @@ pub const DAYLIGHT: Palette = Palette {
     avatar: (60., 90., 50., 29.),
 };
 
+/// Dark: neutral warm grey, amber accent.
+pub const GRAPHITE: Palette = Palette {
+    name: "graphite",
+    dark: true,
+    bg: hsl(30., 4., 10.),
+    surface: hsl(30., 4., 7.5),
+    raised: hsl(30., 4., 15.5),
+    control: hsl(30., 4., 13.),
+    hover: hsl(30., 4., 13.5),
+    selected: hsl(36., 32., 16.),
+    border: hsl(30., 4., 17.),
+    border_strong: hsl(30., 4., 21.),
+    backdrop: hsl_a(30., 10., 3., 0.55),
+    text_strong: hsl(40., 10., 95.),
+    text: hsl(40., 10., 91.),
+    text_body: hsl(40., 8., 83.),
+    text_read: hsl(40., 6., 75.),
+    text_muted: hsl(35., 5., 61.),
+    text_faint: hsl(35., 4., 48.),
+    accent: hsl(36., 92., 60.),
+    accent_text: hsl(36., 92., 64.),
+    accent_fill: hsl(36., 92., 60.),
+    accent_fill_hover: hsl(36., 92., 55.),
+    on_accent: hsl(30., 40., 10.),
+    star: hsl(48., 95., 60.),
+    open: state(hsl(142., 60., 56.), hsl(142., 45., 19.), hsl(142., 65., 72.)),
+    merged: state(hsl(270., 80., 74.), hsl(270., 35., 24.), hsl(270., 85., 84.)),
+    closed: state(hsl(0., 78., 67.), hsl(0., 40., 22.), hsl(0., 85., 81.)),
+    pending: state(hsl(45., 95., 58.), hsl(42., 55., 20.), hsl(45., 95., 72.)),
+    neutral: state(hsl(35., 5., 61.), hsl(30., 4., 19.), hsl(35., 6., 78.)),
+    added: hsl(142., 60., 58.),
+    removed: hsl(0., 78., 67.),
+    diff_add_bg: hsl(142., 35., 13.),
+    diff_add_fg: hsl(142., 55., 76.),
+    diff_del_bg: hsl(0., 40., 15.),
+    diff_del_fg: hsl(0., 70., 80.),
+    diff_hunk_bg: hsl(36., 20., 14.),
+    diff_gutter: hsl(35., 5., 52.),
+    diff_thread: hsl_a(48., 95., 60., 0.12),
+    syntax: Syntax {
+        keyword: hsl(15., 75., 70.),
+        string: hsl(85., 45., 66.),
+        comment: hsl(35., 5., 54.),
+        function: hsl(42., 85., 68.),
+        type_: hsl(175., 40., 62.),
+        number: hsl(280., 55., 76.),
+        property: hsl(200., 45., 74.),
+        punctuation: hsl(35., 6., 66.),
+    },
+    scrollbar_thumb: hsl_a(35., 5., 61., 0.35),
+    avatar: (40., 24., 80., 82.),
+};
+
+/// Dark, softer: lighter blue-grey, frosty cyan accent.
+pub const FJORD: Palette = Palette {
+    name: "fjord",
+    dark: true,
+    bg: hsl(218., 22., 15.),
+    surface: hsl(220., 23., 12.),
+    raised: hsl(218., 20., 20.5),
+    control: hsl(218., 20., 18.),
+    hover: hsl(218., 20., 18.5),
+    selected: hsl(205., 35., 23.),
+    border: hsl(218., 18., 22.),
+    border_strong: hsl(218., 18., 27.),
+    backdrop: hsl_a(220., 30., 5., 0.55),
+    text_strong: hsl(215., 25., 94.),
+    text: hsl(215., 25., 90.),
+    text_body: hsl(215., 20., 84.),
+    text_read: hsl(215., 16., 78.),
+    text_muted: hsl(215., 14., 68.),
+    text_faint: hsl(215., 10., 55.),
+    accent: hsl(193., 60., 62.),
+    accent_text: hsl(193., 65., 68.),
+    accent_fill: hsl(193., 60., 62.),
+    accent_fill_hover: hsl(193., 60., 56.),
+    on_accent: hsl(218., 30., 12.),
+    star: hsl(40., 85., 66.),
+    open: state(hsl(142., 50., 62.), hsl(142., 35., 24.), hsl(142., 55., 78.)),
+    merged: state(hsl(270., 70., 78.), hsl(270., 30., 29.), hsl(270., 80., 86.)),
+    closed: state(hsl(0., 70., 72.), hsl(0., 35., 27.), hsl(0., 75., 84.)),
+    pending: state(hsl(40., 85., 64.), hsl(40., 40., 24.), hsl(42., 90., 76.)),
+    neutral: state(hsl(215., 14., 68.), hsl(218., 18., 24.), hsl(215., 16., 82.)),
+    added: hsl(142., 50., 64.),
+    removed: hsl(0., 70., 72.),
+    diff_add_bg: hsl(150., 28., 19.),
+    diff_add_fg: hsl(142., 50., 80.),
+    diff_del_bg: hsl(0., 30., 21.),
+    diff_del_fg: hsl(0., 65., 84.),
+    diff_hunk_bg: hsl(205., 30., 20.),
+    diff_gutter: hsl(215., 12., 58.),
+    diff_thread: hsl_a(40., 85., 66., 0.12),
+    syntax: Syntax {
+        keyword: hsl(270., 60., 80.),
+        string: hsl(95., 40., 72.),
+        comment: hsl(215., 12., 62.),
+        function: hsl(193., 60., 70.),
+        type_: hsl(170., 40., 70.),
+        number: hsl(25., 75., 74.),
+        property: hsl(210., 55., 80.),
+        punctuation: hsl(215., 14., 72.),
+    },
+    scrollbar_thumb: hsl_a(215., 14., 68., 0.35),
+    avatar: (35., 28., 75., 84.),
+};
+
+/// Dark: deep green-black, emerald accent.
+pub const FOREST: Palette = Palette {
+    name: "forest",
+    dark: true,
+    bg: hsl(160., 14., 9.),
+    surface: hsl(160., 16., 6.5),
+    raised: hsl(160., 12., 14.5),
+    control: hsl(160., 12., 12.),
+    hover: hsl(160., 12., 12.5),
+    selected: hsl(155., 35., 16.),
+    border: hsl(160., 10., 16.),
+    border_strong: hsl(160., 10., 20.),
+    backdrop: hsl_a(160., 30., 3., 0.55),
+    text_strong: hsl(150., 12., 95.),
+    text: hsl(150., 12., 91.),
+    text_body: hsl(150., 10., 83.),
+    text_read: hsl(150., 8., 75.),
+    text_muted: hsl(155., 7., 61.),
+    text_faint: hsl(155., 6., 48.),
+    accent: hsl(152., 60., 52.),
+    accent_text: hsl(152., 60., 58.),
+    accent_fill: hsl(152., 60., 52.),
+    accent_fill_hover: hsl(152., 60., 46.),
+    on_accent: hsl(160., 40., 8.),
+    star: hsl(45., 90., 60.),
+    open: state(hsl(130., 60., 60.), hsl(130., 45., 19.), hsl(130., 65., 76.)),
+    merged: state(hsl(270., 80., 75.), hsl(270., 35., 24.), hsl(270., 85., 84.)),
+    closed: state(hsl(0., 78., 68.), hsl(0., 40., 21.), hsl(0., 85., 81.)),
+    pending: state(hsl(42., 92., 58.), hsl(42., 55., 19.), hsl(42., 95., 72.)),
+    neutral: state(hsl(155., 7., 61.), hsl(160., 10., 18.), hsl(155., 8., 78.)),
+    added: hsl(130., 60., 62.),
+    removed: hsl(0., 78., 68.),
+    diff_add_bg: hsl(140., 40., 13.),
+    diff_add_fg: hsl(135., 55., 78.),
+    diff_del_bg: hsl(0., 40., 15.),
+    diff_del_fg: hsl(0., 70., 80.),
+    diff_hunk_bg: hsl(160., 25., 13.),
+    diff_gutter: hsl(155., 6., 52.),
+    diff_thread: hsl_a(45., 90., 60., 0.12),
+    syntax: Syntax {
+        keyword: hsl(280., 60., 78.),
+        string: hsl(75., 50., 66.),
+        comment: hsl(155., 6., 54.),
+        function: hsl(195., 70., 70.),
+        type_: hsl(165., 50., 62.),
+        number: hsl(30., 80., 68.),
+        property: hsl(140., 35., 74.),
+        punctuation: hsl(155., 7., 66.),
+    },
+    scrollbar_thumb: hsl_a(155., 7., 61., 0.35),
+    avatar: (40., 22., 80., 82.),
+};
+
+/// Dark: plum-tinted, pink accent.
+pub const ROSE: Palette = Palette {
+    name: "rose",
+    dark: true,
+    bg: hsl(300., 10., 10.),
+    surface: hsl(300., 11., 7.5),
+    raised: hsl(300., 9., 15.5),
+    control: hsl(300., 9., 13.),
+    hover: hsl(300., 9., 13.5),
+    selected: hsl(330., 35., 18.),
+    border: hsl(300., 8., 17.),
+    border_strong: hsl(300., 8., 21.),
+    backdrop: hsl_a(300., 25., 3., 0.55),
+    text_strong: hsl(320., 15., 95.),
+    text: hsl(320., 15., 92.),
+    text_body: hsl(320., 12., 84.),
+    text_read: hsl(315., 9., 76.),
+    text_muted: hsl(310., 7., 63.),
+    text_faint: hsl(310., 6., 50.),
+    accent: hsl(336., 85., 70.),
+    accent_text: hsl(336., 85., 74.),
+    accent_fill: hsl(336., 85., 70.),
+    accent_fill_hover: hsl(336., 80., 64.),
+    on_accent: hsl(336., 50., 12.),
+    star: hsl(42., 95., 62.),
+    open: state(hsl(142., 60., 58.), hsl(142., 45., 19.), hsl(142., 65., 74.)),
+    merged: state(hsl(270., 85., 76.), hsl(270., 38., 25.), hsl(270., 90., 85.)),
+    closed: state(hsl(5., 80., 66.), hsl(5., 42., 22.), hsl(5., 85., 80.)),
+    pending: state(hsl(42., 95., 60.), hsl(42., 55., 20.), hsl(42., 95., 72.)),
+    neutral: state(hsl(310., 7., 63.), hsl(300., 8., 19.), hsl(310., 8., 79.)),
+    added: hsl(142., 60., 60.),
+    removed: hsl(5., 80., 67.),
+    diff_add_bg: hsl(142., 35., 13.),
+    diff_add_fg: hsl(142., 55., 76.),
+    diff_del_bg: hsl(355., 40., 16.),
+    diff_del_fg: hsl(355., 70., 81.),
+    diff_hunk_bg: hsl(330., 22., 15.),
+    diff_gutter: hsl(310., 6., 54.),
+    diff_thread: hsl_a(42., 95., 62., 0.12),
+    syntax: Syntax {
+        keyword: hsl(336., 75., 76.),
+        string: hsl(85., 45., 68.),
+        comment: hsl(310., 6., 55.),
+        function: hsl(265., 75., 80.),
+        type_: hsl(185., 45., 66.),
+        number: hsl(25., 85., 72.),
+        property: hsl(210., 55., 78.),
+        punctuation: hsl(310., 8., 68.),
+    },
+    scrollbar_thumb: hsl_a(310., 7., 63., 0.35),
+    avatar: (40., 24., 82., 83.),
+};
+
+/// Dark, accessible: pure black, white text, yellow accent, strong borders.
+pub const HIGH_CONTRAST: Palette = Palette {
+    name: "high-contrast",
+    dark: true,
+    bg: hsl(0., 0., 0.),
+    surface: hsl(0., 0., 0.),
+    raised: hsl(0., 0., 16.),
+    control: hsl(0., 0., 8.),
+    hover: hsl(0., 0., 14.),
+    selected: hsl(55., 100., 16.),
+    border: hsl(0., 0., 55.),
+    border_strong: hsl(0., 0., 70.),
+    backdrop: hsl_a(0., 0., 0., 0.7),
+    text_strong: hsl(0., 0., 100.),
+    text: hsl(0., 0., 100.),
+    text_body: hsl(0., 0., 96.),
+    text_read: hsl(0., 0., 92.),
+    text_muted: hsl(0., 0., 82.),
+    text_faint: hsl(0., 0., 70.),
+    accent: hsl(55., 100., 55.),
+    accent_text: hsl(55., 100., 60.),
+    accent_fill: hsl(55., 100., 55.),
+    accent_fill_hover: hsl(55., 100., 65.),
+    on_accent: hsl(0., 0., 0.),
+    star: hsl(55., 100., 55.),
+    open: state(hsl(142., 75., 62.), hsl(142., 70., 16.), hsl(142., 85., 82.)),
+    merged: state(hsl(270., 100., 80.), hsl(270., 55., 22.), hsl(270., 100., 88.)),
+    closed: state(hsl(0., 100., 72.), hsl(0., 70., 20.), hsl(0., 100., 86.)),
+    pending: state(hsl(40., 100., 62.), hsl(40., 80., 17.), hsl(40., 100., 78.)),
+    neutral: state(hsl(0., 0., 82.), hsl(0., 0., 18.), hsl(0., 0., 92.)),
+    added: hsl(142., 75., 62.),
+    removed: hsl(0., 100., 72.),
+    diff_add_bg: hsl(142., 60., 12.),
+    diff_add_fg: hsl(142., 80., 82.),
+    diff_del_bg: hsl(0., 60., 14.),
+    diff_del_fg: hsl(0., 100., 87.),
+    diff_hunk_bg: hsl(55., 60., 10.),
+    diff_gutter: hsl(0., 0., 72.),
+    diff_thread: hsl_a(55., 100., 55., 0.16),
+    syntax: Syntax {
+        keyword: hsl(275., 100., 82.),
+        string: hsl(95., 70., 70.),
+        comment: hsl(0., 0., 72.),
+        function: hsl(205., 100., 75.),
+        type_: hsl(175., 70., 62.),
+        number: hsl(25., 100., 70.),
+        property: hsl(195., 90., 80.),
+        punctuation: hsl(0., 0., 88.),
+    },
+    scrollbar_thumb: hsl_a(0., 0., 82., 0.5),
+    avatar: (50., 22., 90., 88.),
+};
+
+/// Light, warm: off-white, deep teal accent.
+pub const PAPER: Palette = Palette {
+    name: "paper",
+    dark: false,
+    bg: hsl(40., 30., 98.),
+    surface: hsl(40., 22., 94.),
+    raised: hsl(40., 16., 88.),
+    control: hsl(40., 30., 99.),
+    hover: hsl(40., 22., 95.),
+    selected: hsl(178., 40., 90.),
+    border: hsl(40., 14., 86.),
+    border_strong: hsl(40., 14., 79.),
+    backdrop: hsl_a(30., 20., 10., 0.35),
+    text_strong: hsl(30., 18., 9.),
+    text: hsl(30., 15., 14.),
+    text_body: hsl(30., 12., 21.),
+    text_read: hsl(30., 10., 28.),
+    text_muted: hsl(30., 8., 35.),
+    text_faint: hsl(30., 6., 52.),
+    accent: hsl(178., 65., 30.),
+    accent_text: hsl(178., 65., 26.),
+    accent_fill: hsl(178., 65., 30.),
+    accent_fill_hover: hsl(178., 65., 25.),
+    on_accent: hsl(0., 0., 100.),
+    star: hsl(36., 95., 42.),
+    open: state(hsl(137., 66., 29.), hsl(137., 45., 88.), hsl(137., 70., 21.)),
+    merged: state(hsl(262., 55., 48.), hsl(262., 60., 92.), hsl(262., 55., 36.)),
+    closed: state(hsl(356., 72., 43.), hsl(356., 70., 92.), hsl(356., 70., 33.)),
+    pending: state(hsl(36., 100., 28.), hsl(42., 85., 86.), hsl(34., 100., 23.)),
+    neutral: state(hsl(30., 8., 35.), hsl(40., 16., 89.), hsl(30., 12., 26.)),
+    added: hsl(137., 66., 29.),
+    removed: hsl(356., 72., 43.),
+    diff_add_bg: hsl(120., 40., 91.),
+    diff_add_fg: hsl(137., 55., 18.),
+    diff_del_bg: hsl(356., 65., 94.),
+    diff_del_fg: hsl(356., 60., 30.),
+    diff_hunk_bg: hsl(178., 30., 92.),
+    diff_gutter: hsl(30., 6., 44.),
+    diff_thread: hsl_a(42., 95., 50., 0.14),
+    syntax: Syntax {
+        keyword: hsl(320., 55., 38.),
+        string: hsl(110., 50., 25.),
+        comment: hsl(30., 8., 40.),
+        function: hsl(210., 70., 36.),
+        type_: hsl(178., 70., 23.),
+        number: hsl(20., 85., 34.),
+        property: hsl(195., 70., 29.),
+        punctuation: hsl(30., 10., 34.),
+    },
+    scrollbar_thumb: hsl_a(30., 8., 35., 0.3),
+    avatar: (55., 85., 50., 26.),
+};
+
 impl Global for Palette {}
 
 pub trait ActivePalette {
@@ -266,10 +584,42 @@ pub(crate) fn stable_hash(s: &str) -> u32 {
     s.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))
 }
 
-impl Palette {
-    pub fn for_mode(dark: bool) -> &'static Palette {
-        if dark { &MIDNIGHT } else { &DAYLIGHT }
+/// Every built-in theme: the dark ones, then the light ones.
+pub const THEMES: [&Palette; 8] = [&MIDNIGHT, &GRAPHITE, &FJORD, &FOREST, &ROSE, &HIGH_CONTRAST, &DAYLIGHT, &PAPER];
+
+/// The theme used in each mode (settings `colors_dark` / `colors_light`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Choices {
+    pub dark: &'static Palette,
+    pub light: &'static Palette,
+}
+
+impl Default for Choices {
+    fn default() -> Self {
+        Self { dark: &MIDNIGHT, light: &DAYLIGHT }
     }
+}
+
+impl Global for Choices {}
+
+impl Choices {
+    /// From the saved `colors_dark` / `colors_light` values, for example
+    /// `{"kind":"theme","name":"graphite"}`. Missing, malformed or unknown
+    /// values, and a theme of the other mode, load as the default.
+    pub fn from_settings(dark: Option<&str>, light: Option<&str>) -> Self {
+        let pick = |value: Option<&str>, is_dark: bool, default: &'static Palette| {
+            let v: serde_json::Value = value.and_then(|v| serde_json::from_str(v).ok()).unwrap_or_default();
+            if v["kind"] != "theme" {
+                return default;
+            }
+            THEMES.into_iter().find(|p| p.dark == is_dark && v["name"] == p.name).unwrap_or(default)
+        };
+        let d = Self::default();
+        Self { dark: pick(dark, true, d.dark), light: pick(light, false, d.light) }
+    }
+}
+
+impl Palette {
 
     /// Avatar fill and initials colour for `login`.
     pub fn avatar(&self, login: &str) -> (Hsla, Hsla) {
@@ -443,14 +793,15 @@ pub fn mode_from_setting(value: Option<&str>) -> Option<ThemeMode> {
     }
 }
 
-/// Switch to `mode` (`None`: the system's), then write Forkline's palette
-/// for it over the kit theme.
+/// Switch to `mode` (`None`: the system's), then write the palette chosen for
+/// it ([`Choices`] global, else Midnight / Daylight) over the kit theme.
 pub fn apply(mode: Option<ThemeMode>, window: Option<&mut Window>, cx: &mut App) {
     match mode {
         Some(mode) => Theme::change(mode, window, cx),
         None => Theme::sync_system_appearance(window, cx),
     }
-    let palette = *Palette::for_mode(Theme::global(cx).is_dark());
+    let choices = cx.try_global::<Choices>().copied().unwrap_or_default();
+    let palette = if Theme::global(cx).is_dark() { *choices.dark } else { *choices.light };
     Theme::update(cx, |t| palette.write_kit(t));
     cx.set_global(palette);
 }

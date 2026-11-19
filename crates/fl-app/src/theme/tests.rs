@@ -2,7 +2,7 @@ use gpui_kit::{Hsla, hsla};
 
 use super::*;
 
-const PALETTES: [&Palette; 2] = [&MIDNIGHT, &DAYLIGHT];
+const PALETTES: [&Palette; 8] = THEMES;
 
 #[track_caller]
 fn at_least(min: f32, fg: Hsla, bg: Hsla, what: &str, p: &Palette) {
@@ -95,6 +95,48 @@ fn an_avatar_colour_is_stable() {
     assert_eq!(stable_hash("jaival"), stable_hash("jaival"));
     assert_eq!(stable_hash(""), 0x811c_9dc5);
     assert_eq!(MIDNIGHT.avatar("lena-dev"), MIDNIGHT.avatar("lena-dev"));
+}
+
+#[test]
+fn every_theme_has_a_unique_name_and_two_are_light() {
+    let mut names: Vec<_> = THEMES.iter().map(|p| p.name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), THEMES.len());
+    let light: Vec<_> = THEMES.iter().filter(|p| !p.dark).map(|p| p.name).collect();
+    assert_eq!(light, ["daylight", "paper"]);
+}
+
+#[test]
+fn saved_theme_choices_parse_and_fall_back_to_the_defaults() {
+    let theme = |name: &str| format!(r#"{{"kind":"theme","name":"{name}"}}"#);
+    let c = Choices::from_settings(Some(&theme("graphite")), Some(&theme("paper")));
+    assert_eq!((c.dark.name, c.light.name), ("graphite", "paper"));
+    for p in THEMES {
+        let c = Choices::from_settings(Some(&theme(p.name)), Some(&theme(p.name)));
+        let picked = if p.dark { c.dark } else { c.light };
+        assert_eq!(picked.name, p.name);
+    }
+    let defaults = Choices::default();
+    for bad in [None, Some("not json"), Some("{}"), Some(r#"{"kind":"accent"}"#), Some(theme("sepia").as_str())] {
+        assert_eq!(Choices::from_settings(bad, bad), defaults, "{bad:?}");
+    }
+    // A theme of the other mode is ignored.
+    assert_eq!(Choices::from_settings(Some(&theme("paper")), Some(&theme("forest"))), defaults);
+}
+
+#[gpui_kit::test]
+fn apply_uses_the_chosen_theme_for_each_mode(cx: &mut gpui_kit::TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_global(Choices { dark: &FJORD, light: &PAPER });
+        apply(Some(ThemeMode::Dark), None, cx);
+        assert_eq!(cx.palette().name, "fjord");
+        assert_eq!(Theme::global(cx).background, FJORD.bg);
+        apply(Some(ThemeMode::Light), None, cx);
+        assert_eq!(cx.palette().name, "paper");
+        assert_eq!(Theme::global(cx).background, PAPER.bg);
+    });
 }
 
 #[test]

@@ -98,8 +98,13 @@ fn main() {
         }
         bench::mark("store_ready", cx);
 
-        let theme = Store::global(cx).read(cx).db().read(|c| layout::setting(c, "theme")).ok().flatten();
-        theme::apply(theme::mode_from_setting(theme.as_deref()), None, cx);
+        let [mode, dark, light] = Store::global(cx)
+            .read(cx)
+            .db()
+            .read(|c| Ok(["theme", "colors_dark", "colors_light"].map(|key| layout::setting(c, key).ok().flatten())))
+            .unwrap_or_default();
+        cx.set_global(theme::Choices::from_settings(dark.as_deref(), light.as_deref()));
+        theme::apply(theme::mode_from_setting(mode.as_deref()), None, cx);
 
         let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
