@@ -1256,12 +1256,18 @@ Open items from step 2 (not theme work; seen in the shots):
   roll-up `check_state`, as the merge row does (the check list decides
   only without one); `fl-fake` derives the roll-up from its checks.
   Regenerate fake data to see consistent states.
-- Open: the native title bar follows the Windows app mode (GPUI calls
-  `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` from the OS
-  appearance only), so it stays dark in the light themes. The fix is one
-  DWM call with the window's HWND after each `theme::apply`, which needs
-  `unsafe`; the workspace has `unsafe_code = "forbid"`. Waiting for a
-  decision.
+- Fixed (decided 2026-11-19): the native title bar followed only the
+  Windows app mode (GPUI sets `DWMWA_USE_IMMERSIVE_DARK_MODE` from the OS
+  appearance), so it stayed dark in the light themes. New crate
+  `crates/fl-win`: the **only crate allowed to use `unsafe`** (its own
+  `[lints]`; `undocumented_unsafe_blocks = "deny"`), with safe wrappers over
+  Win32 calls GPUI does not expose. `fl_win::set_dark_title_bar(hwnd, dark)`
+  is called by `theme::sync_title_bar` from `theme::apply` (with a window)
+  and in `main.rs` while the window is built (before the first frame). Test
+  windows have no Win32 handle, so it is a no-op in tests. Checked by eye:
+  Paper light bar, Midnight dark bar (`target/tmp/g2s3tb-*.png`). Open: if
+  the OS switches app mode while Forkline runs, GPUI sets the bar from the
+  OS again until the next theme change.
 
 Done (step 3, repository colours, 2026-11-19):
 

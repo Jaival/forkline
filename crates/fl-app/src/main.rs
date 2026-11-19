@@ -112,6 +112,7 @@ fn main() {
         let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Forkline");
+            theme::sync_title_bar(window, cx.global::<theme::Palette>().dark);
             cx.new(|cx| Workspace::new(!bench, window, cx))
         })
         .expect("cannot open the main window");

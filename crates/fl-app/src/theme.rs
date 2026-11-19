@@ -872,15 +872,30 @@ pub fn mode_from_setting(value: Option<&str>) -> Option<ThemeMode> {
 
 /// Switch to `mode` (`None`: the system's), then write the palette chosen for
 /// it ([`Choices`] global, else Midnight / Daylight) over the kit theme.
-pub fn apply(mode: Option<ThemeMode>, window: Option<&mut Window>, cx: &mut App) {
+pub fn apply(mode: Option<ThemeMode>, mut window: Option<&mut Window>, cx: &mut App) {
     match mode {
-        Some(mode) => Theme::change(mode, window, cx),
-        None => Theme::sync_system_appearance(window, cx),
+        Some(mode) => Theme::change(mode, window.as_deref_mut(), cx),
+        None => Theme::sync_system_appearance(window.as_deref_mut(), cx),
     }
     let choices = cx.try_global::<Choices>().copied().unwrap_or_default();
     let palette = if Theme::global(cx).is_dark() { *choices.dark } else { *choices.light };
     Theme::update(cx, |t| palette.write_kit(t));
     cx.set_global(palette);
+    if let Some(window) = window {
+        sync_title_bar(window, palette.dark);
+    }
+}
+
+/// Make the window's native title bar dark or light like the palette (GPUI
+/// follows only the Windows app mode). No-op where the window has no Win32
+/// handle (other platforms, test windows).
+pub fn sync_title_bar(window: &Window, dark: bool) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    if let Ok(handle) = HasWindowHandle::window_handle(window)
+        && let RawWindowHandle::Win32(h) = handle.as_raw()
+    {
+        fl_win::set_dark_title_bar(h.hwnd.get(), dark);
+    }
 }
 
 /// Relative luminance (WCAG 2). Test-only until the accent's contrast pass (G2 step 4).

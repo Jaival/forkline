@@ -1840,7 +1840,9 @@ dependencies = [
  "fl-search",
  "fl-sync",
  "fl-types",
+ "fl-win",
  "gpui-kit",
+ "raw-window-handle",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1927,6 +1929,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "fl-win"
+version = "0.1.0"
+dependencies = [
+ "windows 0.62.2",
 ]
 
 [[package]]
