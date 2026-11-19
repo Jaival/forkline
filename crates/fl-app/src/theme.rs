@@ -6,11 +6,15 @@
 //! gpui-component theme too, so kit widgets (inputs, menus, buttons, the dock)
 //! match. Values: `docs/design/mockups/` ("Forkline after", "Theme options").
 
+mod derive;
+
 use std::sync::Arc;
 
 use gpui_kit::component::highlighter::{HighlightTheme, ThemeStyle};
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Global, Hsla, Pixels, Rgba, Window, hsla, px};
+
+pub use derive::{Accent, derive};
 
 // Type scale (px). Every text style also sets its line height, so a font with
 // taller metrics cannot change a fixed row height.
@@ -651,16 +655,17 @@ pub(crate) fn stable_hash(s: &str) -> u32 {
 /// Every built-in theme: the dark ones, then the light ones.
 pub const THEMES: [&Palette; 8] = [&MIDNIGHT, &GRAPHITE, &FJORD, &FOREST, &ROSE, &HIGH_CONTRAST, &DAYLIGHT, &PAPER];
 
-/// The theme used in each mode (settings `colors_dark` / `colors_light`).
+/// The palette used in each mode (settings `colors_dark` / `colors_light`):
+/// a built-in theme or the one derived from the `accent` setting.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Choices {
-    pub dark: &'static Palette,
-    pub light: &'static Palette,
+    pub dark: Palette,
+    pub light: Palette,
 }
 
 impl Default for Choices {
     fn default() -> Self {
-        Self { dark: &MIDNIGHT, light: &DAYLIGHT }
+        Self { dark: MIDNIGHT, light: DAYLIGHT }
     }
 }
 
@@ -668,15 +673,18 @@ impl Global for Choices {}
 
 impl Choices {
     /// From the saved `colors_dark` / `colors_light` values, for example
-    /// `{"kind":"theme","name":"graphite"}`. Missing, malformed or unknown
-    /// values, and a theme of the other mode, load as the default.
-    pub fn from_settings(dark: Option<&str>, light: Option<&str>) -> Self {
-        let pick = |value: Option<&str>, is_dark: bool, default: &'static Palette| {
+    /// `{"kind":"theme","name":"graphite"}` or `{"kind":"accent"}` (the
+    /// palette derived from `accent`, see [`Accent::from_setting`]). Missing,
+    /// malformed or unknown values, and a theme of the other mode, load as the
+    /// default.
+    pub fn from_settings(dark: Option<&str>, light: Option<&str>, accent: Option<&str>) -> Self {
+        let pick = |value: Option<&str>, is_dark: bool, default: Palette| {
             let v: serde_json::Value = value.and_then(|v| serde_json::from_str(v).ok()).unwrap_or_default();
-            if v["kind"] != "theme" {
-                return default;
+            match v["kind"].as_str() {
+                Some("accent") => derive(Accent::from_setting(accent), is_dark),
+                Some("theme") => THEMES.into_iter().find(|p| p.dark == is_dark && v["name"] == p.name).copied().unwrap_or(default),
+                _ => default,
             }
-            THEMES.into_iter().find(|p| p.dark == is_dark && v["name"] == p.name).unwrap_or(default)
         };
         let d = Self::default();
         Self { dark: pick(dark, true, d.dark), light: pick(light, false, d.light) }
@@ -878,7 +886,7 @@ pub fn apply(mode: Option<ThemeMode>, mut window: Option<&mut Window>, cx: &mut 
         None => Theme::sync_system_appearance(window.as_deref_mut(), cx),
     }
     let choices = cx.try_global::<Choices>().copied().unwrap_or_default();
-    let palette = if Theme::global(cx).is_dark() { *choices.dark } else { *choices.light };
+    let palette = if Theme::global(cx).is_dark() { choices.dark } else { choices.light };
     Theme::update(cx, |t| palette.write_kit(t));
     cx.set_global(palette);
     if let Some(window) = window {
@@ -898,8 +906,7 @@ pub fn sync_title_bar(window: &Window, dark: bool) {
     }
 }
 
-/// Relative luminance (WCAG 2). Test-only until the accent's contrast pass (G2 step 4).
-#[cfg(test)]
+/// Relative luminance (WCAG 2).
 pub fn luminance(c: Hsla) -> f32 {
     let Rgba { r, g, b, .. } = c.to_rgb();
     let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
@@ -907,7 +914,6 @@ pub fn luminance(c: Hsla) -> f32 {
 }
 
 /// WCAG contrast ratio of two opaque colours.
-#[cfg(test)]
 pub fn contrast(a: Hsla, b: Hsla) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)

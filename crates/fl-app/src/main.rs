@@ -99,12 +99,12 @@ fn main() {
         }
         bench::mark("store_ready", cx);
 
-        let [mode, dark, light] = Store::global(cx)
+        let [mode, dark, light, accent] = Store::global(cx)
             .read(cx)
             .db()
-            .read(|c| Ok(["theme", "colors_dark", "colors_light"].map(|key| layout::setting(c, key).ok().flatten())))
+            .read(|c| Ok(["theme", "colors_dark", "colors_light", "accent"].map(|key| layout::setting(c, key).ok().flatten())))
             .unwrap_or_default();
-        cx.set_global(theme::Choices::from_settings(dark.as_deref(), light.as_deref()));
+        cx.set_global(theme::Choices::from_settings(dark.as_deref(), light.as_deref(), accent.as_deref()));
         let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
         cx.set_global(theme::RepoColors::new(picked));
         theme::apply(theme::mode_from_setting(mode.as_deref()), None, cx);

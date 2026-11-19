@@ -1310,3 +1310,62 @@ Open items from step 3:
   indigo unread dot; a larger gap would push it onto Cyan.
 - Home and Search rows show a repo name without a dot (the plan lists only
   queue rows).
+
+Done (step 4, accent derivation, 2026-11-19):
+
+- `crates/fl-app/src/theme/derive.rs`: `Accent { hue, muted, tint }` and
+  `derive(accent, dark) -> Palette` (pure). Setting `accent`:
+  `{"hue":0-359,"chroma":"normal"|"muted","tint":true|false}`; missing or
+  malformed (also hue >= 360, a non-integer hue, an unknown chroma, a
+  missing key) = indigo 268, normal, tinted. The palette's `name` is
+  `"accent"`.
+- Targets in OKLCH from the "Custom accent" board (dark: bg 0.19, surface
+  0.165, raised 0.245, border 0.27, selected 0.29 at chroma 0.06, text 0.94,
+  muted 0.71, accent 0.70 at 0.16, accent text 0.78; light: bg 0.995,
+  surface 0.972, raised 0.935, border 0.91, selected 0.95 at 0.035, text
+  0.22, muted 0.50, accent 0.55 at 0.17, accent text 0.50). Not on the
+  board, chosen here: control / hover / border-strong / text-strong / body /
+  read / faint, diff hunk, gutter, comment and punctuation; muted chroma
+  (accent 0.09 dark / 0.10 light, selection 0.035 / 0.02). Tint off sets the
+  surface and text chroma to 0 (selection and accent keep theirs). Colours
+  outside sRGB lose chroma (binary search) and keep L and hue.
+- Contrast pass (`fit`): a token that misses its rule moves its OKLCH L away
+  from the backgrounds in 0.005 steps. Buttons: dark mode = near-black text
+  (L 0.2) on the accent; light mode = white text, fill darkened until
+  >= 4.5:1. GitHub states, `added` / `removed`, star and the six coloured
+  syntax tokens start from Midnight / Daylight and move in HSL lightness
+  (`fit_hsla`, hue kept). `neutral` = muted text on `raised`. Repo dots:
+  Midnight / Daylight saturation, lightness moved until all ten hues (after
+  the 15 degree gap from the accent) pass on bg, surface, selected, control.
+  Yellow / amber accents in light mode end up brownish: the 3:1 / 4.5:1
+  rules force it.
+- `Choices` now holds `Palette` values, not `&'static`;
+  `Choices::from_settings(dark, light, accent)`. `{"kind":"accent"}` loads
+  `derive(Accent::from_setting(accent), mode)`. `main.rs` reads `accent` in
+  the same DB read as `theme` / `colors_*`. `luminance` / `contrast` are no
+  longer test-only. No picker (step 5): set the rows with `sqlite3`.
+
+Tests: the contrast tests in `theme/tests.rs` now run over the eight themes
+plus `derive` for every hue in steps of 5, both modes, both chroma levels,
+both tint settings (576 palettes): text, muted, read, body, accent, accent
+text, button text, states, pills, diff, syntax on every code background,
+avatars, label hues, repo dots and their accent gap. New: `accent` parsing
+and fallbacks, `{"kind":"accent"}` loads the derived palette (and indigo
+without a setting), the derived accent keeps its hue, muted is calmer, tint
+off is grey. Clippy passes; `cargo test --workspace` 261 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/accent.sh <hue>
+<normal|muted> <true|false> <dark|light> <views>`; images
+`target/tmp/g2s4-*.png`): indigo 268 dark Inbox + PR, green 150 light Inbox
++ PR, red 25 muted untinted dark Inbox, amber 75 light Inbox, teal 185 muted
+dark PR.
+
+Open items from step 4:
+
+- A green accent (about 140-160) looks like the `open` state colour, a red
+  one (about 15-35) like `closed`; states keep their hues by design.
+- Not measured: the cost of `derive` at startup (about 600 contrast checks;
+  expected well under 1 ms). Step 7's bench covers it.
+
+Next: step 5 (picker: "Appearance…" dialog, theme cards, 12 swatches, hue
+slider, the two switches, contrast readout, live apply, Esc restores).
