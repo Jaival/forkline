@@ -41,7 +41,7 @@ fn j_k_and_enter_open_the_item(cx: &mut TestAppContext) {
     press(cx, handle, "k");
     assert_eq!(selected(cx, &view), Some(2));
     press(cx, handle, "enter");
-    assert_eq!(tabs(cx, &ws), ["Inbox", "Home", "*Pull request 2"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "Home", "*#2 new pr"]);
 }
 
 #[gpui_kit::test]
@@ -51,7 +51,7 @@ fn enter_on_an_issue_opens_an_issue_tab(cx: &mut TestAppContext) {
     press(cx, handle, "j");
     press(cx, handle, "j");
     press(cx, handle, "enter");
-    assert_eq!(tabs(cx, &ws), ["Inbox", "Home", "*Issue 4"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "Home", "*#4 middle issue"]);
 }
 
 #[gpui_kit::test]

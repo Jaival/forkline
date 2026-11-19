@@ -498,14 +498,14 @@ fn closing_a_pr_tab_with_drafts_asks_first(cx: &mut TestAppContext) {
     let (handle, ws) = start(cx, dir.path());
     let tab = open_pr_tab(cx, handle, &ws);
     add_draft(cx, handle, &tab, "unsent");
-    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*#1 a pull request"]);
 
     // Ctrl+W asks; Cancel keeps the tab.
     press(cx, handle, "ctrl-w");
     assert!(cx.has_pending_prompt());
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*#1 a pull request"]);
 
     // The tab's own close button asks too; Close tab closes it. The
     // drafts stay for the session.

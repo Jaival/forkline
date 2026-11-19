@@ -43,6 +43,7 @@ use gpui_kit::{
 
 use super::action_bar::CancelReply;
 use super::tabs;
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
@@ -475,15 +476,15 @@ impl FilesTab {
     }
 
     fn file_list(&self, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let viewed = self.files.iter().filter(|f| self.viewed.contains(f.path())).count();
         let rows = self.files.iter().enumerate().map(|(ix, file)| {
             let is_viewed = self.viewed.contains(file.path());
             let (letter, color) = match file.status() {
-                DiffFileStatus::Added => ("A", theme.success),
-                DiffFileStatus::Deleted => ("D", theme.danger),
-                DiffFileStatus::Renamed | DiffFileStatus::Copied => ("R", theme.info),
-                _ => ("M", theme.warning),
+                DiffFileStatus::Added => ("A", theme.open.fg),
+                DiffFileStatus::Deleted => ("D", theme.closed.fg),
+                DiffFileStatus::Renamed | DiffFileStatus::Copied => ("R", theme.accent_text),
+                _ => ("M", theme.pending.fg),
             };
             let name = file.path().rsplit('/').next().unwrap_or(file.path()).to_owned();
             h_flex()
@@ -494,19 +495,19 @@ impl FilesTab {
                 .items_center()
                 .rounded(px(4.))
                 .text_xs()
-                .font_family(theme.mono_font_family.clone())
-                .when(self.current == Some(ix), |d| d.bg(theme.accent).text_color(theme.accent_foreground))
-                .when(is_viewed, |d| d.text_color(theme.muted_foreground))
-                .hover(|d| d.bg(theme.accent.opacity(0.5)))
+                .font_family(cx.theme().mono_font_family.clone())
+                .when(self.current == Some(ix), |d| d.bg(theme.selected).text_color(theme.text))
+                .when(is_viewed, |d| d.text_color(theme.text_muted))
+                .hover(|d| d.bg(theme.hover))
                 .child(div().w(px(12.)).flex_none().text_color(color).child(letter))
                 .child(
                     div()
                         .w(px(12.))
                         .flex_none()
-                        .when(is_viewed, |d| d.child(Icon::new(IconName::Check).with_size(px(12.)).text_color(theme.success))),
+                        .when(is_viewed, |d| d.child(Icon::new(IconName::Check).with_size(px(12.)).text_color(theme.open.fg))),
                 )
                 .child(div().flex_1().min_w_0().truncate().child(name))
-                .child(div().flex_none().text_color(theme.success).child(format!("+{}", file.additions())))
+                .child(div().flex_none().text_color(theme.open.fg).child(format!("+{}", file.additions())))
                 .on_click(cx.listener(move |this, _, _, cx| this.select(ix, cx)))
         });
         v_flex()
@@ -519,13 +520,13 @@ impl FilesTab {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(theme.border)
-            .bg(theme.sidebar)
+            .bg(theme.surface)
             .child(
                 div()
                     .px(px(4.))
                     .pb(px(4.))
                     .text_xs()
-                    .text_color(theme.muted_foreground)
+                    .text_color(theme.text_muted)
                     .child(format!("Files \u{b7} {viewed} of {} viewed", self.files.len())),
             )
             .children(rows)
@@ -533,7 +534,7 @@ impl FilesTab {
     }
 
     fn toolbar(&self, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let current = self.current.and_then(|ix| self.files.get(ix));
         let is_viewed = current.is_some_and(|f| self.viewed.contains(f.path()));
         let split = self.diff.as_ref().is_some_and(|d| d.read(cx).mode() == DiffMode::Split);
@@ -545,17 +546,17 @@ impl FilesTab {
             .items_center()
             .border_b_1()
             .border_color(theme.border)
-            .bg(theme.secondary)
+            .bg(theme.raised)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_xs()
-                    .font_family(theme.mono_font_family.clone())
+                    .font_family(cx.theme().mono_font_family.clone())
                     .children(current.map(|f| f.path().clone())),
             )
-            .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child("[ ] file"))
+            .child(div().flex_none().text_xs().text_color(theme.text_muted).child("[ ] file"))
             .child(
                 Button::new("files-comment")
                     .xsmall()
@@ -578,14 +579,14 @@ impl FilesTab {
                     .selected(is_viewed)
                     .when(is_viewed, |b| b.icon(IconName::Check))
                     .label("Viewed")
-                    .child(div().text_xs().text_color(theme.muted_foreground).child("V"))
+                    .child(div().text_xs().text_color(theme.text_muted).child("V"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_current(cx))),
             )
             .into_any_element()
     }
 
     fn rail(&self, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let open = self.threads.iter().filter(|t| !t.is_resolved).count();
         let cards = self.threads.iter().enumerate().map(|(ix, t)| {
             let place = match t.line {
@@ -602,9 +603,9 @@ impl FilesTab {
                             .gap(px(4.))
                             .child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(c.author.clone()))
                             // Local rows have negative ids until GitHub confirms them.
-                            .when(c.id < 0, |d| d.child(div().text_color(theme.muted_foreground).child("sending"))),
+                            .when(c.id < 0, |d| d.child(div().text_color(theme.text_muted).child("sending"))),
                     )
-                    .child(div().text_color(theme.foreground).child(body))
+                    .child(div().text_color(theme.text).child(body))
             });
             let (id, resolved) = (t.id, t.is_resolved);
             let reply = self.reply.as_ref().filter(|(open, _)| *open == id).map(|(_, state)| state.clone());
@@ -638,7 +639,7 @@ impl FilesTab {
                     v_flex()
                         .id(("files-thread", ix))
                         .when(resolved, |d| d.opacity(0.6))
-                        .when(t.line.is_some(), |d| d.cursor_pointer().hover(|d| d.bg(theme.accent.opacity(0.3))))
+                        .when(t.line.is_some(), |d| d.cursor_pointer().hover(|d| d.bg(theme.hover)))
                         .child(
                             h_flex()
                                 .px(px(8.))
@@ -646,23 +647,23 @@ impl FilesTab {
                                 .gap(px(6.))
                                 .border_b_1()
                                 .border_color(theme.border)
-                                .bg(theme.secondary)
+                                .bg(theme.raised)
                                 .child(
                                     div()
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .font_family(theme.mono_font_family.clone())
+                                        .font_family(cx.theme().mono_font_family.clone())
                                         .child(place),
                                 )
-                                .when(t.pending, |d| d.child(div().text_color(theme.muted_foreground).child("syncing")))
-                                .when(resolved, |d| d.child(div().text_color(theme.muted_foreground).child("resolved"))),
+                                .when(t.pending, |d| d.child(div().text_color(theme.text_muted).child("syncing")))
+                                .when(resolved, |d| d.child(div().text_color(theme.text_muted).child("resolved"))),
                         )
                         .child(v_flex().px(px(8.)).py(px(6.)).gap(px(6.)).children(comments).when(
                             shown < t.comments.len(),
                             |d| {
                                 let n = t.comments.len() - shown;
-                                d.child(div().text_color(theme.muted_foreground).child(format!("{n} more replies")))
+                                d.child(div().text_color(theme.text_muted).child(format!("{n} more replies")))
                             },
                         ))
                         .on_click(cx.listener(move |this, _, _, cx| this.show_thread(ix, cx))),
@@ -681,7 +682,7 @@ impl FilesTab {
                                 h_flex()
                                     .gap(px(4.))
                                     .items_center()
-                                    .text_color(theme.muted_foreground)
+                                    .text_color(theme.text_muted)
                                     .child("Ctrl+Enter")
                                     .child(div().flex_1())
                                     .child(
@@ -706,10 +707,10 @@ impl FilesTab {
         });
         let checks = self.checks.iter().map(|c| {
             let color = match c.conclusion.as_deref() {
-                Some("SUCCESS") => theme.success,
-                Some("FAILURE" | "TIMED_OUT" | "CANCELLED") => theme.danger,
-                None => theme.warning,
-                Some(_) => theme.muted_foreground,
+                Some("SUCCESS") => theme.open.fg,
+                Some("FAILURE" | "TIMED_OUT" | "CANCELLED") => theme.closed.fg,
+                None => theme.pending.fg,
+                Some(_) => theme.text_muted,
             };
             h_flex()
                 .gap(px(6.))
@@ -733,27 +734,27 @@ impl FilesTab {
                     .gap(px(6.))
                     .text_sm()
                     .child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Threads"))
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(format!("{open} open"))),
+                    .child(div().text_xs().text_color(theme.text_muted).child(format!("{open} open"))),
             )
             .when_some(self.notice.clone(), |d, notice| {
-                d.child(div().id("files-notice").test_support().text_xs().text_color(theme.danger).child(notice))
+                d.child(div().id("files-notice").test_support().text_xs().text_color(theme.closed.fg).child(notice))
             })
             .when(self.threads.is_empty(), |d| {
-                d.child(div().text_xs().text_color(theme.muted_foreground).child("No review threads."))
+                d.child(div().text_xs().text_color(theme.text_muted).child("No review threads."))
             })
             .children(cards)
             .when(self.more_threads, |d| {
-                d.child(div().text_xs().text_color(theme.muted_foreground).child("More threads on GitHub."))
+                d.child(div().text_xs().text_color(theme.text_muted).child("More threads on GitHub."))
             })
             .when(!self.checks.is_empty(), |d| {
-                d.child(div().pt(px(4.)).text_xs().text_color(theme.muted_foreground).child("CHECKS")).children(checks)
+                d.child(div().pt(px(4.)).text_xs().text_color(theme.text_muted).child("CHECKS")).children(checks)
             })
             .into_any_element()
     }
 
     /// Tint the lines that carry a review thread.
     fn decorations(&self, cx: &App) -> Vec<DiffDecoration> {
-        let tint = cx.theme().info.opacity(0.12);
+        let tint = cx.palette().diff_thread;
         self.threads
             .iter()
             .filter(|t| !t.is_resolved)
@@ -813,7 +814,7 @@ impl Render for FilesTab {
                     .selected(on)
                     .when(on, |b| b.icon(IconName::Check))
                     .label("Viewed")
-                    .text_color(cx.theme().muted_foreground)
+                    .text_color(cx.palette().text_muted)
                     .on_click(move |_, _, cx| {
                         let _ = this.update(cx, |this, cx| this.set_viewed(path.clone(), !on, cx));
                     })
@@ -857,7 +858,7 @@ fn draft_for(range: &DiffLineRange, body_md: String) -> DraftReviewComment {
 
 /// A draft card (Remove) or the open box (Add to review / Cancel).
 fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &mut App) -> AnyElement {
-    let theme = cx.theme().clone();
+    let theme = *cx.palette();
     let weak = tab.downgrade();
     let card = v_flex()
         .mx(px(12.))
@@ -867,7 +868,7 @@ fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &
         .rounded(px(6.))
         .border_1()
         .border_color(theme.border)
-        .bg(theme.background)
+        .bg(theme.bg)
         .text_xs();
     if annotation.id() == &gpui_kit::ElementId::from("draft-composer") {
         let Some((range, state)) = tab.read(cx).composer.clone() else { return div().into_any_element() };
@@ -886,7 +887,7 @@ fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &
                 h_flex()
                     .gap(px(4.))
                     .items_center()
-                    .text_color(theme.muted_foreground)
+                    .text_color(theme.text_muted)
                     .child(format!("{place} \u{b7} Ctrl+Enter adds it to the review"))
                     .child(div().flex_1())
                     .child(Button::new("draft-cancel").xsmall().ghost().label("Cancel").on_click(move |_, window, cx| {
@@ -919,14 +920,14 @@ fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &
             h_flex()
                 .gap(px(4.))
                 .items_center()
-                .text_color(theme.muted_foreground)
+                .text_color(theme.text_muted)
                 .child(format!("{place} (sent with your review)"))
                 .child(div().flex_1())
                 .child(Button::new(("draft-remove", ix)).xsmall().ghost().label("Remove").on_click(move |_, _, cx| {
                     let _ = weak.update(cx, |this, cx| this.remove_draft(ix, cx));
                 })),
         )
-        .child(div().text_color(theme.foreground).child(draft.body_md.clone()))
+        .child(div().text_color(theme.text).child(draft.body_md.clone()))
         .into_any_element()
 }
 

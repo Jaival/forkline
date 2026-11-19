@@ -12,6 +12,7 @@ mod rail;
 mod signin;
 mod smooth_scroll;
 mod store;
+mod theme;
 #[cfg(test)]
 mod test_support;
 mod view_ref;
@@ -21,7 +22,6 @@ mod workspace;
 use std::path::PathBuf;
 
 use fl_db::queries::layout;
-use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 
 use crate::store::Store;
@@ -49,6 +49,17 @@ impl Args {
             }
         }
         Ok(a)
+    }
+}
+
+/// The main window keeps the native title bar. A client-drawn frame (the
+/// kit's `TitleBar::window_options`, a transparent title bar) slowed every
+/// present on Windows: `diff_scroll_fps` 240 -> 103, `switch_tab_ms` 4 -> 10.
+fn window_options(bounds: Bounds<gpui_kit::Pixels>) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(800.), px(500.))),
+        ..WindowOptions::default()
     }
 }
 
@@ -88,18 +99,9 @@ fn main() {
         bench::mark("store_ready", cx);
 
         let theme = Store::global(cx).read(cx).db().read(|c| layout::setting(c, "theme")).ok().flatten();
-        match theme.as_deref() {
-            Some("\"dark\"") => Theme::change(ThemeMode::Dark, None, cx),
-            Some("\"light\"") => Theme::change(ThemeMode::Light, None, cx),
-            _ => Theme::sync_system_appearance(None, cx),
-        }
+        theme::apply(theme::mode_from_setting(theme.as_deref()), None, cx);
 
-        let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(800.), px(500.))),
-            ..WindowOptions::default()
-        };
+        let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Forkline");
             cx.new(|cx| Workspace::new(!bench, window, cx))
@@ -118,4 +120,15 @@ fn main() {
         })
         .detach();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{Bounds, point, px, size};
+
+    #[test]
+    fn the_main_window_keeps_the_native_title_bar() {
+        let options = super::window_options(Bounds::new(point(px(0.), px(0.)), size(px(800.), px(600.))));
+        assert!(options.titlebar.is_none_or(|t| !t.appears_transparent), "a client-drawn frame halves the frame rate");
+    }
 }

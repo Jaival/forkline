@@ -149,7 +149,7 @@ fn enter_opens_a_pull_request(cx: &mut TestAppContext) {
     press(cx, handle, "j");
     press(cx, handle, "enter");
     cx.run_until_parked();
-    assert_eq!(tabs(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*#1 a pull request"]);
 }
 
 #[gpui_kit::test]
@@ -160,7 +160,7 @@ fn enter_opens_an_issue(cx: &mut TestAppContext) {
     press(cx, handle, "j");
     press(cx, handle, "enter");
     cx.run_until_parked();
-    assert_eq!(tabs(cx, &ws), ["Inbox", "*Issue 1"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*#1 an issue"]);
 }
 
 #[gpui_kit::test]
@@ -188,7 +188,7 @@ fn click_selects_and_double_click_opens(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(tabs(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*#1 a pull request"]);
 }
 
 #[gpui_kit::test]
@@ -563,4 +563,28 @@ fn g_works_from_the_reading_pane_and_keeps_the_filter(cx: &mut TestAppContext) {
         assert_eq!(queue.read(cx).filter(), "is:unread");
         assert_eq!(queue.read(cx).keys(), ["sub", "men1", "rev", "rel"]);
     });
+}
+
+#[gpui_kit::test]
+fn switching_theme_keeps_the_selection(cx: &mut TestAppContext) {
+    use crate::theme::ActivePalette as _;
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    press(cx, handle, "j");
+    press(cx, handle, "j");
+    let before = selected(cx, &queue);
+    assert!(before.is_some());
+    cx.read(|cx| assert!(cx.palette().dark));
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.toggle_theme(window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.read(|cx| {
+        assert!(!cx.palette().dark, "the palette follows the mode");
+        assert!(!gpui_kit::component::Theme::global(cx).is_dark());
+        assert_eq!(gpui_kit::component::Theme::global(cx).background, crate::theme::DAYLIGHT.bg);
+    });
+    assert_eq!(selected(cx, &queue), before);
 }

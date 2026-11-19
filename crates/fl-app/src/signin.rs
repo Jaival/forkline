@@ -19,6 +19,7 @@ use gpui_kit::{
     Subscription, Task, TestSupportExt as _, Window, actions, div, px,
 };
 
+use crate::theme::ActivePalette as _;
 use crate::store::Store;
 
 #[cfg(test)]
@@ -207,8 +208,8 @@ fn flatten<T>(r: Result<fl_sync::Result<T>, tokio::task::JoinError>) -> Result<T
 
 impl Render for SignIn {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
+        let theme = *cx.palette();
+        let muted = theme.text_muted;
         let code_box = |code: &DeviceCode| {
             let user_code = code.user_code.clone();
             let url = code.verification_uri.clone();
@@ -226,8 +227,8 @@ impl Render for SignIn {
                                 .px_3()
                                 .py_2()
                                 .rounded(px(4.))
-                                .bg(theme.muted)
-                                .font_family(theme.mono_font_family.clone())
+                                .bg(theme.raised)
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_lg()
                                 .child(code.user_code.clone()),
                         )
@@ -325,13 +326,13 @@ impl Render for SignIn {
             .rounded(px(8.))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.popover)
-            .text_color(theme.popover_foreground)
+            .bg(theme.control)
+            .text_color(theme.text)
             .text_sm()
             .shadow_lg()
             .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child("Sign in to GitHub"))
             .child(body)
-            .when_some(self.message.clone(), |d, m| d.child(div().id("signin-message").text_color(theme.danger).child(m)))
+            .when_some(self.message.clone(), |d, m| d.child(div().id("signin-message").text_color(theme.closed.fg).child(m)))
             .child(
                 h_flex().justify_end().child(
                     Button::new("signin-close")

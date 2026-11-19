@@ -8,7 +8,7 @@ use fl_types::{DataChanged, PAGE_MAX, RepoFilter, RepoRow};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
@@ -18,6 +18,7 @@ use gpui_kit::{
 use super::queue::FocusFilter;
 use super::rows::{self, Fetch, HasRows, Rows};
 use super::{Built, TogglePin};
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
@@ -106,10 +107,10 @@ impl ReposView {
     }
 
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let r = &self.rows.items[ix];
         let (id, pinned) = (r.id, r.pinned);
-        let muted = theme.muted_foreground;
+        let muted = theme.text_muted;
         rows::row_shell("repos-row", ix, ROW_HEIGHT, self, cx)
             .child(Icon::new(IconName::BookMarked).with_size(px(14.)).text_color(muted))
             .child(
@@ -123,7 +124,7 @@ impl ReposView {
                             .text_sm()
                             .child(div().text_color(muted).child(format!("{} /", r.owner)))
                             .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(r.name.clone()))
-                            .when(r.starred, |d| d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.warning)))
+                            .when(r.starred, |d| d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.pending.fg)))
                             .when(r.pinned, |d| d.child(Icon::new(IconName::Pin).with_size(px(12.)).text_color(muted))),
                     )
                     .child(
@@ -195,7 +196,7 @@ impl Render for ReposView {
         if self.rows.loaded {
             bench::ready(if self.starred { "starred" } else { "repos" }, window, cx);
         }
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let header = h_flex()
             .flex_none()
             .h(px(36.))
@@ -213,7 +214,7 @@ impl Render for ReposView {
                     .w(px(260.))
                     .gap(px(6.))
                     .items_center()
-                    .child(div().text_color(theme.muted_foreground).child("/"))
+                    .child(div().text_color(theme.text_muted).child("/"))
                     .child(div().flex_1().child(Input::new(&self.input).small())),
             );
         let body = if self.rows.items.is_empty() {

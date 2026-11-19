@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use fl_types::{ActionId, AuthState, DataChanged, FailedAction, SyncStatus};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -20,6 +20,7 @@ use gpui_kit::{
 };
 
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, LINE_LABEL, TEXT_SMALL};
 
 /// The relative time ticks once a second; the status itself is refetched on
 /// a `sync` change and every `REFETCH_EVERY` ticks.
@@ -135,6 +136,11 @@ impl Footer {
         self.auth = Some(auth);
     }
 
+    /// The account box (Sign out), opened from the rail's avatar.
+    pub(crate) fn toggle_account(&mut self, cx: &mut Context<Self>) {
+        self.toggle(Popover::Account, cx);
+    }
+
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
         self.popover = (self.popover != Some(popover)).then_some(popover);
         self.notice = None;
@@ -181,20 +187,20 @@ impl Footer {
     }
 
     fn failed_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let p = *cx.palette();
         let rows = self.failed.iter().enumerate().map(|(ix, f)| {
             let id = f.id;
             h_flex()
                 .gap_2()
                 .py(px(6.))
                 .items_start()
-                .when(ix > 0, |d| d.border_t_1().border_color(theme.border))
+                .when(ix > 0, |d| d.border_t_1().border_color(p.border))
                 .child(
                     v_flex()
                         .flex_1()
                         .min_w_0()
                         .child(div().truncate().child(f.summary.clone()))
-                        .child(div().truncate().text_color(theme.danger).child(f.error.clone())),
+                        .child(div().truncate().text_color(p.closed.fg).child(f.error.clone())),
                 )
                 .child(
                     Button::new(("failed-retry", ix))
@@ -214,7 +220,7 @@ impl Footer {
         popover_box("footer-failed-list", cx)
             .left(px(8.))
             .w(px(440.))
-            .child(div().pb_1().text_color(theme.muted_foreground).child("These changes did not reach GitHub and were undone."))
+            .child(div().pb_1().text_color(p.text_muted).child("These changes did not reach GitHub and were undone."))
             .child(div().id("footer-failed-rows").max_h(px(260.)).overflow_y_scroll().children(rows))
             .into_any_element()
     }
@@ -222,7 +228,7 @@ impl Footer {
     fn account(&self, auth: &AuthState, cx: &mut Context<Self>) -> AnyElement {
         let body = if auth.env_override {
             div()
-                .text_color(cx.theme().muted_foreground)
+                .text_color(cx.palette().text_muted)
                 .child("Signed in with FORKLINE_GITHUB_TOKEN. Unset it to sign out.")
                 .into_any_element()
         } else {
@@ -233,7 +239,7 @@ impl Footer {
                 .on_click(cx.listener(|this, _, _, cx| this.run(Op::SignOut, cx)))
                 .into_any_element()
         };
-        popover_box("footer-account-box", cx).right(px(8.)).w(px(260.)).child(body).into_any_element()
+        popover_box("footer-account-box", cx).left(px(8.)).w(px(260.)).child(body).into_any_element()
     }
 }
 
@@ -246,7 +252,7 @@ enum Op {
 
 /// A box over the dock, just above the footer.
 fn popover_box(id: &'static str, cx: &Context<Footer>) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let theme = cx.theme();
+    let p = cx.palette();
     div()
         .id(id)
         .occlude()
@@ -255,10 +261,10 @@ fn popover_box(id: &'static str, cx: &Context<Footer>) -> gpui_kit::Stateful<gpu
         .p_2()
         .rounded(px(6.))
         .border_1()
-        .border_color(theme.border)
-        .bg(theme.popover)
-        .text_color(theme.popover_foreground)
-        .text_xs()
+        .border_color(p.border_strong)
+        .bg(p.control)
+        .text_color(p.text)
+        .text_size(TEXT_SMALL)
         .shadow_lg()
 }
 
@@ -273,8 +279,7 @@ fn ago(secs: i64) -> String {
 
 impl Render for Footer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (danger, muted) = (theme.danger, theme.muted_foreground);
+        let p = *cx.palette();
         let (synced, pending, failed, error) = match &self.status {
             None => ("Loading…".to_owned(), 0, 0, None),
             Some(s) => (
@@ -287,15 +292,16 @@ impl Render for Footer {
             ),
         };
         let signed_out = self.auth.as_ref().is_some_and(|a| !a.signed_in);
-        let login = self.auth.as_ref().filter(|a| a.signed_in).map(|a| match &a.login {
-            Some(login) => format!("@{login}"),
-            None => "Signed in".to_owned(),
-        });
+        let (icon, icon_color) = match (&error, signed_out, &self.status) {
+            (Some(_), _, _) => (IconName::TriangleAlert, p.closed.fg),
+            (_, true, _) => (IconName::CircleUser, p.text_muted),
+            (_, _, Some(s)) if s.last_synced_at.is_some() => (IconName::CircleCheck, p.open.fg),
+            _ => (IconName::Loader, p.text_muted),
+        };
         let left = h_flex()
-            .gap_3()
+            .gap(px(8.))
             .items_center()
-            .text_xs()
-            .text_color(muted)
+            .child(Icon::new(icon).with_size(px(12.)).text_color(icon_color))
             .map(|d| {
                 if signed_out {
                     d.child(
@@ -316,23 +322,22 @@ impl Render for Footer {
                         .id("footer-failed")
                         .test_support()
                         .cursor_pointer()
-                        .text_color(danger)
+                        .text_color(p.closed.fg)
                         .hover(|s| s.underline())
                         .child(format!("{n} failed"))
                         .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Failed, cx))),
                 )
             })
-            .when_some(error, |el, e| el.child(div().text_color(danger).child(e)))
-            .when_some(self.notice.clone(), |el, e| el.child(div().text_color(danger).child(e)));
-        let right = h_flex().text_xs().when_some(login, |d, login| {
-            d.child(
-                Button::new("footer-account")
-                    .xsmall()
-                    .ghost()
-                    .label(login)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Account, cx))),
-            )
-        });
+            .when_some(error, |el, e| el.child(div().text_color(p.closed.fg).child(e)))
+            .when_some(self.notice.clone(), |el, e| el.child(div().text_color(p.closed.fg).child(e)));
+        let hints = ["Ctrl K commands", "j / k move", "Enter open"];
+        let mut right = h_flex().gap(px(8.)).items_center().text_color(p.text_faint);
+        for (ix, hint) in hints.into_iter().enumerate() {
+            if ix > 0 {
+                right = right.child("·");
+            }
+            right = right.child(hint);
+        }
         let popover = match (self.popover, &self.auth) {
             (Some(Popover::Failed), _) if !self.failed.is_empty() => Some(self.failed_list(cx)),
             (Some(Popover::Account), Some(auth)) => {
@@ -343,7 +348,24 @@ impl Render for Footer {
         };
         div()
             .relative()
-            .child(StatusBar::new().left(left).right(right))
+            .flex_none()
+            .child(
+                h_flex()
+                    .id("footer")
+                    .h(px(FOOTER_HEIGHT))
+                    .px(px(14.))
+                    .gap(px(8.))
+                    .items_center()
+                    .justify_between()
+                    .bg(p.surface)
+                    .border_t_1()
+                    .border_color(p.border)
+                    .text_size(TEXT_SMALL)
+                    .line_height(LINE_LABEL)
+                    .text_color(p.text_muted)
+                    .child(left)
+                    .child(right),
+            )
             .children(popover.map(|p| deferred(p).with_priority(1)))
     }
 }

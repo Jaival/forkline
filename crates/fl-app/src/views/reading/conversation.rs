@@ -6,7 +6,7 @@ use std::rc::Rc;
 use fl_types::Timestamp;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ListAlignment, ListState,
@@ -15,6 +15,7 @@ use gpui_kit::{
 
 use super::Detail;
 use crate::smooth_scroll::SmoothWheel;
+use crate::theme::{ActivePalette as _, LINE_LABEL, LINE_SECONDARY, RADIUS_LG, TEXT_SECONDARY, TEXT_SMALL};
 use crate::views::queue::age;
 
 enum Body {
@@ -175,68 +176,81 @@ impl Conversation {
     pub(super) fn render(&self, _cx: &App) -> AnyElement {
         let entries = self.entries.clone();
         let list = list(self.state.clone(), move |ix, _, cx| {
-            let theme = cx.theme();
+            let p = *cx.palette();
             let entry = &entries[ix];
             let when = entry.at.map(|at| age(fl_sync::now(), at));
-            let item = div().px(px(12.)).pt(px(if ix == 0 { 12. } else { 8. })).when(ix + 1 == entries.len(), |d| d.pb(px(12.)));
+            let item = div()
+                .px(px(24.))
+                .pt(px(if ix == 0 { 20. } else { 14. }))
+                .when(ix + 1 == entries.len(), |d| d.pb(px(20.)));
+            // Lines without a card sit under the cards' text, past the avatar.
+            let aside = |text: String| {
+                div()
+                    .pl(px(42.))
+                    .text_size(TEXT_SMALL)
+                    .line_height(LINE_LABEL)
+                    .text_color(p.text_muted)
+                    .child(text)
+                    .into_any_element()
+            };
             let content = match &entry.kind {
-                Kind::More(n) => div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(format!("{n} more comments on GitHub"))
-                    .into_any_element(),
-                Kind::Event(kind) => div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(format!("{} {kind} {}", entry.author, when.unwrap_or_default()))
-                    .into_any_element(),
+                Kind::More(n) => aside(format!("{n} more comments on GitHub")),
+                Kind::Event(kind) => aside(format!("{} {kind} {}", entry.author, when.unwrap_or_default())),
                 kind => {
                     let verb = match kind {
                         Kind::Review(verb, tone) => Some((
                             *verb,
                             match tone {
-                                Tone::Success => theme.success,
-                                Tone::Danger => theme.danger,
-                                Tone::Muted => theme.muted_foreground,
+                                Tone::Success => p.open.fg,
+                                Tone::Danger => p.closed.fg,
+                                Tone::Muted => p.text_muted,
                             },
                         )),
                         _ => None,
                     };
                     let body = match &entry.body {
                         Some(Body::Markdown(text)) => {
-                            Some(TextView::markdown(entry.key.clone(), text.clone()).selectable(true).text_sm().into_any_element())
+                            Some(TextView::markdown(entry.key.clone(), text.clone()).selectable(true).into_any_element())
                         }
                         Some(Body::Html(text)) => {
-                            Some(TextView::html(entry.key.clone(), text.clone()).selectable(true).text_sm().into_any_element())
+                            Some(TextView::html(entry.key.clone(), text.clone()).selectable(true).into_any_element())
                         }
-                        None if *kind == Kind::Description => Some(
-                            div().text_color(theme.muted_foreground).child("No description.").into_any_element(),
-                        ),
+                        None if *kind == Kind::Description => {
+                            Some(div().text_color(p.text_muted).child("No description.").into_any_element())
+                        }
                         None => None,
                     };
-                    v_flex()
-                        .border_1()
-                        .border_color(theme.border)
-                        .rounded(px(6.))
+                    h_flex()
+                        .items_start()
+                        .gap(px(12.))
+                        .child(crate::rail::avatar(&entry.author, 30., &p))
                         .child(
-                            h_flex()
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap(px(6.))
-                                .px(px(8.))
-                                .py(px(4.))
-                                .bg(theme.sidebar)
-                                .rounded_t(px(6.))
-                                .when(body.is_some(), |d| d.border_b_1().border_color(theme.border))
-                                .text_xs()
+                                .pt(px(10.))
+                                .px(px(14.))
+                                .pb(px(12.))
+                                .border_1()
+                                .border_color(p.border)
+                                .rounded(RADIUS_LG)
                                 .child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.foreground)
-                                        .child(entry.author.clone()),
+                                    h_flex()
+                                        .gap(px(6.))
+                                        .text_size(TEXT_SECONDARY)
+                                        .line_height(LINE_SECONDARY)
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(p.text)
+                                                .child(entry.author.clone()),
+                                        )
+                                        .when_some(verb, |d, (verb, color)| d.child(div().text_color(color).child(verb)))
+                                        .children(when.map(|w| div().text_color(p.text_muted).child(format!("\u{b7} {w}")))),
                                 )
-                                .when_some(verb, |d, (verb, color)| d.child(div().text_color(color).child(verb)))
-                                .children(when.map(|w| div().text_color(theme.muted_foreground).child(w))),
+                                .when_some(body, |d, body| d.child(div().text_color(p.text_body).child(body))),
                         )
-                        .when_some(body, |d, body| d.child(div().p(px(8.)).text_sm().child(body)))
                         .into_any_element()
                 }
             };

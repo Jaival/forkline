@@ -17,6 +17,7 @@ use gpui_kit::{
 
 use super::repos::set_pinned;
 use super::{Built, TogglePin};
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
@@ -139,7 +140,7 @@ impl RepoView {
 }
 
 fn section(title: impl Into<SharedString>, body: impl IntoElement, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .flex_1()
         .min_w_0()
@@ -148,17 +149,17 @@ fn section(title: impl Into<SharedString>, body: impl IntoElement, cx: &App) -> 
         .rounded(px(6.))
         .border_1()
         .border_color(theme.border)
-        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.muted_foreground).child(title.into().to_uppercase()))
+        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.text_muted).child(title.into().to_uppercase()))
         .child(body)
         .into_any_element()
 }
 
 fn muted(text: &'static str, cx: &App) -> AnyElement {
-    div().text_sm().text_color(cx.theme().muted_foreground).child(text).into_any_element()
+    div().text_sm().text_color(cx.palette().text_muted).child(text).into_any_element()
 }
 
 fn card(id: &'static str, count: u32, label: &'static str, view: ViewRef, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .id(id)
         .test_support()
@@ -168,10 +169,10 @@ fn card(id: &'static str, count: u32, label: &'static str, view: ViewRef, cx: &A
         .border_1()
         .border_color(theme.border)
         .cursor_pointer()
-        .hover(|s| s.bg(theme.accent.opacity(0.5)))
+        .hover(|s| s.bg(theme.hover))
         .on_click(move |_, window, cx| window.dispatch_action(Box::new(OpenView(view.clone())), cx))
         .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(count.to_string()))
-        .child(div().text_sm().text_color(theme.muted_foreground).child(label))
+        .child(div().text_sm().text_color(theme.text_muted).child(label))
         .into_any_element()
 }
 
@@ -180,7 +181,7 @@ fn languages(o: &RepoOverview, cx: &App) -> AnyElement {
     if shares.is_empty() {
         return muted("No language data.", cx);
     }
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .gap(px(8.))
         .child(
@@ -194,7 +195,7 @@ fn languages(o: &RepoOverview, cx: &App) -> AnyElement {
                 .items_center()
                 .child(div().size(px(8.)).rounded_full().bg(rgb(language_color(name))))
                 .child(name.clone())
-                .child(div().text_color(theme.muted_foreground).child(format!("{pct:.1}%")))
+                .child(div().text_color(theme.text_muted).child(format!("{pct:.1}%")))
         })))
         .into_any_element()
 }
@@ -227,13 +228,13 @@ fn commits(o: &RepoOverview, cx: &App) -> AnyElement {
     if o.commits.is_empty() {
         return muted("No cached commits. Pin this repository to sync them.", cx);
     }
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .children(o.commits.iter().map(|c| {
             let dot = match c.check_state.as_deref() {
-                Some("SUCCESS") => theme.success,
-                Some("FAILURE" | "ERROR") => theme.danger,
-                Some("PENDING") => theme.warning,
+                Some("SUCCESS") => theme.open.fg,
+                Some("FAILURE" | "ERROR") => theme.closed.fg,
+                Some("PENDING") => theme.pending.fg,
                 _ => theme.border,
             };
             h_flex()
@@ -250,9 +251,9 @@ fn commits(o: &RepoOverview, cx: &App) -> AnyElement {
                         .flex_none()
                         .gap(px(6.))
                         .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_color(theme.text_muted)
                         .child(c.author.clone().unwrap_or_else(|| "unknown".into()))
-                        .child(div().font_family(theme.mono_font_family.clone()).child(c.oid.chars().take(7).collect::<String>()))
+                        .child(div().font_family(cx.theme().mono_font_family.clone()).child(c.oid.chars().take(7).collect::<String>()))
                         .child(date(c.authored_at)),
                 )
         }))
@@ -263,16 +264,16 @@ fn releases(o: &RepoOverview, cx: &App) -> AnyElement {
     if o.releases.is_empty() {
         return muted("No releases.", cx);
     }
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .gap(px(4.))
         .children(o.releases.iter().map(|r| {
             h_flex()
                 .gap(px(8.))
                 .text_sm()
-                .child(div().flex_none().font_family(theme.mono_font_family.clone()).child(r.tag.clone()))
-                .child(div().flex_1().min_w_0().truncate().text_color(theme.muted_foreground).child(r.name.clone().unwrap_or_default()))
-                .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(r.published_at.map(date).unwrap_or_default()))
+                .child(div().flex_none().font_family(cx.theme().mono_font_family.clone()).child(r.tag.clone()))
+                .child(div().flex_1().min_w_0().truncate().text_color(theme.text_muted).child(r.name.clone().unwrap_or_default()))
+                .child(div().flex_none().text_xs().text_color(theme.text_muted).child(r.published_at.map(date).unwrap_or_default()))
         }))
         .into_any_element()
 }
@@ -281,7 +282,7 @@ fn contributors(o: &RepoOverview, cx: &App) -> AnyElement {
     if o.contributors.is_empty() {
         return muted("No contributor data.", cx);
     }
-    let theme = cx.theme();
+    let theme = *cx.palette();
     v_flex()
         .gap(px(4.))
         .children(o.contributors.iter().map(|c| {
@@ -289,14 +290,14 @@ fn contributors(o: &RepoOverview, cx: &App) -> AnyElement {
                 .justify_between()
                 .text_sm()
                 .child(c.login.clone())
-                .child(div().text_color(theme.muted_foreground).child(c.contributions.to_string()))
+                .child(div().text_color(theme.text_muted).child(c.contributions.to_string()))
         }))
         .into_any_element()
 }
 
 impl RepoView {
     fn overview_element(&self, o: &RepoOverview, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let (id, pinned) = (o.id, o.pinned);
         let stats = [
             format!("{} {} stars", if o.starred { "\u{2605}" } else { "\u{2606}" }, o.stars),
@@ -310,13 +311,13 @@ impl RepoView {
                 h_flex()
                     .gap(px(10.))
                     .items_center()
-                    .child(Icon::new(IconName::BookMarked).with_size(px(18.)).text_color(theme.muted_foreground))
+                    .child(Icon::new(IconName::BookMarked).with_size(px(18.)).text_color(theme.text_muted))
                     .child(
                         h_flex()
                             .flex_1()
                             .gap(px(6.))
                             .text_xl()
-                            .child(div().text_color(theme.muted_foreground).child(format!("{} /", o.owner)))
+                            .child(div().text_color(theme.text_muted).child(format!("{} /", o.owner)))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(o.name.clone())),
                     )
                     .child(
@@ -328,10 +329,10 @@ impl RepoView {
                             .on_click(move |_, _, cx| set_pinned(id, !pinned, cx)),
                     ),
             )
-            .child(div().text_color(theme.muted_foreground).child(o.description.clone().unwrap_or_else(|| "No description.".into())))
-            .child(h_flex().flex_wrap().gap_x(px(16.)).text_sm().text_color(theme.muted_foreground).children(stats));
+            .child(div().text_color(theme.text_muted).child(o.description.clone().unwrap_or_else(|| "No description.".into())))
+            .child(h_flex().flex_wrap().gap_x(px(16.)).text_sm().text_color(theme.text_muted).children(stats));
         let history: Vec<u32> = o.star_history.iter().map(|p| p.stars).collect();
-        let history = if history.len() < 2 { muted("Not enough history yet.", cx) } else { sparkline(history, theme.primary) };
+        let history = if history.len() < 2 { muted("Not enough history yet.", cx) } else { sparkline(history, theme.accent) };
         v_flex()
             .w_full()
             .max_w(px(900.))

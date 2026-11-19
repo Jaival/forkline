@@ -15,7 +15,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -27,6 +27,7 @@ use super::pickers::{EditAssignees, EditLabels};
 use super::{Detail, ReadingPane};
 use crate::drafts::Drafts;
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, TEXT_BODY, TEXT_LABEL, TEXT_SMALL};
 
 actions!(reading, [Approve, Reply, ToggleState, Done, Snooze, CancelReply]);
 
@@ -304,26 +305,39 @@ impl ReadingPane {
             _ => None,
         };
         let merge = self.merge_element(cx);
-        let theme = cx.theme();
+        let p = *cx.palette();
+        // Approve is the one primary button; the rest are outlined, each with its key.
         let button = |id: &'static str, label: &'static str, key: &'static str| {
             Button::new(id)
                 .small()
-                .ghost()
+                .outline()
                 .label(label)
-                .child(div().text_xs().text_color(theme.muted_foreground).child(key))
+                .when(!key.is_empty(), |b| b.child(div().text_size(TEXT_LABEL).text_color(p.text_faint).child(key)))
         };
         Some(
             h_flex()
                 .flex_none()
-                .h(px(34.))
-                .px(px(8.))
-                .gap(px(2.))
+                .flex_wrap()
+                .px(px(24.))
+                .pb(px(14.))
+                .gap(px(8.))
                 .items_center()
-                .border_b_1()
-                .border_color(theme.border)
+                .text_size(TEXT_BODY)
                 .when(approve, |d| {
                     d.child(
-                        button("action-approve", "Approve", "A")
+                        Button::new("action-approve")
+                            .small()
+                            .primary()
+                            .icon(IconName::Check)
+                            .label("Approve")
+                            .child(
+                                div()
+                                    .px(px(5.))
+                                    .rounded(px(3.))
+                                    .bg(p.on_accent.opacity(0.22))
+                                    .text_size(TEXT_LABEL)
+                                    .child("A"),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| this.approve(&Approve, window, cx))),
                     )
                 })
@@ -361,7 +375,7 @@ impl ReadingPane {
                 .children(merge)
                 .child(div().flex_1())
                 .when_some(self.notice.clone(), |d, notice: SharedString| {
-                    d.child(div().truncate().min_w_0().text_xs().text_color(theme.danger).child(notice))
+                    d.child(div().truncate().min_w_0().text_size(TEXT_SMALL).text_color(p.closed.fg).child(notice))
                 })
                 .into_any_element(),
         )
@@ -371,19 +385,19 @@ impl ReadingPane {
     /// then Confirm / Cancel; disabled with the reason when GitHub would
     /// refuse. The PR's check state sits beside it.
     fn merge_element(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let theme = cx.theme();
+        let p = *cx.palette();
         let checks = self.check_state().map(|state| {
             let (icon, color, text) = match state {
-                CheckState::Success => (IconName::Check, theme.success, "Checks pass"),
-                CheckState::Failure => (IconName::X, theme.danger, "Checks fail"),
-                CheckState::Pending => (IconName::Clock, theme.warning, "Checks running"),
+                CheckState::Success => (IconName::Check, p.open.fg, "Checks pass"),
+                CheckState::Failure => (IconName::X, p.closed.fg, "Checks fail"),
+                CheckState::Pending => (IconName::Clock, p.pending.fg, "Checks running"),
             };
             h_flex()
                 .id("merge-checks")
                 .test_support()
                 .gap(px(3.))
                 .items_center()
-                .text_xs()
+                .text_size(TEXT_SMALL)
                 .text_color(color)
                 .child(Icon::new(icon).with_size(px(12.)))
                 .child(text)
@@ -393,8 +407,8 @@ impl ReadingPane {
             (MergeState::Blocked(reason), _) => h_flex()
                 .gap(px(6.))
                 .items_center()
-                .child(Button::new("action-merge").small().ghost().label("Merge").disabled(true))
-                .child(div().text_xs().text_color(theme.muted_foreground).child(reason))
+                .child(Button::new("action-merge").small().outline().label("Merge").disabled(true))
+                .child(div().text_size(TEXT_SMALL).text_color(p.text_muted).child(reason))
                 .into_any_element(),
             (MergeState::Ready, Some(method)) => h_flex()
                 .gap(px(2.))
@@ -425,11 +439,11 @@ impl ReadingPane {
                     .child(
                         Button::new("action-merge")
                             .small()
-                            .ghost()
+                            .outline()
                             .label(method_label(current))
                             .on_click(cx.listener(move |this, _, _, cx| this.pick_merge(current, cx))),
                     )
-                    .child(Button::new("action-merge-method").small().ghost().dropdown_caret(true).dropdown_menu(
+                    .child(Button::new("action-merge-method").small().outline().dropdown_caret(true).dropdown_menu(
                         move |mut menu, _, _| {
                             for (method, label) in METHODS {
                                 let pane = pane.clone();
@@ -455,7 +469,7 @@ impl ReadingPane {
         let review = self.open_pr().is_some();
         let drafts = if review { self.draft_count(cx) } else { 0 };
         let empty = self.reply_body(cx).is_none_or(|b| b.is_empty()) && drafts == 0;
-        let theme = cx.theme();
+        let p = *cx.palette();
         Some(
             v_flex()
                 .flex_none()
@@ -464,14 +478,14 @@ impl ReadingPane {
                 .p(px(8.))
                 .gap(px(6.))
                 .border_t_1()
-                .border_color(theme.border)
+                .border_color(p.border)
                 .child(Textarea::new(state))
                 .child(
                     h_flex()
                         .gap(px(8.))
                         .items_center()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_size(TEXT_SMALL)
+                        .text_color(p.text_muted)
                         .child("Ctrl+Enter to send, Esc to cancel")
                         .when(drafts > 0, |d| {
                             let s = if drafts == 1 { "" } else { "s" };
@@ -479,7 +493,7 @@ impl ReadingPane {
                                 div()
                                     .id("review-drafts")
                                     .test_support()
-                                    .text_color(theme.foreground)
+                                    .text_color(p.text)
                                     .child(format!("{drafts} inline comment{s} go with it")),
                             )
                         })

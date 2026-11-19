@@ -6,7 +6,7 @@ use std::sync::Arc;
 use fl_db::queries::lists;
 use fl_types::{DataChanged, IssueRow, IssueState, PAGE_MAX};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
@@ -16,6 +16,7 @@ use gpui_kit::{
 use super::Built;
 use super::queue::age;
 use super::rows::{self, HasRows, Rows};
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
@@ -23,13 +24,13 @@ use crate::view_ref::ViewRef;
 const ROW_HEIGHT: f32 = 46.;
 
 /// State icon and colour of an issue or PR.
-pub(super) fn state_icon(row: &IssueRow, theme: &Theme) -> (IconName, Hsla) {
+pub(super) fn state_icon(row: &IssueRow, theme: &crate::theme::Palette) -> (IconName, Hsla) {
     match (row.is_pr, row.state) {
-        (true, IssueState::Open) => (IconName::GitPullRequest, theme.success),
-        (true, IssueState::Merged) => (IconName::GitMerge, theme.magenta),
-        (true, IssueState::Closed) => (IconName::GitPullRequestClosed, theme.danger),
-        (false, IssueState::Open) => (IconName::CircleDot, theme.success),
-        (false, _) => (IconName::CircleCheck, theme.magenta),
+        (true, IssueState::Open) => (IconName::GitPullRequest, theme.open.fg),
+        (true, IssueState::Merged) => (IconName::GitMerge, theme.merged.fg),
+        (true, IssueState::Closed) => (IconName::GitPullRequestClosed, theme.closed.fg),
+        (false, IssueState::Open) => (IconName::CircleDot, theme.open.fg),
+        (false, _) => (IconName::CircleCheck, theme.merged.fg),
     }
 }
 
@@ -61,9 +62,9 @@ impl HomeView {
     }
 
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let r = &self.rows.items[ix];
-        let (icon, color) = state_icon(r, theme);
+        let (icon, color) = state_icon(r, &theme);
         let comments = match r.comments {
             1 => " \u{b7} 1 comment".to_owned(),
             0 => String::new(),
@@ -86,7 +87,7 @@ impl HomeView {
                         div()
                             .truncate()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .text_color(theme.text_muted)
                             .child(format!("{} #{} \u{b7} {}{comments}", r.repo, r.number, r.author)),
                     ),
             )
@@ -96,8 +97,8 @@ impl HomeView {
                     .gap(px(6.))
                     .items_center()
                     .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .when(r.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.primary)))
+                    .text_color(theme.text_muted)
+                    .when(r.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.accent)))
                     .child(age(fl_sync::now(), r.updated_at)),
             )
             .into_any_element()
@@ -135,7 +136,7 @@ impl Render for HomeView {
         if self.rows.loaded {
             bench::ready("home", window, cx);
         }
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let header = h_flex()
             .flex_none()
             .h(px(36.))
@@ -145,7 +146,7 @@ impl Render for HomeView {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Home"))
-            .child(div().text_xs().text_color(theme.muted_foreground).child("Recent activity"));
+            .child(div().text_xs().text_color(theme.text_muted).child("Recent activity"));
         let body = if self.rows.items.is_empty() {
             super::empty(
                 if self.rows.failed { "Could not read the local activity cache." } else { "No cached activity yet." },

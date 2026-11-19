@@ -18,6 +18,7 @@ use super::Built;
 use super::home::{item_ref, state_icon};
 use super::queue::FocusFilter;
 use super::rows::{self, Fetch, HasRows, Rows};
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
@@ -141,13 +142,13 @@ impl SearchView {
     }
 
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let hit = &self.rows.items[ix];
         let r = &hit.row;
-        let (icon, color) = state_icon(r, theme);
+        let (icon, color) = state_icon(r, &theme);
         let (text, hits) = split_snippet(&hit.snippet);
         let prefix = if hit.comment_id.is_some() && !text.is_empty() { "In a comment: " } else { "" };
-        let strong = HighlightStyle { color: Some(theme.foreground), font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() };
+        let strong = HighlightStyle { color: Some(theme.text), font_weight: Some(FontWeight::SEMIBOLD), ..Default::default() };
         let shift = prefix.len();
         let highlights = hits.into_iter().map(|h| (h.start + shift..h.end + shift, strong)).collect::<Vec<_>>();
         let text = format!("{prefix}{text}");
@@ -161,14 +162,14 @@ impl SearchView {
                         h_flex()
                             .gap(px(6.))
                             .text_sm()
-                            .child(div().flex_none().text_color(theme.muted_foreground).child(format!("{} #{}", r.repo, r.number)))
+                            .child(div().flex_none().text_color(theme.text_muted).child(format!("{} #{}", r.repo, r.number)))
                             .child(div().truncate().child(r.title.clone())),
                     )
                     .child(
                         div()
                             .truncate()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .text_color(theme.text_muted)
                             .child(StyledText::new(text).with_highlights(highlights)),
                     ),
             )
@@ -223,7 +224,7 @@ impl Render for SearchView {
         if !self.q.is_empty() && self.rows.loaded {
             bench::ready("search", window, cx);
         }
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let bar = h_flex()
             .key_context("SearchBar")
             .on_action(cx.listener(Self::leave_bar))
@@ -234,7 +235,7 @@ impl Render for SearchView {
             .items_center()
             .border_b_1()
             .border_color(theme.border)
-            .child(Icon::new(gpui_kit::assets::IconName::Search).with_size(px(14.)).text_color(theme.muted_foreground))
+            .child(Icon::new(gpui_kit::assets::IconName::Search).with_size(px(14.)).text_color(theme.text_muted))
             .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)));
         let body = if self.q.is_empty() {
             v_flex()
@@ -242,12 +243,12 @@ impl Render for SearchView {
                 .p(px(16.))
                 .gap(px(6.))
                 .text_sm()
-                .child(div().text_color(theme.muted_foreground).child("Type a query and press Enter. Operators:"))
+                .child(div().text_color(theme.text_muted).child("Type a query and press Enter. Operators:"))
                 .children(HELP.iter().map(|(op, what)| {
                     h_flex()
                         .gap(px(12.))
-                        .child(div().w(px(160.)).font_family(theme.mono_font_family.clone()).child(*op))
-                        .child(div().text_color(theme.muted_foreground).child(*what))
+                        .child(div().w(px(160.)).font_family(cx.theme().mono_font_family.clone()).child(*op))
+                        .child(div().text_color(theme.text_muted).child(*what))
                 }))
                 .into_any_element()
         } else {
@@ -257,7 +258,7 @@ impl Render for SearchView {
                 .px(px(12.))
                 .items_center()
                 .text_xs()
-                .text_color(theme.muted_foreground)
+                .text_color(theme.text_muted)
                 .border_b_1()
                 .border_color(theme.border)
                 .child(div().id("search-status").child(self.status()));

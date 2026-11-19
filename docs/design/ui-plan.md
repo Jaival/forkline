@@ -24,9 +24,9 @@ Date: 2026-11-16. Mockups: `docs/design/ui-mockups.html` (B = shell, D = PR File
 
 ## Steps
 
-Status 2026-11-18: steps 1-6 done; step 7 views done. The Tauri removal
-waits for the gaps in `docs/design/gpui-parity.md` (see `docs/HANDOFF.md`,
-GPUI G1 state).
+Status 2026-11-18: steps 1-7 done. The Tauri app was removed on
+2026-11-18; the GPUI binary is now `forkline`. Next: GPUI G2
+(`docs/design/themes-plan.md`).
 
 Each step: its `bench::ready` key and bench step, gpui_kit tests for its keys
 (no synthetic keystrokes), clippy and tests pass, a note in `docs/HANDOFF.md`.

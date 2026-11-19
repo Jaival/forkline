@@ -1091,3 +1091,120 @@ Open decisions:
     repeated; the action bar above serves it. No Request changes action.
   - The Files tab label uses `pr_details.changed_files` until the patch is
     read, then the patch's count.
+
+## After G1: look refresh and colour themes (planned 2026-11-17, nothing built yet)
+
+Plan: `docs/design/themes-plan.md` (GPUI G2), after G1 steps 6 and 7. Own
+palette and type scale in place of the `gpui-component` defaults, eight
+built-in themes, a custom accent the user picks (rest of the palette derived
+from it), light theme parity, a choice of eleven interface and ten code fonts
+(defaults Inter and Obel Mono), a colour per repository, and a "Hide secrets in code" switch (Obel Mono's
+masking).
+
+G2 step 0, G1 check (2026-11-18, on `main` at `1d8c6e5`): G1 steps 1-7 are
+done in code and docs; `ui-plan.md`'s status line still says the Tauri removal
+waits (stale). Clippy passes, 241 tests pass. `fl-bench gpui`, 3 runs while
+Chrome and Surfshark were using CPU: `launch_ms` 621-931 (600) and
+`app_startup_ms` 75-179 (60) missed every run; `search_p95_ms` and
+`diff_scroll_fps` missed only the first, cold run (14.8 / 229 after that);
+`switch_tab_ms` 4.1-4.3, `open_cached_item_ms` 9.0-9.6. The user accepted the
+startup misses as machine noise. Re-take the baseline on a quiet machine
+before step 1 so G2's final bench has a number to compare with. `ui/dist` and
+`node_modules/` are untracked leftovers of the Tauri app; safe to delete.
+
+G2 baseline (2026-11-18, `main` at `1d8c6e5`, 5 runs, machine busy: CPU
+17 %, Chrome and Surfshark): `launch_ms` 464-545, `app_startup_ms` 50.7-60.6
+(2 of 5 missed), `switch_tab_ms` 4.0-4.2, `diff_scroll_fps` 240 in 3 runs
+(86 and 30 in the others), `search_p95_ms` 14.6-65.9 (4 of 5 missed),
+`open_cached_item_ms` 5.7-8.8, `store_ready` -> `workspace_new` 24-37 ms.
+
+## GPUI G2 state
+
+Branch `gpui-g2`. Plan: `docs/design/themes-plan.md`. Mockups (the canvas
+boards without their fonts): `docs/design/mockups/`. The warm light theme is
+**Paper** (the board's name), not Linen.
+
+Done (step 1, look refresh, 2026-11-19):
+
+- `crates/fl-app/src/theme.rs` owns every colour and the type scale.
+  `Palette` is a GPUI global (`cx.palette()` through `ActivePalette`);
+  `theme::apply(mode, window, cx)` calls `Theme::change` /
+  `sync_system_appearance`, then writes the palette over the kit theme
+  (`write_kit`: colours, `font_size` 13.5, radius, highlight theme), so kit
+  widgets match. Midnight and Daylight only. Tokens: surfaces (`bg`,
+  `surface`, `raised`, `control`, `hover`, `selected`, `border`,
+  `border_strong`, `backdrop`), text (`text_strong`, `text`, `text_body`,
+  `text_read`, `text_muted`, `text_faint`), accent (`accent`, `accent_text`,
+  `accent_fill`, `accent_fill_hover`, `on_accent`, `star`), GitHub states as
+  `StateColor { fg, fill, on_fill }` (`open`, `merged`, `closed`, `pending`,
+  `neutral`), `added` / `removed`, diff and `syntax`, plus `avatar(login)` and
+  `label(color)`. Views read no `cx.theme()` colours any more (only
+  `mono_font_family`).
+- Deviation from the board: white text on the board's accent
+  `hsl(228,92%,69%)` is 3.3:1, below the plan's 4.5:1, so primary buttons
+  use `accent_fill` `hsl(228,72%,57%)`. Accent text, dots and the tab
+  underline keep the board's value.
+- Title bar: **native**, not the board's custom bar. A custom bar needs the
+  kit's `TitleBar::window_options` (a transparent, client-drawn title bar),
+  and on Windows that slowed every present: `diff_scroll_fps` 240 -> 102.6
+  (the same in every run), `switch_tab_ms` 4.1 -> 9.6, `open_cached_item_ms`
+  6 -> 15. Default window options brought all three back. `main.rs`
+  `window_options` holds this; the test
+  `the_main_window_keeps_the_native_title_bar` fails if a transparent title
+  bar comes back. (Ruled out first: the tree-sitter grammars; with them
+  removed the numbers stayed the same.)
+- Rail: 52 px, 34 px buttons, unread count badge, a divider after Reviews,
+  Search kept (no title bar field). Settings left the rail (Ctrl+K reaches
+  it; step 5's "Appearance…" replaces it). The signed-in avatar at the
+  bottom opens the account box (moved from the footer).
+- Dock tabs: view icon, item tabs read `#42 title` with a state-coloured
+  icon (`issue::tab_label`, one synchronous row read, refreshed on `issues`
+  / `pr`).
+- Queue: 48 px header (17 px title, count, outlined repo filter), 30 px
+  sentence-case group headings without fill, 54 px rounded rows without
+  borders, repo in the code font, author avatar, unread dot, tinted
+  selection. `rows.rs` rows (Home, Repositories, Starred, Explore, Search)
+  are rounded and inset the same way.
+- Reading pane: 21 px title, state pill with icon, `author wants to merge
+  into base`, `+N -N`, `n of m checks`, label pills outlined in the label's
+  hue (`Palette::label`), Approve as the one primary button, tab counts as
+  badges (Checks tinted while failing / pending), conversation as avatars and
+  bordered cards. Markdown body text is 13.5 px now (the kit's `font_size`).
+- Footer: sync icon, key hints on the right.
+- Syntax colours in diffs and code blocks: `gpui-kit` tree-sitter features
+  for 17 languages (`crates/fl-app/Cargo.toml`); colours from
+  `Palette::syntax` through the kit's highlight theme. The kit's diff tints
+  lines with `success` / `danger` at 12 %, so the diff follows the theme.
+
+Tests: `theme/tests.rs` (contrast rules for both palettes: text, muted text,
+accent, button text, states, pills, diff, syntax, avatars, label hues every
+5 degrees; stable avatar hash; saved mode parsing), `rail.rs` initials, queue
+`switching_theme_keeps_the_selection`, `main.rs`
+`the_main_window_keeps_the_native_title_bar`. Tab-title expectations now
+read `#N title`.
+
+Bench after step 1 (release, 3 runs, Chrome and Surfshark still running):
+`launch_ms` 781 / 408 / 401 (the first run was a cold load of the new exe:
+422 ms before `main`), `app_startup_ms` 42-45, `switch_tab_ms` 4.1-4.2,
+`open_cached_item_ms` 5.6-5.9, `diff_scroll_fps` 240 / 30 / 240,
+`search_p95_ms` 11.3 / 66.7 / 11.3 (the 30 fps and 66 ms misses are the
+same noise the baseline had), `store_ready` -> `workspace_new` 23-26 ms.
+Clippy passes; `cargo test --workspace` 251 pass.
+
+Checked by eye (PrintWindow, `--offline` on copies of `target/tmp/shot-data`
+with `theme` set; Files tab during a release `--bench` run on `fake-data`,
+dark and light): rail, footer, Inbox queue, PR conversation, Files tab with
+syntax colours (the Files shots still show the removed custom bar). Images: `target/tmp/g2s1-*.png`.
+
+Open items from step 1:
+
+- Exe size: 23.5 MB -> 49 MB, almost all from the tree-sitter grammars. Fewer
+  languages, or the `syntect` feature, would shrink it; decide before the
+  fonts step adds 8-12 MB more.
+- The dock's active tab is square: the kit's `Tab` variant has no radius and
+  the dock builds its own tabs. Rounded needs a custom `DockAreaRenderer`.
+- Action buttons are the kit's `small` size (about 24 px); the board has
+  30 px.
+- The diff's add / remove backgrounds come from the kit (`success` /
+  `danger` at 12 %); `diff_add_bg` / `diff_del_bg` are not used by it.
+- System mode does not follow a live OS theme change (as before).

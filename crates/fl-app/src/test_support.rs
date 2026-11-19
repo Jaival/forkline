@@ -39,6 +39,7 @@ pub fn open_with(
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::theme::apply(Some(gpui_kit::component::ThemeMode::Dark), None, cx);
         panel::init(cx);
         workspace::init(cx);
         views::init(cx);
