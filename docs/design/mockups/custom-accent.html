@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Custom accent theme</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style></style>
+<style>
+body{margin:0}
+a{color:#4f6bed}a:hover{color:#3550d4}
+</style>
+</helmet>
+<div style="width: 1600px; height: 760px; box-sizing: border-box; padding: 40px; display: flex; gap: 40px; background: hsl(225,10%,93%); font-family: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif; color: hsl(225,25%,12%)">
+
+  <!-- Picker panel -->
+  <div style="width: 400px; flex: none; display: flex; flex-direction: column; gap: 22px">
+    <div>
+      <div style="font-size: 24px; font-weight: 600">Your accent</div>
+      <div style="margin-top: 6px; font-size: 14px; line-height: 1.5; color: hsl(222,10%,34%)">Pick one colour. Backgrounds, borders, selection, text and button text are worked out from it, for dark and light, and kept readable.</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 13px; font-weight: 600">Presets</div>
+      <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px">
+        <sc-for list="{{swatches}}" as="s" hint-placeholder-count="12">
+          <button aria-label="{{s.name}}" title="{{s.name}}" sc-camel-on-click="{{s.pick}}" style="height: 44px; border-radius: 10px; cursor: pointer; background: {{s.css}}; border: {{s.ring}}"></button>
+        </sc-for>
+      </div>
+    </div>
+
+    <label style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 600">
+      Any colour (hue {{hue}}°)
+      <input type="range" min="0" max="359" value="{{hue}}" sc-camel-on-input="{{onHue}}" style="width: 100%; height: 24px; accent-color: {{accentLight}}">
+    </label>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="font-size: 13px; font-weight: 600">Mode</div>
+      <div style="display: flex; gap: 8px">
+        <button sc-camel-on-click="{{setDark}}" style="flex: 1; height: 36px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; border: {{darkBtnBorder}}; background: {{darkBtnBg}}">Dark</button>
+        <button sc-camel-on-click="{{setLight}}" style="flex: 1; height: 36px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; border: {{lightBtnBorder}}; background: {{lightBtnBg}}">Light</button>
+      </div>
+    </div>
+
+    <label style="display: flex; align-items: center; gap: 10px; font-size: 13px">
+      <input type="checkbox" checked="{{tint}}" sc-camel-on-change="{{toggleTint}}" style="width: 18px; height: 18px; accent-color: {{accentLight}}">
+      Tint backgrounds with the accent (off = neutral grey)
+    </label>
+
+    <div style="display: flex; flex-direction: column; gap: 8px">
+      <div style="font-size: 13px; font-weight: 600">Worked out from it</div>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+        <sc-for list="{{tokens}}" as="t" hint-placeholder-count="8">
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <div style="height: 30px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.12); background: {{t.c}}"></div>
+            <div style="font-size: 11px; color: hsl(222,10%,36%)">{{t.n}}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live preview -->
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; border: 1px solid {{p.border}}; background: {{p.bg}}; color: {{p.fg}}; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.10)">
+    <div style="height: 38px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: {{p.surface}}">
+      <div style="width: 18px; height: 18px; border-radius: 5px; background: {{p.accent}}"></div>
+      <div style="font-weight: 600">Tidemail</div>
+      <div style="flex: 1"></div>
+      <div style="width: 320px; height: 26px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; border-radius: 6px; border: 1px solid {{p.border}}; background: {{p.raised}}; font-size: 12px; color: {{p.muted}}">Search mail</div>
+      <div style="flex: 1"></div>
+    </div>
+    <div style="flex: 1; min-height: 0; display: flex">
+      <div style="width: 200px; flex: none; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; background: {{p.surface}}">
+        <div style="height: 30px; margin-bottom: 8px; border-radius: 6px; background: {{p.accent}}; color: {{p.accentFg}}; display: flex; align-items: center; justify-content: center; font-weight: 500">Compose</div>
+        <div style="height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border-radius: 6px; background: {{p.raised}}; font-weight: 500"><span style="width: 10px; height: 10px; border-radius: 3px; border: 2px solid {{p.accent}}"></span><span style="flex: 1">Inbox</span><span style="font-size: 11px; color: {{p.accentText}}">2</span></div>
+        <div style="height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 8px; color: {{p.muted}}"><span style="width: 10px; height: 10px; border-radius: 3px; border: 2px solid {{p.muted}}"></span>Starred</div>
+        <div style="height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 8px; color: {{p.muted}}"><span style="width: 10px; height: 10px; border-radius: 3px; border: 2px solid {{p.muted}}"></span>Sent</div>
+        <div style="height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 8px; color: {{p.muted}}"><span style="width: 10px; height: 10px; border-radius: 3px; border: 2px solid {{p.muted}}"></span>Drafts</div>
+      </div>
+      <div style="width: 360px; flex: none; display: flex; flex-direction: column; border-left: 1px solid {{p.border}}; border-right: 1px solid {{p.border}}">
+        <div style="height: 44px; flex: none; padding: 0 16px; display: flex; align-items: center; border-bottom: 1px solid {{p.border}}; font-size: 16px; font-weight: 600">Inbox</div>
+        <div style="padding: 4px 6px; display: flex; flex-direction: column; gap: 2px">
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+            <div style="height: 56px; padding: 0 10px 0 4px; display: flex; align-items: center; gap: 10px; border-radius: 6px; background: {{r.bg}}">
+              <span style="width: 6px; height: 6px; flex: none; border-radius: 50%; background: {{r.dot}}"></span>
+              <span style="width: 28px; height: 28px; flex: none; border-radius: 50%; background: {{p.raised}}; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: {{p.muted}}">{{r.ini}}</span>
+              <div style="flex: 1; min-width: 0">
+                <div style="display: flex; gap: 6px"><span style="flex: 1; font-weight: {{r.w}}">{{r.from}}</span><span style="font-size: 11.5px; color: {{p.muted}}">{{r.date}}</span></div>
+                <div style="font-size: 12px; color: {{p.muted}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{r.subject}}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="flex: 1; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; gap: 6px">
+          <div style="height: 28px; padding: 0 12px; border-radius: 6px; background: {{p.accent}}; color: {{p.accentFg}}; display: flex; align-items: center; font-weight: 500">Reply</div>
+          <div style="height: 28px; padding: 0 12px; border-radius: 6px; border: 1px solid {{p.border}}; background: {{p.raised}}; display: flex; align-items: center">Archive</div>
+        </div>
+        <div style="font-size: 19px; font-weight: 600">Re: Werkstudent interview on Thursday</div>
+        <div style="padding: 14px; border-radius: 10px; border: 1px solid {{p.border}}; display: flex; flex-direction: column; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 10px"><span style="width: 30px; height: 30px; border-radius: 50%; background: {{p.selected}}; color: {{p.accentText}}; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600">AW</span><b>Anna Weber</b><span style="color: {{p.muted}}; font-size: 12px">19:40</span></div>
+          <div style="line-height: 1.55">Thanks for confirming! We are in room 2.14. <span style="color: {{p.accentText}}; text-decoration: underline">Directions to the building</span></div>
+        </div>
+        <div style="font-size: 12px; color: {{p.muted}}">Text on background {{fgRatio}} : 1 · muted text {{mutedRatio}} : 1 · accent text {{accentRatio}} : 1</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:760}}">
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { hue: 268, dark: true, tint: true }; }
+
+  // OKLCH -> linear sRGB -> relative luminance, for the contrast readout.
+  lum(L, C, h) {
+    const a = C * Math.cos(h * Math.PI / 180), b = C * Math.sin(h * Math.PI / 180);
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const clamp = (x) => Math.min(1, Math.max(0, x));
+    const r = clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
+    const g = clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
+    const bb = clamp(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bb;
+  }
+  ratio(a, b) { const x = this.lum(a[0], a[1], a[2]), y = this.lum(b[0], b[1], b[2]); return ((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)).toFixed(1); }
+
+  renderVals() {
+    const h = this.state.hue, dark = this.state.dark, k = this.state.tint ? 1 : 0;
+    const css = (v) => 'oklch(' + v[0] + ' ' + v[1].toFixed(3) + ' ' + v[2] + ')';
+    const D = {
+      bg: [0.19, 0.014 * k, h], surface: [0.165, 0.014 * k, h], raised: [0.245, 0.016 * k, h], border: [0.27, 0.014 * k, h],
+      selected: [0.29, 0.06, h], fg: [0.94, 0.006 * k, h], muted: [0.71, 0.014 * k, h],
+      accent: [0.70, 0.16, h], accentText: [0.78, 0.13, h]
+    };
+    const Lt = {
+      bg: [0.995, 0.002 * k, h], surface: [0.972, 0.008 * k, h], raised: [0.935, 0.012 * k, h], border: [0.91, 0.01 * k, h],
+      selected: [0.95, 0.035, h], fg: [0.22, 0.02 * k, h], muted: [0.50, 0.016 * k, h],
+      accent: [0.55, 0.17, h], accentText: [0.50, 0.17, h]
+    };
+    const T = dark ? D : Lt;
+    // Button text: white on a dark accent, near-black on a light one.
+    const fgOn = this.ratio(T.accent, [1, 0, 0]) >= 3.5 ? [1, 0, 0] : [0.2, 0.03, h];
+    const p = {};
+    Object.keys(T).forEach((key) => { p[key] = css(T[key]); });
+    p.accentFg = css(fgOn);
+
+    const names = [['Indigo', 268], ['Blue', 250], ['Sky', 230], ['Cyan', 210], ['Teal', 185], ['Green', 150],
+                   ['Lime', 125], ['Amber', 75], ['Orange', 50], ['Red', 25], ['Pink', 355], ['Violet', 300]];
+    const rows = [
+      ['GitHub', 'GH', '20:12', 'Run failed: CI - main', true, false],
+      ['Anna Weber', 'AW', '19:40', 'Re: Werkstudent interview on Thursday', true, true],
+      ['Deutsche Bahn', 'DB', '17:05', 'Ihre Fahrkarte Kaiserslautern → Frankfurt', false, false],
+      ['Linear', 'LI', '14:22', 'Weekly digest: 4 issues closed', false, false],
+      ['Max Hoffmann', 'MH', 'Nov 16', 'Lunch tomorrow?', false, false],
+      ['Hetzner Online', 'HO', 'Nov 14', 'Invoice 0412', false, false]
+    ];
+    return {
+      p: p,
+      hue: h,
+      tint: this.state.tint,
+      accentLight: css(Lt.accent),
+      onHue: (e) => this.setState({ hue: parseInt(e.target.value, 10) }),
+      setDark: () => this.setState({ dark: true }),
+      setLight: () => this.setState({ dark: false }),
+      toggleTint: () => this.setState({ tint: !this.state.tint }),
+      darkBtnBg: dark ? 'hsl(225,25%,12%)' : '#fff', darkBtnBorder: dark ? '1px solid hsl(225,25%,12%)' : '1px solid hsl(225,14%,82%)',
+      lightBtnBg: dark ? '#fff' : 'hsl(225,25%,12%)', lightBtnBorder: dark ? '1px solid hsl(225,14%,82%)' : '1px solid hsl(225,25%,12%)',
+      swatches: names.map((n) => ({
+        name: n[0], css: 'oklch(0.66 0.16 ' + n[1] + ')',
+        ring: n[1] === h ? '3px solid hsl(225,25%,12%)' : '3px solid transparent',
+        pick: () => this.setState({ hue: n[1] })
+      })),
+      tokens: [
+        { n: 'Background', c: p.bg }, { n: 'Surface', c: p.surface }, { n: 'Raised', c: p.raised }, { n: 'Border', c: p.border },
+        { n: 'Selected', c: p.selected }, { n: 'Text', c: p.fg }, { n: 'Muted text', c: p.muted }, { n: 'Accent', c: p.accent }
+      ],
+      rows: rows.map((r) => ({
+        from: r[0], ini: r[1], date: r[2], subject: r[3], w: r[4] ? 600 : 400,
+        dot: r[4] ? p.accent : 'transparent', bg: r[5] ? p.selected : 'transparent'
+      })),
+      fgRatio: this.ratio(T.fg, T.bg),
+      mutedRatio: this.ratio(T.muted, T.bg),
+      accentRatio: this.ratio(T.accentText, T.bg)
+    };
+  }
+}
+</script>
+
+
+</body></html>
