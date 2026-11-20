@@ -122,6 +122,11 @@ fn every_repo_colour_passes_on_every_theme() {
             }
             let d = ((c.h * 360. - accent + 540.) % 360. - 180.).abs();
             assert!(d >= REPO_ACCENT_GAP - 0.01, "{who}: repo {name} is {d:.1} degrees from the accent");
+            // Near the accent's hue, the tone differs clearly.
+            if d < REPO_ACCENT_NEAR {
+                let tone = (c.s - p.accent.s).abs().max((c.l - p.accent.l).abs());
+                assert!(tone >= 0.15, "{who}: repo {name} looks like the accent ({c:?} vs {:?})", p.accent);
+            }
         }
     }
 }

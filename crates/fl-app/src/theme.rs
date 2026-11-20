@@ -659,6 +659,12 @@ pub const REPO_HUES: [(f32, &str); 10] = [
 /// a repo dot is not read as an unread dot.
 const REPO_ACCENT_GAP: f32 = 15.;
 
+/// A repo hue this close (degrees) to the accent also takes another tone:
+/// lighter (dark themes) or darker (light themes) than the accent, and less
+/// saturated next to a vivid accent. A hue shift alone left Midnight's Blue
+/// repos looking like unread dots.
+const REPO_ACCENT_NEAR: f32 = 35.;
+
 /// Repository colours the user picked: `owner/name` -> index into
 /// [`REPO_HUES`]. Loaded at startup; changed by [`RepoColors::set`].
 #[derive(Clone, Debug, Default)]
@@ -820,7 +826,19 @@ impl Palette {
         if d.abs() < REPO_ACCENT_GAP {
             hue = (accent + REPO_ACCENT_GAP.copysign(d) + 360.) % 360.;
         }
-        let (s, l) = self.repo;
+        let (mut s, mut l) = self.repo;
+        if d.abs() < REPO_ACCENT_NEAR {
+            // Next to a vivid accent, less colour and a smaller step in
+            // lightness keep the dot recognisably its hue.
+            let step = if self.accent.s >= 0.6 {
+                s *= 0.6;
+                12.
+            } else {
+                20.
+            };
+            let accent_l = self.accent.l * 100.;
+            l = if self.dark { l.max(accent_l + step).min(92.) } else { l.min(accent_l - step).max(15.) };
+        }
         hsl(hue, s, l)
     }
 
