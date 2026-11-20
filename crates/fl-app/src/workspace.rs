@@ -129,7 +129,17 @@ impl Workspace {
             cx.subscribe_in(&footer, window, |this, _, ev: &FooterEvent, window, cx| match ev {
                 FooterEvent::SignIn => this.open_sign_in(window, cx),
             }),
-            cx.observe_window_appearance(window, |this, window, cx| this.on_system_appearance(window, cx)),
+            // GPUI also calls this once after the window opens; act only on
+            // a real change.
+            cx.observe_window_appearance(window, {
+                let mut seen = window.appearance();
+                move |this, window, cx| {
+                    if window.appearance() != seen {
+                        seen = window.appearance();
+                        this.on_system_appearance(window, cx);
+                    }
+                }
+            }),
             cx.subscribe_in(&dock, window, |this, _, ev: &DockEvent, window, cx| {
                 if matches!(ev, DockEvent::LayoutChanged) {
                     this.schedule_save(window, cx);
