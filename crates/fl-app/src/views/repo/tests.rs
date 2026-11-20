@@ -111,3 +111,22 @@ fn a_repos_change_reloads(cx: &mut TestAppContext) {
     write(cx, "UPDATE repos SET description = 'Goes further' WHERE id = 1", &["repos"]);
     cx.read(|cx| assert_eq!(view.read(cx).overview().unwrap().description.as_deref(), Some("Goes further")));
 }
+
+#[gpui_kit::test]
+fn picking_a_colour_shows_at_once_and_is_saved(cx: &mut TestAppContext) {
+    use crate::theme::{ActivePalette as _, repo_color};
+    let dir = tempfile::tempdir().unwrap();
+    let (_, _, _view) = open(cx, dir.path(), 1);
+    let auto = cx.read(|cx| repo_color("acme/rocket", cx));
+    let picked = cx.read(|cx| (0..10).map(|i| cx.palette().repo(i)).find(|c| *c != auto).unwrap());
+    let index = cx.read(|cx| (0..10u8).find(|i| cx.palette().repo(*i) == picked).unwrap());
+    cx.update(|cx| crate::repo_color::set(1, "acme/rocket", Some(index), cx));
+    cx.read(|cx| assert_eq!(repo_color("acme/rocket", cx), picked));
+    cx.run_until_parked();
+    assert_eq!(query_i64(cx, "SELECT color FROM repos WHERE id = 1"), index as i64);
+    // Back to the colour from the name.
+    cx.update(|cx| crate::repo_color::set(1, "acme/rocket", None, cx));
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(repo_color("acme/rocket", cx), auto));
+    assert_eq!(query_i64(cx, "SELECT count(*) FROM repos WHERE color IS NOT NULL"), 0);
+}

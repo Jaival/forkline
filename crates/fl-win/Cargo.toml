@@ -1,0 +1,18 @@
+[package]
+name = "fl-win"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The one crate allowed to use `unsafe`: thin, safe wrappers over Win32 calls
+# the GPUI stack does not expose. Everything else keeps `unsafe_code = "forbid"`.
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

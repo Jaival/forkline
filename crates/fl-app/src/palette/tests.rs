@@ -154,7 +154,7 @@ fn search_hit_opens_its_tab(cx: &mut TestAppContext) {
     type_text(cx, handle, "needle");
     assert!(has(&labels(cx, &ws), "#7 needle in haystack"));
     press(cx, handle, "enter");
-    assert_eq!(tabs(cx, &ws), ["Inbox", "*Issue 1"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "*#7 needle in haystack"]);
 }
 
 #[gpui_kit::test]

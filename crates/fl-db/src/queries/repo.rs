@@ -27,6 +27,21 @@ pub fn set_merge_method(conn: &Connection, id: RepoId, method: MergeMethod) -> r
     Ok(())
 }
 
+/// Repositories whose colour the user picked: `(owner/name, hue index)`.
+/// The others take theirs from a hash of the name.
+pub fn colors(conn: &Connection) -> rusqlite::Result<Vec<(String, u8)>> {
+    conn.prepare_cached("SELECT owner || '/' || name, color FROM repos WHERE color IS NOT NULL")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect()
+}
+
+/// Pick the repository's colour (a hue index 0-9); `None` goes back to the
+/// colour from the name's hash.
+pub fn set_color(conn: &Connection, id: RepoId, color: Option<u8>) -> rusqlite::Result<()> {
+    conn.prepare_cached("UPDATE repos SET color = ?2 WHERE id = ?1")?.execute((id, color))?;
+    Ok(())
+}
+
 /// Pinned repositories with open PR / issue counts, for the sidebar.
 pub fn pinned(conn: &Connection) -> rusqlite::Result<Vec<RepoSummary>> {
     conn.prepare_cached(

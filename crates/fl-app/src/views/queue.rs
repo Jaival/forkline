@@ -15,7 +15,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, Theme, h_flex, v_flex, v_virtual_list};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
@@ -28,13 +28,12 @@ use rusqlite::Connection;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, GROUP_HEADER, PANE_HEADER, Palette, RADIUS, ROW_HEIGHT, TextScale as _};
 use crate::view_ref::ViewRef;
 use crate::workspace::{OpenView, SaveLayout, SetViewRef};
 
 actions!(queue, [SelectNext, SelectPrev, OpenSelected, FocusFilter, SaveView, ToggleGrouped]);
 
-const HEADER_HEIGHT: f32 = 26.;
-const ROW_HEIGHT: f32 = 46.;
 /// Start the next page when the rendered range ends this close to the end.
 const LOAD_AHEAD: usize = 20;
 
@@ -204,7 +203,7 @@ impl Queue {
     fn rebuild(&mut self) {
         self.items = flatten(&self.rows, self.query.flat);
         let sizes = self.items.iter().map(|item| {
-            let height = if matches!(item, Item::Header(_)) { HEADER_HEIGHT } else { ROW_HEIGHT };
+            let height = if matches!(item, Item::Header(_)) { GROUP_HEADER } else { ROW_HEIGHT };
             size(px(0.), px(height))
         });
         self.sizes = Rc::new(sizes.collect());
@@ -484,117 +483,134 @@ impl Queue {
         cx.notify();
     }
 
-    fn header_element(&self, group: QueueGroup, theme: &Theme) -> AnyElement {
+    fn header_element(&self, group: QueueGroup, p: &Palette) -> AnyElement {
         let count = self.counts.iter().find(|(g, _)| *g == group).map_or(0, |(_, n)| *n);
         h_flex()
             .w_full()
-            .h(px(HEADER_HEIGHT))
-            .px(px(10.))
+            .h(px(GROUP_HEADER))
+            .px(px(20.))
+            .pt(px(10.))
+            .pb(px(4.))
+            .gap(px(6.))
             .items_center()
-            .justify_between()
-            .bg(theme.sidebar)
-            .border_b_1()
-            .border_color(theme.border)
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(group.label().to_uppercase())
-            .child(if self.counts_ready { count.to_string() } else { String::new() })
+            .text_label()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.text_muted)
+            .child(group.label())
+            .when(self.counts_ready, |d| d.child(div().text_color(p.text_faint).child(count.to_string())))
             .into_any_element()
     }
 
     fn row_element(&self, row_ix: usize, cx: &Context<Self>) -> AnyElement {
         let row = &self.rows[row_ix];
-        let theme = cx.theme();
+        let p = cx.palette();
+        let mono = cx.theme().mono_font_family.clone();
         let selected = self.selected == Some(row_ix);
-        let (icon, icon_color) = state_icon(row, theme);
+        let (icon, icon_color) = state_icon(row, p);
 
-        let mut sub = row.repo.clone();
+        let mut repo = row.repo.clone();
         if let Some(number) = row.number {
-            sub.push_str(&format!(" #{number}"));
-        }
-        if let Some(author) = &row.author {
-            sub.push_str(&format!(" \u{b7} {author}"));
+            repo.push_str(&format!(" #{number}"));
         }
         let drafts = row.issue_id.filter(|_| row.is_pr).is_some_and(|id| Drafts::global(cx).read(cx).count(id) > 0);
         let check = row.checks.map(|state| match state {
-            CheckState::Success => (IconName::Check, theme.success),
-            CheckState::Failure => (IconName::X, theme.danger),
-            CheckState::Pending => (IconName::Clock, theme.warning),
+            CheckState::Success => (IconName::Check, p.open.fg),
+            CheckState::Failure => (IconName::X, p.closed.fg),
+            CheckState::Pending => (IconName::Clock, p.pending.fg),
+        });
+        let author = row.author.as_ref().map(|login| {
+            h_flex()
+                .gap(px(6.))
+                .items_center()
+                .min_w_0()
+                .child(crate::rail::avatar(login, 14., p))
+                .child(div().truncate().child(login.clone()))
         });
 
         div()
-            .id(("queue-row", row_ix))
-            .test_support()
-            .relative()
-            .flex()
             .w_full()
             .h(px(ROW_HEIGHT))
-            .px(px(10.))
-            .py(px(5.))
-            .gap(px(8.))
-            .items_start()
-            .border_b_1()
-            .border_color(theme.border)
-            .when(selected, |d| {
-                d.bg(theme.primary.opacity(0.12)).child(
-                    div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(theme.primary),
-                )
-            })
-            .when(!selected, |d| d.hover(|s| s.bg(theme.accent.opacity(0.5))))
-            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                this.select(Some(row_ix), cx);
-                if ev.click_count() >= 2 {
-                    this.open(window, cx);
-                }
-            }))
-            .child(div().mt(px(3.)).child(Icon::new(icon).with_size(px(14.)).text_color(icon_color)))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_sm()
-                            .when(row.unread, |d| d.font_weight(FontWeight::SEMIBOLD))
-                            .child(row.title.clone()),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(4.))
-                            .items_center()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(div().truncate().min_w_0().child(sub))
-                            .when_some(check, |d, (icon, color)| {
-                                d.child(Icon::new(icon).with_size(px(12.)).text_color(color))
-                            }),
-                    ),
-            )
+            .px(px(8.))
             .child(
                 h_flex()
-                    .flex_none()
-                    .gap(px(6.))
-                    .pt(px(2.))
+                    .id(("queue-row", row_ix))
+                    .test_support()
+                    .size_full()
+                    .px(px(12.))
+                    .gap(px(12.))
                     .items_center()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .when(drafts, |d| {
-                        d.child(
-                            div()
-                                .id(("queue-drafts", row_ix))
-                                .test_support()
-                                .px(px(5.))
-                                .rounded(px(3.))
-                                .border_1()
-                                .border_dashed()
-                                .border_color(theme.warning)
-                                .text_color(theme.warning)
-                                .child("drafts"),
-                        )
-                    })
-                    .when(row.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.primary)))
-                    .child(age(fl_sync::now(), row.updated_at)),
+                    .rounded(RADIUS)
+                    .when(selected, |d| d.bg(p.selected))
+                    .when(!selected, |d| d.hover(|s| s.bg(p.hover)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        this.select(Some(row_ix), cx);
+                        if ev.click_count() >= 2 {
+                            this.open(window, cx);
+                        }
+                    }))
+                    .child(Icon::new(icon).with_size(px(16.)).flex_none().text_color(icon_color))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_body()
+                                    .map(|d| {
+                                        if row.unread {
+                                            d.font_weight(FontWeight::MEDIUM).text_color(p.text_strong)
+                                        } else {
+                                            d.text_color(p.text_read)
+                                        }
+                                    })
+                                    .child(row.title.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .items_center()
+                                    .text_small()
+                                    .text_color(p.text_muted)
+                                    .overflow_hidden()
+                                    .when(!row.repo.is_empty(), |d| d.child(crate::repo_color::dot(&row.repo, cx)))
+                                    .child(div().flex_none().font_family(mono).text_label().child(repo))
+                                    .when_some(author, |d, author| d.child("\u{b7}").child(author))
+                                    .when_some(check, |d, (icon, color)| {
+                                        d.child(Icon::new(icon).with_size(px(12.)).flex_none().text_color(color))
+                                    }),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_none()
+                            .gap(px(6.))
+                            .items_end()
+                            .text_small()
+                            .text_color(p.text_muted)
+                            .child(
+                                h_flex()
+                                    .gap(px(6.))
+                                    .items_center()
+                                    .when(drafts, |d| {
+                                        d.child(
+                                            div()
+                                                .id(("queue-drafts", row_ix))
+                                                .test_support()
+                                                .px(px(5.))
+                                                .rounded(px(3.))
+                                                .border_1()
+                                                .border_dashed()
+                                                .border_color(p.pending.fg)
+                                                .text_color(p.pending.fg)
+                                                .child("drafts"),
+                                        )
+                                    })
+                                    .child(age(fl_sync::now(), row.updated_at)),
+                            )
+                            .child(div().size(px(7.)).rounded_full().when(row.unread, |d| d.bg(p.accent))),
+                    ),
             )
             .into_any_element()
     }
@@ -610,24 +626,37 @@ impl Queue {
         };
         let repos = self.repos.clone();
         let queue = cx.weak_entity();
-        Button::new("queue-repo-filter").ghost().small().label(label).dropdown_caret(true).dropdown_menu(
-            move |mut menu, _, _| {
-                let entries = std::iter::once(("All repos".to_owned(), None))
-                    .chain(repos.iter().map(|(name, id)| (name.clone(), Some(*id))));
-                for (label, repo_id) in entries {
-                    let queue = queue.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+        let button = Button::new("queue-repo-filter").outline().small().dropdown_caret(true);
+        let button = match self.query.repo_id {
+            None => button.label(label),
+            Some(_) => button.child(
+                h_flex().gap(px(6.)).items_center().child(crate::repo_color::dot(&label, cx)).child(label),
+            ),
+        };
+        button.dropdown_menu(move |mut menu, _, _| {
+            let all = queue.clone();
+            menu = menu.item(PopupMenuItem::new("All repos").on_click(move |_, window, cx| {
+                let _ = all.update(cx, |q, cx| q.pick_repo(None, window, cx));
+            }));
+            for (name, id) in repos.iter() {
+                let queue = queue.clone();
+                let (name, repo_id) = (name.clone(), Some(*id));
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, cx| {
+                        h_flex().gap(px(8.)).items_center().child(crate::repo_color::dot(&name, cx)).child(name.clone())
+                    })
+                    .on_click(move |_, window, cx| {
                         let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
-                    }));
-                }
-                menu
-            },
-        )
+                    }),
+                );
+            }
+            menu
+        })
     }
 
     /// The `/` row under the header, and the result line when a filter is set.
     fn query_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
+        let p = *cx.palette();
         let text = self.filter.trim();
         let saved = self.kind_views().any(|v| v.query == text);
         let views: Vec<String> = self.kind_views().map(|v| v.query.clone()).collect();
@@ -642,16 +671,18 @@ impl Queue {
         v_flex()
             .flex_none()
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(p.border)
+            .text_secondary()
             .child(
                 h_flex()
                     .key_context("QueryBar")
                     .on_action(cx.listener(Self::escape_filter))
                     .h(px(30.))
-                    .px(px(12.))
+                    .pl(px(20.))
+                    .pr(px(12.))
                     .gap(px(6.))
                     .items_center()
-                    .child(div().text_color(theme.muted_foreground).child("/"))
+                    .child(div().text_color(p.text_faint).child("/"))
                     .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
                     .child(
                         Button::new("queue-grouped")
@@ -694,8 +725,8 @@ impl Queue {
                         .px(px(12.))
                         .gap(px(8.))
                         .items_center()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_small()
+                        .text_color(p.text_muted)
                         .child(div().id("queue-result-count").child(result))
                         .child(div().flex_1())
                         .when(!text.is_empty() && !saved, |d| {
@@ -747,14 +778,14 @@ impl Queue {
     }
 }
 
-fn state_icon(row: &QueueRow, theme: &Theme) -> (IconName, Hsla) {
+fn state_icon(row: &QueueRow, p: &Palette) -> (IconName, Hsla) {
     match (row.is_pr, row.state) {
-        (_, None) => (IconName::Bell, theme.muted_foreground),
-        (true, Some(IssueState::Open)) => (IconName::GitPullRequest, theme.success),
-        (true, Some(IssueState::Merged)) => (IconName::GitMerge, theme.magenta),
-        (true, Some(IssueState::Closed)) => (IconName::GitPullRequestClosed, theme.danger),
-        (false, Some(IssueState::Open)) => (IconName::CircleDot, theme.success),
-        (false, Some(_)) => (IconName::CircleCheck, theme.magenta),
+        (_, None) => (IconName::Bell, p.neutral.fg),
+        (true, Some(IssueState::Open)) => (IconName::GitPullRequest, p.open.fg),
+        (true, Some(IssueState::Merged)) => (IconName::GitMerge, p.merged.fg),
+        (true, Some(IssueState::Closed)) => (IconName::GitPullRequestClosed, p.closed.fg),
+        (false, Some(IssueState::Open)) => (IconName::CircleDot, p.open.fg),
+        (false, Some(_)) => (IconName::CircleCheck, p.merged.fg),
     }
 }
 
@@ -775,28 +806,24 @@ impl Render for Queue {
                 cx,
             );
         }
-        let theme = cx.theme();
+        let p = *cx.palette();
         let total: u32 = self.counts.iter().map(|(_, n)| n).sum();
         let counts_ready = self.counts_ready;
         let header = h_flex()
             .flex_none()
-            .h(px(36.))
-            .px(px(12.))
+            .h(px(PANE_HEADER))
+            .pl(px(20.))
+            .pr(px(12.))
             .gap(px(8.))
             .items_center()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(self.title.clone()))
+            .child(
+                div()
+                    .text_pane_title()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(self.title.clone()),
+            )
             .when(counts_ready, |d| {
-                d.child(
-                    div()
-                        .px(px(6.))
-                        .rounded_full()
-                        .bg(theme.muted)
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(total.to_string()),
-                )
+                d.child(div().text_secondary().text_color(p.text_muted).child(total.to_string()))
             })
             .child(div().flex_1())
             .child(self.filter_button(cx));
@@ -807,7 +834,7 @@ impl Render for Queue {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(theme.muted_foreground)
+                .text_color(p.text_muted)
                 .child("Nothing here")
                 .into_any_element()
         } else {
@@ -815,10 +842,10 @@ impl Render for Queue {
                 if range.end + LOAD_AHEAD >= this.items.len() {
                     this.load_more(cx);
                 }
-                let theme = cx.theme();
+                let p = *cx.palette();
                 range
                     .map(|ix| match this.items[ix] {
-                        Item::Header(group) => this.header_element(group, theme),
+                        Item::Header(group) => this.header_element(group, &p),
                         Item::Row(row_ix) => this.row_element(row_ix, cx),
                     })
                     .collect()

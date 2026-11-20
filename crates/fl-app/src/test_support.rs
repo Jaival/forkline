@@ -39,10 +39,12 @@ pub fn open_with(
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::theme::apply(Some(gpui_kit::component::ThemeMode::Dark), None, cx);
         panel::init(cx);
         workspace::init(cx);
         views::init(cx);
         signin::init(cx);
+        crate::appearance::init(cx);
         crate::drafts::Drafts::init(cx);
         Store::init(dir, fl_sync::Config::test(api), true, false, cx).unwrap();
         let store = Store::global(cx);
@@ -133,4 +135,26 @@ pub fn write(cx: &mut TestAppContext, sql: &str, scopes: &[&str]) {
 /// One integer from the test database.
 pub fn query_i64(cx: &mut TestAppContext, sql: &str) -> i64 {
     cx.read(|cx| Store::global(cx).read(cx).db().read(|c| c.query_row(sql, [], |r| r.get(0))).unwrap())
+}
+
+/// Run `f` in a test app whose text system is the real one, so layout uses
+/// the fonts' real metrics.
+pub fn with_real_text(name: &'static str, f: impl FnOnce(&mut TestAppContext) + 'static) {
+    let f = std::panic::AssertUnwindSafe(f);
+    gpui_kit::run_test_once(
+        0,
+        Box::new(move |dispatcher| {
+            // Move the whole wrapper in, not just its field.
+            let f = f;
+            let ts = gpui_kit::platform::current_platform(false).text_system();
+            let mut cx = TestAppContext::build_with_text_system(dispatcher, Some(name), ts);
+            (f.0)(&mut cx);
+            cx.run_until_parked();
+            cx.update(|cx| {
+                cx.background_executor().forbid_parking();
+                cx.quit();
+            });
+            cx.run_until_parked();
+        }),
+    );
 }

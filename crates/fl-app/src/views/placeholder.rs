@@ -1,10 +1,11 @@
 //! Empty view for areas G1 has not built yet.
 
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, v_flex};
 use gpui_kit::{
     Context, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Window,
 };
 
+use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 
 pub struct Placeholder {
@@ -26,7 +27,7 @@ impl Render for Placeholder {
             .items_center()
             .justify_center()
             .gap_2()
-            .text_color(cx.theme().muted_foreground)
+            .text_color(cx.palette().text_muted)
             .child(Icon::new(self.view_ref.icon()).large())
             .child(self.view_ref.title())
     }

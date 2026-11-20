@@ -12,6 +12,8 @@ use crate::views::reading::{PaneTab, ReadingPane};
 use crate::workspace::Workspace;
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "src/c.rs"];
+/// Line 4 of `src/c.rs` in the head commit: a GitHub token (`ghp_` + 36).
+const TOKEN_LINE: &str = "let token = \"ghp_x7Kq2mN9pR4tW8vY3zB6cD1fH5jL0sA2eG7i\";";
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -41,7 +43,8 @@ fn make_clone(data: &Path) -> (String, String) {
     git(&work, &["commit", "-q", "-m", "base"]);
     let base = git(&work, &["rev-parse", "HEAD"]);
     for p in PATHS {
-        std::fs::write(work.join(p), "one\nTWO\nthree\nfour\n").unwrap();
+        let last = if p == "src/c.rs" { TOKEN_LINE } else { "four" };
+        std::fs::write(work.join(p), format!("one\nTWO\nthree\n{last}\n")).unwrap();
     }
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-q", "-m", "head"]);
@@ -498,14 +501,14 @@ fn closing_a_pr_tab_with_drafts_asks_first(cx: &mut TestAppContext) {
     let (handle, ws) = start(cx, dir.path());
     let tab = open_pr_tab(cx, handle, &ws);
     add_draft(cx, handle, &tab, "unsent");
-    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*#1 a pull request"]);
 
     // Ctrl+W asks; Cancel keeps the tab.
     press(cx, handle, "ctrl-w");
     assert!(cx.has_pending_prompt());
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*Pull request 3"]);
+    assert_eq!(tab_titles(cx, &ws), ["Inbox", "*#1 a pull request"]);
 
     // The tab's own close button asks too; Close tab closes it. The
     // drafts stay for the session.
@@ -546,4 +549,72 @@ fn quit_with_drafts_asks_first(cx: &mut TestAppContext) {
     window.simulate_prompt_answer("Quit");
     cx.run_until_parked();
     assert!(cx.update(|cx| cx.windows().is_empty()));
+}
+
+/// "Hide secrets in code" changes only the font: the diff draws the line in
+/// Obel Mono Masked, and copying it gives the full token.
+#[gpui_kit::test]
+fn copying_a_masked_line_gives_the_full_token(cx: &mut TestAppContext) {
+    use gpui_kit::component::ActiveTheme as _;
+    use gpui_kit::component::diff::{DiffLineRange, DiffSide};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    let (_, tab) = open_files(cx, handle, &ws);
+    assert!(cx.read(|cx| cx.try_global::<crate::fonts::Fonts>().copied().unwrap_or_default().mask_secrets));
+    assert_eq!(cx.read(|cx| cx.theme().mono_font_family.clone()), "Obel Mono Masked");
+    let diff = cx.read(|cx| tab.read(cx).diff.clone().unwrap());
+    diff.update(cx, |diff, cx| {
+        diff.set_selected_lines(Some(DiffLineRange::new(gpui_kit::SharedString::from("src/c.rs"), DiffSide::Modified, 4, 4)), cx)
+    });
+    let copied = cx.read(|cx| diff.read(cx).selected_text(cx));
+    assert_eq!(copied.trim_end(), TOKEN_LINE);
+}
+
+/// With each bundled font (real DirectWrite metrics), queue rows, tab titles
+/// and diff lines keep their fixed heights.
+#[test]
+fn rows_tabs_and_diff_lines_keep_their_heights_with_every_font() {
+    use crate::fonts::{CODE_FONTS, Fonts, UI_FONTS};
+    use crate::theme::{LINE_CODE, ROW_HEIGHT};
+
+    crate::test_support::with_real_text("rows_tabs_and_diff_lines_keep_their_heights_with_every_font", |cx| {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = start(cx, dir.path());
+        open_files(cx, handle, &ws);
+        let mut tab_height = None;
+        // Every interface font, every code font, and Obel Mono unmasked.
+        let mut choices: Vec<Fonts> = UI_FONTS.iter().map(|ui| Fonts { ui, ..Fonts::default() }).collect();
+        choices.extend(CODE_FONTS.iter().map(|mono| Fonts { mono, ..Fonts::default() }));
+        choices.push(Fonts { mask_secrets: false, ..Fonts::default() });
+        for fonts in choices {
+            let label = format!("{} + {}", fonts.ui.title, fonts.code().title);
+            cx.update(|cx| {
+                cx.set_global(fonts);
+                crate::fonts::apply(cx);
+            });
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let rows = window.find_all(("queue-row", 0usize));
+                assert!(!rows.is_empty(), "{label}: a queue row");
+                for row in rows {
+                    assert_eq!(row.bounds().size.height, gpui_kit::px(ROW_HEIGHT), "{label}: queue row");
+                }
+                let tabs = window.find_all("tab-title");
+                assert!(!tabs.is_empty(), "{label}: a tab");
+                for t in tabs {
+                    let h = t.bounds().size.height;
+                    assert_eq!(*tab_height.get_or_insert(h), h, "{label}: tab title");
+                }
+                let lines = window.find_all(("line", 0usize));
+                assert!(!lines.is_empty(), "{label}: a diff line");
+                for line in lines {
+                    let h = line.bounds().size.height;
+                    assert!((h - LINE_CODE).abs() < gpui_kit::px(0.01), "{label}: diff line {h:?}");
+                }
+            })
+            .unwrap();
+        }
+    });
 }

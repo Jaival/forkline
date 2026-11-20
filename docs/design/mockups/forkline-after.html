@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Forkline — after</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style></style>
+<style>
+body{margin:0}
+a{color:hsl(228,92%,72%)}a:hover{color:hsl(228,92%,80%)}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; flex-direction: column; background: hsl(225,12%,10%); color: hsl(220,14%,92%); font-family: {{uiStack}}; font-size: 13.5px; overflow: hidden">
+
+  <!-- Custom title bar -->
+  <div style="height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding-left: 14px; background: hsl(225,13%,7.5%)">
+    <div style="width: 20px; height: 20px; border-radius: 5px; background: hsl(228,92%,69%); display: flex; align-items: center; justify-content: center">
+      <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"></path><path d="M12 12v3"></path></svg>
+    </div>
+    <div style="font-weight: 600">Forkline</div>
+    <div style="flex: 1"></div>
+    <label style="width: 420px; height: 28px; box-sizing: border-box; padding: 0 4px 0 10px; display: flex; align-items: center; gap: 8px; border-radius: 6px; background: hsl(225,10%,12.5%); border: 1px solid hsl(225,9%,16.5%); font-size: 12.5px; color: hsl(222,8%,62%)">
+      <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input aria-label="Search repositories, pull requests and issues" placeholder="Search repos, PRs, issues" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: inherit; font: inherit">
+      <span style="height: 18px; padding: 0 6px; display: flex; align-items: center; border-radius: 4px; border: 1px solid hsl(225,9%,18%); background: hsl(225,12%,10%); font-size: 11.5px">Ctrl K</span>
+    </label>
+    <div style="flex: 1"></div>
+    <div style="display: flex; height: 40px" aria-hidden="true">
+      <div style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" sc-camel-view-box="0 0 10 10"><path d="M0 5h10" stroke="hsl(222,8%,62%)"></path></svg></div>
+      <div style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" sc-camel-view-box="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5" fill="none" stroke="hsl(222,8%,62%)"></rect></svg></div>
+      <div style="width: 46px; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" sc-camel-view-box="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="hsl(222,8%,62%)"></path></svg></div>
+    </div>
+  </div>
+
+  <div style="flex: 1; min-height: 0; display: flex">
+    <!-- Rail -->
+    <nav aria-label="Views" style="width: 52px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 10px; background: hsl(225,13%,7.5%); color: hsl(222,8%,60%)">
+      <button aria-label="Inbox, 3 unread" title="Inbox" style="position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: hsl(225,10%,14.5%); color: hsl(228,92%,72%)">
+        <svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+        <span style="position: absolute; top: 2px; right: 1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: hsl(228,92%,69%); border: 2px solid hsl(225,13%,7.5%); font-size: 9px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center">3</span>
+      </button>
+      <button aria-label="Pull requests" title="Pull requests" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg></button>
+      <button aria-label="Issues" title="Issues" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="1"></circle></svg></button>
+      <button aria-label="Reviews" title="Reviews" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+      <div style="width: 20px; height: 1px; margin: 4px 0; background: hsl(225,9%,16.5%)"></div>
+      <button aria-label="Repositories" title="Repositories" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"></path></svg></button>
+      <button aria-label="Starred" title="Starred" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg></button>
+      <button aria-label="Explore" title="Explore" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"></path></svg></button>
+      <button aria-label="Pinned repositories" title="Pinned" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></button>
+      <div style="flex: 1"></div>
+      <button aria-label="Light theme" title="Light theme" style="width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: inherit"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg></button>
+      <div style="width: 28px; height: 28px; margin-top: 4px; border-radius: 50%; background: hsl(228,45%,24%); color: hsl(228,85%,82%); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center" aria-label="Signed in as jaival" role="img">JS</div>
+    </nav>
+
+    <!-- Dock -->
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: hsl(225,13%,7.5%)">
+      <div style="height: 36px; flex: none; display: flex; align-items: flex-end; gap: 2px; padding: 0 6px; font-size: 12.5px">
+        <div style="height: 32px; padding: 0 10px 0 12px; display: flex; align-items: center; gap: 8px; border-radius: 8px 8px 0 0; background: hsl(225,12%,10%); border: 1px solid hsl(225,9%,16.5%); border-bottom: 0; font-weight: 500">
+          <svg width="13" height="13" sc-camel-view-box="0 0 24 24" fill="none" stroke="hsl(228,92%,72%)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+          Inbox
+          <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="hsl(222,8%,50%)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+        </div>
+        <div style="height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 8px; color: hsl(222,8%,60%)">
+          <svg width="13" height="13" sc-camel-view-box="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+          forkline #42
+        </div>
+        <div style="height: 32px; padding: 0 10px; display: flex; align-items: center; color: hsl(222,8%,50%)" aria-label="New tab">
+          <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; display: flex; background: hsl(225,12%,10%); border-top: 1px solid hsl(225,9%,16.5%)">
+        <!-- Queue -->
+        <div style="width: 420px; flex: none; display: flex; flex-direction: column; border-right: 1px solid hsl(225,9%,16.5%)">
+          <div style="height: 48px; flex: none; padding: 0 12px 0 20px; display: flex; align-items: center; gap: 8px">
+            <div style="font-size: 17px; font-weight: 600">Inbox</div>
+            <div style="font-size: 12.5px; color: hsl(222,8%,58%)">12</div>
+            <div style="flex: 1"></div>
+            <button style="height: 28px; padding: 0 8px 0 10px; display: flex; align-items: center; gap: 6px; border: 1px solid hsl(225,9%,16.5%); border-radius: 6px; background: transparent; color: hsl(220,14%,85%); font: inherit; font-size: 12.5px">
+              All repos
+              <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+          </div>
+          <div style="flex: 1; min-height: 0; overflow: hidden; padding: 0 8px">
+            <sc-for list="{{items}}" as="it" hint-placeholder-count="12">
+              <sc-if value="{{it.isHeader}}" hint-placeholder-val="{{false}}">
+                <div style="height: 30px; box-sizing: border-box; padding: 10px 12px 4px; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 500; color: hsl(222,8%,60%)">{{it.label}}<span style="color: hsl(222,8%,46%)">{{it.count}}</span></div>
+              </sc-if>
+              <sc-if value="{{it.isRow}}" hint-placeholder-val="{{true}}">
+                <div style="height: 54px; box-sizing: border-box; padding: 0 12px; display: flex; align-items: center; gap: 12px; border-radius: 6px; background: {{it.bg}}">
+                  <sc-if value="{{it.isPr}}" hint-placeholder-val="{{true}}">
+                    <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{it.color}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
+                  </sc-if>
+                  <sc-if value="{{it.isMerged}}" hint-placeholder-val="{{false}}">
+                    <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{it.color}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M6 21V9a9 9 0 0 0 9 9"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{it.isIssue}}" hint-placeholder-val="{{false}}">
+                    <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{it.color}}" stroke-width="2" aria-hidden="true" style="flex: none"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="1"></circle></svg>
+                  </sc-if>
+                  <sc-if value="{{it.isBell}}" hint-placeholder-val="{{false}}">
+                    <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{it.color}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none"><path d="M10.268 21a2 2 0 0 0 3.464 0"></path><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"></path></svg>
+                  </sc-if>
+                  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: {{it.weight}}; color: {{it.titleColor}}">{{it.title}}</div>
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: hsl(222,8%,58%); white-space: nowrap; overflow: hidden">
+                      <span style="font-family: {{codeStack}}; font-size: 11.5px">{{it.repo}}</span>
+                      <span>·</span>
+                      <span style="width: 14px; height: 14px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; background: {{it.avBg}}; color: {{it.avFg}}">{{it.ini}}</span>
+                      <span style="overflow: hidden; text-overflow: ellipsis">{{it.author}}</span>
+                    </div>
+                  </div>
+                  <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-size: 12px; color: hsl(222,8%,58%)">
+                    {{it.age}}
+                    <span style="width: 7px; height: 7px; border-radius: 50%; background: {{it.dot}}"></span>
+                  </div>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- Reading pane -->
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+          <div style="padding: 18px 24px 14px; display: flex; flex-direction: column; gap: 8px">
+            <div style="font-size: 12.5px; color: hsl(222,8%,58%)"><span style="font-family: {{codeStack}}; font-size: 12px">Jaival/forkline</span>  #42</div>
+            <h1 style="margin: 0; font-size: 21px; line-height: 1.3; font-weight: 600">Split panes: drag tabs between groups</h1>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12.5px; color: hsl(222,8%,62%)">
+              <span style="height: 22px; padding: 0 9px 0 7px; display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: hsl(142,55%,20%); color: hsl(142,70%,72%); font-weight: 500">
+                <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>Open
+              </span>
+              <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 18px; height: 18px; border-radius: 50%; background: hsl(228,45%,24%); color: hsl(228,85%,82%); font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center">JS</span><span style="color: hsl(220,14%,88%)">jaival</span> wants to merge into <span style="font-family: {{codeStack}}; font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: hsl(225,10%,15%); color: hsl(228,92%,78%)">main</span></span>
+              <span><span style="color: hsl(142,65%,60%)">+214</span> <span style="color: hsl(0,80%,68%)">−38</span></span>
+              <span style="display: inline-flex; align-items: center; gap: 5px"><svg width="13" height="13" sc-camel-view-box="0 0 24 24" fill="none" stroke="hsl(42,95%,58%)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>5 of 6 checks</span>
+              <span style="padding: 1px 8px; border-radius: 999px; border: 1px solid hsl(210,60%,35%); color: hsl(210,90%,75%)">ui</span>
+              <span style="padding: 1px 8px; border-radius: 999px; border: 1px solid hsl(270,40%,40%); color: hsl(270,90%,80%)">enhancement</span>
+            </div>
+          </div>
+
+          <div style="padding: 0 24px 14px; display: flex; align-items: center; gap: 8px">
+            <button style="height: 30px; padding: 0 10px 0 12px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 6px; background: hsl(228,92%,69%); color: #fff; font: inherit; font-weight: 500">
+              <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+              Approve <span style="height: 16px; padding: 0 5px; border-radius: 3px; background: rgba(255,255,255,0.22); font-size: 11px; display: flex; align-items: center">A</span>
+            </button>
+            <button style="height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid hsl(225,9%,18%); border-radius: 6px; background: hsl(225,10%,13%); color: hsl(220,14%,90%); font: inherit">
+              <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 18v-2a4 4 0 0 0-4-4H4"></path><path d="m9 17-5-5 5-5"></path></svg>
+              Reply <span style="font-size: 11px; color: hsl(222,8%,56%)">R</span>
+            </button>
+            <button style="height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid hsl(225,9%,18%); border-radius: 6px; background: hsl(225,10%,13%); color: hsl(220,14%,90%); font: inherit">
+              <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m9 12 2 2 4-4"></path></svg>
+              Done <span style="font-size: 11px; color: hsl(222,8%,56%)">E</span>
+            </button>
+            <button style="height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid hsl(225,9%,18%); border-radius: 6px; background: hsl(225,10%,13%); color: hsl(220,14%,90%); font: inherit">
+              <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+              Snooze <span style="font-size: 11px; color: hsl(222,8%,56%)">H</span>
+            </button>
+          </div>
+
+          <div role="tablist" style="height: 38px; flex: none; padding: 0 16px; display: flex; align-items: flex-end; gap: 4px; border-bottom: 1px solid hsl(225,9%,16.5%); font-size: 13px">
+            <button role="tab" aria-selected="true" style="height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid hsl(228,92%,69%); background: transparent; color: hsl(220,14%,94%); font: inherit; font-weight: 500">Conversation <span style="font-size: 11px; padding: 0 5px; border-radius: 8px; background: hsl(225,10%,16%); color: hsl(222,8%,66%)">3</span></button>
+            <button role="tab" aria-selected="false" style="height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: hsl(222,8%,60%); font: inherit">Files <span style="font-size: 11px; padding: 0 5px; border-radius: 8px; background: hsl(225,10%,16%)">7</span></button>
+            <button role="tab" aria-selected="false" style="height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: hsl(222,8%,60%); font: inherit">Commits <span style="font-size: 11px; padding: 0 5px; border-radius: 8px; background: hsl(225,10%,16%)">4</span></button>
+            <button role="tab" aria-selected="false" style="height: 38px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: hsl(222,8%,60%); font: inherit">Checks <span style="font-size: 11px; padding: 0 5px; border-radius: 8px; background: hsl(42,60%,20%); color: hsl(42,95%,70%)">5/6</span></button>
+          </div>
+
+          <div style="flex: 1; min-height: 0; overflow: hidden; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px">
+            <sc-for list="{{comments}}" as="c" hint-placeholder-count="3">
+              <div style="display: flex; gap: 12px">
+                <div style="width: 30px; height: 30px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; background: {{c.avBg}}; color: {{c.avFg}}">{{c.ini}}</div>
+                <div style="flex: 1; min-width: 0; border: 1px solid hsl(225,9%,16.5%); border-radius: 10px; padding: 10px 14px 12px">
+                  <div style="display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; margin-bottom: 6px">
+                    <span style="font-weight: 600; color: hsl(220,14%,92%)">{{c.author}}</span>
+                    <span style="color: hsl(222,8%,58%)">{{c.verb}} · {{c.when}}</span>
+                  </div>
+                  <div style="line-height: 1.55; color: hsl(220,14%,84%)">{{c.body}}</div>
+                </div>
+              </div>
+            </sc-for>
+            <div style="display: flex; gap: 12px">
+              <div style="width: 30px; height: 30px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; background: hsl(160,45%,24%); color: hsl(160,85%,82%)">LD</div>
+              <div style="flex: 1; min-width: 0; border: 1px solid hsl(225,9%,16.5%); border-radius: 10px; overflow: hidden">
+                <div style="padding: 8px 14px; display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; border-bottom: 1px solid hsl(225,9%,16.5%)">
+                  <span style="font-weight: 600">lena-dev</span>
+                  <span style="color: hsl(222,8%,58%)">reviewed</span>
+                  <span style="font-family: {{codeStack}}; font-size: 12px; color: hsl(220,14%,80%)">src/workspace.rs</span>
+                  <span style="color: hsl(222,8%,58%)">· 2 h</span>
+                </div>
+                <div style="font-family: {{codeStack}}; font-feature-settings: {{codeFeatures}}; font-size: 12.5px; line-height: 20px">
+                  <div style="display: flex; color: hsl(222,8%,52%)"><span style="width: 44px; flex: none; text-align: right; padding-right: 12px">34</span><span style="white-space: pre">  const SAVE_DELAY: Duration = Duration::from_secs(2);</span></div>
+                  <div style="display: flex; background: hsl(0,45%,16%); color: hsl(0,70%,80%)"><span style="width: 44px; flex: none; text-align: right; padding-right: 12px">35</span><span style="white-space: pre">- const LAYOUT_VERSION: usize = 1;</span></div>
+                  <div style="display: flex; background: hsl(142,40%,14%); color: hsl(142,60%,76%)"><span style="width: 44px; flex: none; text-align: right; padding-right: 12px">35</span><span style="white-space: pre">+ const LAYOUT_VERSION: usize = 2;</span></div>
+                  <div style="display: flex; background: hsl(142,40%,14%); color: hsl(142,60%,76%)"><span style="width: 44px; flex: none; text-align: right; padding-right: 12px">36</span><span style="white-space: pre">+ const TEST_TOKEN: &amp;str = "ghp_8fK2xQ7mLp0aZt3WvN5c";</span></div>
+                </div>
+                <div style="padding: 8px 14px 10px; line-height: 1.55; color: hsl(220,14%,84%); border-top: 1px solid hsl(225,9%,16.5%)">Bumping this drops G0 layouts once; worth a line in HANDOFF. And line 36 is a real-looking token: move it to an env var before merging.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div style="height: 28px; flex: none; padding: 0 14px; display: flex; align-items: center; gap: 8px; background: hsl(225,13%,7.5%); border-top: 1px solid hsl(225,9%,14%); font-size: 12px; color: hsl(222,8%,60%)">
+    <svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m9 12 2 2 4-4"></path></svg>
+    Synced 12 s ago
+    <div style="flex: 1"></div>
+    <span>j / k move</span><span>·</span><span>a approve</span><span>·</span><span>e done</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;uiFont&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Inter&quot;,&quot;Geist&quot;,&quot;IBM Plex Sans&quot;,&quot;Figtree&quot;,&quot;Atkinson Hyperlegible Next&quot;,&quot;Source Serif 4&quot;,&quot;Google Sans&quot;,&quot;Space Grotesk&quot;,&quot;Google Sans Flex&quot;,&quot;Manrope&quot;,&quot;Plus Jakarta Sans&quot;],&quot;default&quot;:&quot;Inter&quot;,&quot;section&quot;:&quot;Fonts&quot;},&quot;codeFont&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;JetBrains Mono&quot;,&quot;Geist Mono&quot;,&quot;IBM Plex Mono&quot;,&quot;Source Code Pro&quot;,&quot;Atkinson Hyperlegible Mono&quot;,&quot;Space Mono&quot;,&quot;Google Sans Code&quot;,&quot;Commit Mono&quot;,&quot;Monaspace Neon&quot;,&quot;Obel Mono&quot;],&quot;default&quot;:&quot;Obel Mono&quot;,&quot;section&quot;:&quot;Fonts&quot;},&quot;hideSecrets&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;section&quot;:&quot;Fonts&quot;},&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:800}}">
+class Component extends DCLogic {
+  renderVals() {
+    const uiName = this.props.uiFont ?? 'Inter';
+    const codeName = this.props.codeFont ?? 'Obel Mono';
+    const uiStack = "'" + uiName + "', 'Segoe UI', system-ui, " + (uiName === 'Source Serif 4' ? 'serif' : 'sans-serif');
+    const codeStack = "'" + codeName + "', Consolas, monospace";
+    const G = 'hsl(142,65%,58%)', M = 'hsl(270,85%,72%)', N = 'hsl(222,8%,55%)';
+    const hues = { jaival: 228, 'lena-dev': 160, 'm-hoff': 20, 'sophie-k': 330, 'zed-industries': 45, longbridge: 190 };
+    const av = (name) => {
+      const h = hues[name] == null ? 260 : hues[name];
+      const ini = name.replace(/[^a-z]/gi, ' ').trim().split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase();
+      return { ini: ini, avBg: 'hsl(' + h + ',45%,24%)', avFg: 'hsl(' + h + ',85%,82%)' };
+    };
+    const h = (label, count) => ({ isHeader: true, isRow: false, label: label, count: count });
+    const r = (kind, title, repo, author, age, unread, sel) => Object.assign({
+      isHeader: false, isRow: true, title: title, repo: repo, author: author, age: age,
+      isPr: kind === 'pr', isMerged: kind === 'merged', isIssue: kind === 'issue', isBell: kind === 'bell',
+      color: kind === 'merged' ? M : kind === 'bell' ? N : G,
+      weight: unread ? 500 : 400, titleColor: unread ? 'hsl(220,14%,95%)' : 'hsl(220,14%,76%)',
+      dot: unread ? 'hsl(228,92%,69%)' : 'transparent',
+      bg: sel ? 'hsl(228,38%,17.5%)' : 'transparent'
+    }, av(author));
+    const c = (author, verb, when, body) => Object.assign({ author: author, verb: verb, when: when, body: body }, av(author));
+    return {
+      uiStack: uiStack,
+      codeStack: codeStack,
+      codeFeatures: (this.props.hideSecrets ?? true) && codeName === 'Obel Mono' ? '"ss01" 1' : 'normal',
+      items: [
+        h('Review requested', 3),
+        r('pr', 'Split panes: drag tabs between groups', 'forkline #42', 'jaival', '2 h', true, true),
+        r('pr', 'Sync: back off on secondary rate limits', 'forkline #39', 'lena-dev', '5 h', true, false),
+        r('pr', 'Reader: lazy-load large diffs', 'forkline #37', 'm-hoff', '1 d', false, false),
+        h('Mentioned', 2),
+        r('issue', 'Gmail sync stalls after token refresh', 'tidemail #18', 'sophie-k', '3 h', true, false),
+        r('merged', 'Docs: Windows Defender exclusion', 'tidemail #15', 'jaival', '2 d', false, false),
+        h('Your PRs', 2),
+        r('merged', 'Bench: run on a copy of the database', 'tidemail #21', 'jaival', '1 d', false, false),
+        r('pr', 'Add open_attachment command', 'tidemail #19', 'jaival', '3 d', false, false),
+        h('Other', 5),
+        r('bell', 'Release v0.3.0', 'zed', 'zed-industries', '6 h', false, false)
+      ],
+      comments: [
+        c('jaival', 'opened', '2 d', 'Tabs can now be dragged between tab groups and into a new split. The layout is saved to the settings table two seconds after the last change.'),
+        c('lena-dev', 'commented', '5 h', 'Nice. Does the saved layout survive a version bump, or do we fall back to the default?'),
+        c('jaival', 'commented', '3 h', 'It falls back: LAYOUT_VERSION is checked before loading.')
+      ]
+    };
+  }
+}
+</script>
+
+
+</body></html>

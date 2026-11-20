@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use fl_types::{Page, PageReq};
-use gpui_kit::component::ActiveTheme as _;
+
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -22,6 +22,7 @@ use rusqlite::Connection;
 
 use super::queue::{OpenSelected, SelectNext, SelectPrev};
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, RADIUS, TextScale as _};
 use crate::view_ref::ViewRef;
 use crate::workspace::OpenView;
 
@@ -234,7 +235,7 @@ pub fn list_keys<V: HasRows>(root: Div, cx: &mut Context<V>) -> Div {
 /// One row: fixed height, selection tint and bar, hover, click selects and
 /// double-click opens.
 pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx: &Context<V>) -> impl gpui_kit::ParentElement + IntoElement + use<V> {
-    let theme = cx.theme();
+    let p = cx.palette();
     let selected = v.rows().selected == Some(ix);
     div()
         .id(ElementId::NamedInteger(id.into(), ix as u64))
@@ -244,15 +245,12 @@ pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx
         .w_full()
         .h(px(height))
         .px(px(12.))
-        .gap(px(10.))
+        .gap(px(12.))
         .items_center()
-        .border_b_1()
-        .border_color(theme.border)
-        .when(selected, |d| {
-            d.bg(theme.primary.opacity(0.12))
-                .child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(theme.primary))
-        })
-        .when(!selected, |d| d.hover(|s| s.bg(theme.accent.opacity(0.5))))
+        .rounded(RADIUS)
+        .text_body()
+        .when(selected, |d| d.bg(p.selected))
+        .when(!selected, |d| d.hover(|s| s.bg(p.hover)))
         .on_click(cx.listener(move |v: &mut V, ev: &ClickEvent, window, cx| {
             v.rows_mut().selected = Some(ix);
             cx.notify();
@@ -283,6 +281,8 @@ pub fn list<V: HasRows>(
         }),
     )
     .size_full()
+    // The rows' inset: rows are full width so their right-hand columns line up.
+    .px(px(8.))
     .track_scroll(&scroll);
     div().relative().flex_1().min_h_0().child(list).vertical_scrollbar(&scroll).into_any_element()
 }

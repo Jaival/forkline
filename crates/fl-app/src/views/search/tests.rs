@@ -101,7 +101,7 @@ fn j_and_enter_open_the_hit(cx: &mut TestAppContext) {
     let (handle, ws, _) = start(cx, dir.path(), "fix");
     press(cx, handle, "j");
     press(cx, handle, "enter");
-    assert_eq!(tabs(cx, &ws), ["Inbox", "Search: fix", "*Pull request 2"]);
+    assert_eq!(tabs(cx, &ws), ["Inbox", "Search: fix", "*#2 fix the pager"]);
 }
 
 #[gpui_kit::test]

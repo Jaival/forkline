@@ -12,18 +12,20 @@ use fl_db::queries::views;
 use fl_types::{PageReq, QueueKind, RepoSummary, SavedView};
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::dock::ClosePanel;
-use gpui_kit::component::{ActiveTheme as _, IndexPath, h_flex, v_flex};
+use gpui_kit::component::{IndexPath, h_flex, v_flex};
 use gpui_kit::{
     Action, AnyElement, App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window, div, px,
 };
 
+use crate::theme::ActivePalette as _;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
-use crate::workspace::{GoTo, NewTab, NextTab, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
+use crate::workspace::{GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
+use crate::theme::TextScale as _;
 
 #[cfg(test)]
 mod tests;
@@ -163,6 +165,7 @@ impl Palette {
             action("Next tab", Some("Ctrl+Tab"), NextTab),
             action("Previous tab", Some("Ctrl+Shift+Tab"), PrevTab),
             action("Toggle theme", None, ToggleTheme),
+            action("Appearance…", None, OpenAppearance),
             action("Sign in to GitHub", None, OpenSignIn),
         ];
 
@@ -259,15 +262,15 @@ impl Palette {
 
 /// A small key box, like the keys on the action bar.
 fn kbd(text: impl Into<SharedString>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+    let theme = *cx.palette();
     div()
         .px(px(5.))
         .py(px(1.))
         .rounded(px(3.))
         .border_1()
         .border_color(theme.border)
-        .text_xs()
-        .text_color(theme.muted_foreground)
+        .text_small()
+        .text_color(theme.text_muted)
         .child(text.into())
         .into_any_element()
 }
@@ -290,7 +293,7 @@ impl Render for Palette {
                     let hint = hint.clone().map(|hint| match hint {
                         Hint::Key(key) => kbd(key, cx),
                         Hint::Text(text) => {
-                            div().text_xs().text_color(cx.theme().muted_foreground).child(text).into_any_element()
+                            div().text_small().text_color(cx.palette().text_muted).child(text).into_any_element()
                         }
                     });
                     h_flex()
@@ -316,7 +319,7 @@ impl Render for Palette {
                 let _ = palette.update(cx, |_, cx| cx.emit(PaletteEvent::Dismiss));
             });
 
-        let theme = cx.theme();
+        let theme = *cx.palette();
         v_flex()
             .id("palette")
             .w(px(560.))
@@ -324,8 +327,8 @@ impl Render for Palette {
             .rounded(px(10.))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.popover)
-            .text_color(theme.popover_foreground)
+            .bg(theme.control)
+            .text_color(theme.text)
             .shadow_lg()
             .child(command)
             .child(
@@ -335,8 +338,8 @@ impl Render for Palette {
                     .gap(px(8.))
                     .border_t_1()
                     .border_color(theme.border)
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
+                    .text_small()
+                    .text_color(theme.text_muted)
                     .child(div().flex_1().child("Enter to run"))
                     .child(kbd("Esc", cx)),
             )

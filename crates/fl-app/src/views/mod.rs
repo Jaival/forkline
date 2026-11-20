@@ -19,6 +19,7 @@ pub use reading::{
 use fl_types::{QueueKind, QueueQuery};
 use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window, actions};
 
+use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 
 /// A built tab view and the focus handle of its root element. The panel
@@ -131,14 +132,13 @@ pub fn build(view_ref: &ViewRef, flat: bool, window: &mut Window, cx: &mut App) 
 
 /// A centred muted line for an empty list.
 fn empty<V>(text: &'static str, cx: &gpui_kit::Context<V>) -> gpui_kit::AnyElement {
-    use gpui_kit::component::ActiveTheme as _;
     use gpui_kit::{IntoElement as _, ParentElement as _, Styled as _};
     gpui_kit::div()
         .flex_1()
         .flex()
         .items_center()
         .justify_center()
-        .text_color(cx.theme().muted_foreground)
+        .text_color(cx.palette().text_muted)
         .child(text)
         .into_any_element()
 }

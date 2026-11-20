@@ -17,7 +17,8 @@ mod tests;
 use fl_db::queries::{issue, pr, repo};
 use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, MergeMethod, PrDetail, QueueRow, User};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::v_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
@@ -33,6 +34,7 @@ use super::Built;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, TextScale as _};
 
 /// Everything the pane shows for one item.
 #[expect(clippy::large_enum_variant, reason = "one value per pane")]
@@ -309,26 +311,59 @@ impl ReadingPane {
     }
 
     fn tab_bar(&self, pr: &PrDetail, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let labels = [
-            "Conversation".to_owned(),
+        let p = *cx.palette();
+        let passed = pr
+            .checks
+            .iter()
+            .filter(|c| matches!(c.conclusion.as_deref(), Some("SUCCESS" | "NEUTRAL" | "SKIPPED")))
+            .count();
+        let failed = pr
+            .checks
+            .iter()
+            .any(|c| matches!(c.conclusion.as_deref(), Some("FAILURE" | "TIMED_OUT" | "CANCELLED")));
+        let checks_tone = if pr.checks.is_empty() || passed == pr.checks.len() {
+            None
+        } else if failed {
+            Some(p.closed)
+        } else {
+            Some(p.pending)
+        };
+        let files = self.files.as_ref().and_then(|f| f.read(cx).file_count()).unwrap_or(pr.changed_files as usize);
+        let files_count = match self.draft_count(cx) {
             // Git's count once read; GitHub's until then.
-            format!(
-                "Files {}{}",
-                self.files.as_ref().and_then(|f| f.read(cx).file_count()).unwrap_or(pr.changed_files as usize),
-                match self.draft_count(cx) {
-                    0 => String::new(),
-                    n => format!(" \u{b7} {n} pending"),
-                }
-            ),
-            format!("Commits {}", pr.commits.len()),
-            format!("Checks {}", pr.checks.len()),
+            0 => files.to_string(),
+            n => format!("{files} \u{b7} {n} pending"),
+        };
+        let checks_count =
+            if checks_tone.is_some() { format!("{passed}/{}", pr.checks.len()) } else { pr.checks.len().to_string() };
+        let tabs = [
+            ("Conversation", None, None),
+            ("Files", Some(files_count), None),
+            ("Commits", Some(pr.commits.len().to_string()), None),
+            ("Checks", Some(checks_count), checks_tone),
         ];
         let selected = PaneTab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
         TabBar::new("reading-tabs")
             .underline()
-            .px(px(12.))
+            .px(px(16.))
+            .border_b_1()
+            .border_color(p.border)
             .selected_index(selected)
-            .children(labels.map(|label| Tab::new().label(label)))
+            .children(tabs.into_iter().map(|(label, count, tone)| {
+                Tab::new().label(label).when_some(count, |tab, count| {
+                    let (bg, fg) = tone.map_or((p.raised, p.text_muted), |t| (t.fill, t.on_fill));
+                    tab.suffix(
+                        div()
+                            .ml(px(6.))
+                            .px(px(5.))
+                            .rounded(px(8.))
+                            .bg(bg)
+                            .text_color(fg)
+                            .text_label()
+                            .child(count),
+                    )
+                })
+            }))
             .on_click(cx.listener(|this, ix: &usize, _, cx| this.set_tab(PaneTab::ALL[*ix], cx)))
     }
 
@@ -346,7 +381,7 @@ impl ReadingPane {
             .flex()
             .items_center()
             .justify_center()
-            .text_color(cx.theme().muted_foreground)
+            .text_color(cx.palette().text_muted)
             .child(text)
             .into_any_element()
     }

@@ -7,7 +7,7 @@
 use fl_db::queries::issue;
 use fl_types::{Action, EditOptions};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -16,7 +16,9 @@ use gpui_kit::{
 };
 
 use super::{Detail, ReadingPane};
+use crate::theme::ActivePalette as _;
 use crate::store::Store;
+use crate::theme::TextScale as _;
 
 actions!(reading, [EditLabels, EditAssignees, ClosePicker]);
 
@@ -159,12 +161,12 @@ impl ReadingPane {
     /// The open picker under the header.
     pub(super) fn picker_box(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let picker = self.picker.as_ref()?;
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let choices = self.visible_choices(cx);
         let list = match &picker.choices {
-            None => div().text_xs().text_color(theme.muted_foreground).child("Loading…").into_any_element(),
+            None => div().text_small().text_color(theme.text_muted).child("Loading…").into_any_element(),
             Some(_) if choices.is_empty() => {
-                div().text_xs().text_color(theme.muted_foreground).child("No match").into_any_element()
+                div().text_small().text_color(theme.text_muted).child("No match").into_any_element()
             }
             Some(_) => div()
                 .id("picker-list")
@@ -183,8 +185,8 @@ impl ReadingPane {
                         .items_center()
                         .rounded(px(4.))
                         .cursor_pointer()
-                        .text_sm()
-                        .hover(|s| s.bg(theme.accent))
+                        .text_body()
+                        .hover(|s| s.bg(theme.selected))
                         .child(
                             div().w(px(14.)).when(on, |d| d.child(Icon::new(IconName::Check).xsmall())),
                         )
@@ -207,12 +209,12 @@ impl ReadingPane {
                     h_flex()
                         .gap(px(8.))
                         .items_center()
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(match picker.kind {
+                        .child(div().text_small().text_color(theme.text_muted).child(match picker.kind {
                             PickerKind::Labels => "Labels",
                             PickerKind::Assignees => "Assignees",
                         }))
                         .child(div().flex_1().child(Input::new(&picker.search).small()))
-                        .child(div().text_xs().text_color(theme.muted_foreground).child("Esc to close")),
+                        .child(div().text_small().text_color(theme.text_muted).child("Esc to close")),
                 )
                 .child(list)
                 .into_any_element(),

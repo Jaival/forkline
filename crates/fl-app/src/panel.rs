@@ -8,19 +8,21 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
-use fl_db::queries::repo;
+use fl_db::queries::{issue, repo};
 use fl_types::DataChanged;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
-    PromptLevel, Window, div,
+    PromptLevel, TestSupportExt as _, Window, div, px,
 };
 
 use crate::drafts::{self, Drafts};
 use crate::store::Store;
+use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 use crate::views;
 use crate::workspace::{RemoveTab, SetViewRef};
+use crate::theme::TextScale as _;
 
 pub const PANEL_NAME: &str = "forkline.view";
 /// Saved-layout key of a queue tab shown flat.
@@ -31,6 +33,9 @@ pub struct ViewPanel {
     /// `owner/name` of the tab's repo, if it has one and the cache knows it.
     /// The `ViewRef` holds only the id, so the title looks the name up.
     repo_name: Option<String>,
+    /// An Issue / PR tab's item: number, title, state, `owner/name`. Read
+    /// like `repo_name`.
+    item: Option<(i64, String, String, String)>,
     content: AnyView,
     focus_handle: FocusHandle,
     /// The close warning is open (one prompt at a time).
@@ -50,7 +55,9 @@ impl ViewPanel {
         let built = views::build(&view_ref, flat, window, cx);
         cx.new(|cx| {
             let subscription = cx.subscribe(&Store::global(cx), |this: &mut Self, _, ev: &DataChanged, cx| {
-                if this.view_ref.repo_id().is_some() && ev.scopes.iter().any(|s| s == "repos") {
+                let item = matches!(this.view_ref, ViewRef::Pr { .. } | ViewRef::Issue { .. });
+                let repos = this.view_ref.repo_id().is_some() && ev.scopes.iter().any(|s| s == "repos");
+                if repos || (item && ev.scopes.iter().any(|s| s == "issues" || s == "pr")) {
                     this.load_repo_name(cx);
                     cx.notify();
                 }
@@ -61,6 +68,7 @@ impl ViewPanel {
                 content: built.view,
                 view_ref,
                 repo_name: None,
+                item: None,
                 focus_handle: built.focus,
                 prompting: false,
                 _subscription: subscription,
@@ -74,14 +82,20 @@ impl ViewPanel {
     /// Read synchronously: one row by key, and the tab title shows it on the
     /// first frame.
     fn load_repo_name(&mut self, cx: &App) {
-        self.repo_name = self
-            .view_ref
-            .repo_id()
-            .and_then(|id| Store::global(cx).read(cx).db().read(|c| repo::full_name(c, id)).ok().flatten());
+        let db = Store::global(cx).read(cx).db();
+        self.repo_name = self.view_ref.repo_id().and_then(|id| db.read(|c| repo::full_name(c, id)).ok().flatten());
+        self.item = match self.view_ref {
+            ViewRef::Pr { id } | ViewRef::Issue { id } => db.read(|c| issue::tab_label(c, id)).ok().flatten(),
+            _ => None,
+        };
     }
 
+    /// `#42 Split panes` for an item, else the view's name.
     pub fn title(&self) -> SharedString {
-        self.view_ref.title_with(self.repo_name.as_deref())
+        match &self.item {
+            Some((number, title, ..)) => format!("#{number} {title}").into(),
+            None => self.view_ref.title_with(self.repo_name.as_deref()),
+        }
     }
 
     pub(crate) fn content(&self) -> &AnyView {
@@ -169,18 +183,30 @@ impl BasePanel for ViewPanel {
 }
 
 impl Panel for ViewPanel {
-    /// `None` while the tab has drafts: the dock then draws [`Self::title`],
-    /// which carries the warning close button.
-    fn tab_name(&self, cx: &App) -> Option<SharedString> {
-        (self.unsent_drafts(cx) == 0).then(|| ViewPanel::title(self))
+    /// Always `None`: the dock then draws [`Self::title`], with the view's
+    /// icon (and the drafts warning close button).
+    fn tab_name(&self, _: &App) -> Option<SharedString> {
+        None
     }
 
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let drafts = self.unsent_drafts(cx) > 0;
+        let p = cx.palette();
+        let (icon, color) = match (&self.view_ref, self.item.as_ref().map(|(_, _, s, _)| s.as_str())) {
+            (ViewRef::Pr { .. }, Some("merged")) => (IconName::GitMerge, p.merged.fg),
+            (ViewRef::Pr { .. }, Some("closed")) => (IconName::GitPullRequestClosed, p.closed.fg),
+            (ViewRef::Issue { .. }, Some("closed" | "merged")) => (IconName::CircleCheck, p.merged.fg),
+            (ViewRef::Pr { .. } | ViewRef::Issue { .. }, Some(_)) => (self.view_ref.icon(), p.open.fg),
+            _ => (self.view_ref.icon(), p.accent_text),
+        };
         h_flex()
-            .gap_1p5()
-            .child(Icon::new(self.view_ref.icon()).small())
-            .child(ViewPanel::title(self))
+            .id("tab-title")
+            .test_support()
+            .gap(px(8.))
+            .text_secondary()
+            .child(Icon::new(icon).with_size(px(13.)).text_color(color))
+            .when_some(self.item.as_ref(), |d, (.., repo)| d.child(crate::repo_color::dot(repo, cx)))
+            .child(div().max_w(px(220.)).truncate().child(ViewPanel::title(self)))
             .when(drafts, |d| {
                 d.child(
                     Button::new("tab-close-drafts")

@@ -1091,3 +1091,512 @@ Open decisions:
     repeated; the action bar above serves it. No Request changes action.
   - The Files tab label uses `pr_details.changed_files` until the patch is
     read, then the patch's count.
+
+## After G1: look refresh and colour themes (planned 2026-11-17, nothing built yet)
+
+Plan: `docs/design/themes-plan.md` (GPUI G2), after G1 steps 6 and 7. Own
+palette and type scale in place of the `gpui-component` defaults, eight
+built-in themes, a custom accent the user picks (rest of the palette derived
+from it), light theme parity, a choice of eleven interface and ten code fonts
+(defaults Inter and Obel Mono), a colour per repository, and a "Hide secrets in code" switch (Obel Mono's
+masking).
+
+G2 step 0, G1 check (2026-11-18, on `main` at `1d8c6e5`): G1 steps 1-7 are
+done in code and docs; `ui-plan.md`'s status line still says the Tauri removal
+waits (stale). Clippy passes, 241 tests pass. `fl-bench gpui`, 3 runs while
+Chrome and Surfshark were using CPU: `launch_ms` 621-931 (600) and
+`app_startup_ms` 75-179 (60) missed every run; `search_p95_ms` and
+`diff_scroll_fps` missed only the first, cold run (14.8 / 229 after that);
+`switch_tab_ms` 4.1-4.3, `open_cached_item_ms` 9.0-9.6. The user accepted the
+startup misses as machine noise. Re-take the baseline on a quiet machine
+before step 1 so G2's final bench has a number to compare with. `ui/dist` and
+`node_modules/` are untracked leftovers of the Tauri app; safe to delete.
+
+G2 baseline (2026-11-18, `main` at `1d8c6e5`, 5 runs, machine busy: CPU
+17 %, Chrome and Surfshark): `launch_ms` 464-545, `app_startup_ms` 50.7-60.6
+(2 of 5 missed), `switch_tab_ms` 4.0-4.2, `diff_scroll_fps` 240 in 3 runs
+(86 and 30 in the others), `search_p95_ms` 14.6-65.9 (4 of 5 missed),
+`open_cached_item_ms` 5.7-8.8, `store_ready` -> `workspace_new` 24-37 ms.
+
+## GPUI G2 state
+
+Branch `gpui-g2`. Plan: `docs/design/themes-plan.md`. Mockups (the canvas
+boards without their fonts): `docs/design/mockups/`. The warm light theme is
+**Paper** (the board's name), not Linen.
+
+Done (step 1, look refresh, 2026-11-19):
+
+- `crates/fl-app/src/theme.rs` owns every colour and the type scale.
+  `Palette` is a GPUI global (`cx.palette()` through `ActivePalette`);
+  `theme::apply(mode, window, cx)` calls `Theme::change` /
+  `sync_system_appearance`, then writes the palette over the kit theme
+  (`write_kit`: colours, `font_size` 13.5, radius, highlight theme), so kit
+  widgets match. Midnight and Daylight only. Tokens: surfaces (`bg`,
+  `surface`, `raised`, `control`, `hover`, `selected`, `border`,
+  `border_strong`, `backdrop`), text (`text_strong`, `text`, `text_body`,
+  `text_read`, `text_muted`, `text_faint`), accent (`accent`, `accent_text`,
+  `accent_fill`, `accent_fill_hover`, `on_accent`, `star`), GitHub states as
+  `StateColor { fg, fill, on_fill }` (`open`, `merged`, `closed`, `pending`,
+  `neutral`), `added` / `removed`, diff and `syntax`, plus `avatar(login)` and
+  `label(color)`. Views read no `cx.theme()` colours any more (only
+  `mono_font_family`).
+- Deviation from the board: white text on the board's accent
+  `hsl(228,92%,69%)` is 3.3:1, below the plan's 4.5:1, so primary buttons
+  use `accent_fill` `hsl(228,72%,57%)`. Accent text, dots and the tab
+  underline keep the board's value.
+- Title bar: **native**, not the board's custom bar. A custom bar needs the
+  kit's `TitleBar::window_options` (a transparent, client-drawn title bar),
+  and on Windows that slowed every present: `diff_scroll_fps` 240 -> 102.6
+  (the same in every run), `switch_tab_ms` 4.1 -> 9.6, `open_cached_item_ms`
+  6 -> 15. Default window options brought all three back. `main.rs`
+  `window_options` holds this; the test
+  `the_main_window_keeps_the_native_title_bar` fails if a transparent title
+  bar comes back. (Ruled out first: the tree-sitter grammars; with them
+  removed the numbers stayed the same.)
+- Rail: 52 px, 34 px buttons, unread count badge, a divider after Reviews,
+  Search kept (no title bar field). Settings left the rail (Ctrl+K reaches
+  it; step 5's "Appearance…" replaces it). The signed-in avatar at the
+  bottom opens the account box (moved from the footer).
+- Dock tabs: view icon, item tabs read `#42 title` with a state-coloured
+  icon (`issue::tab_label`, one synchronous row read, refreshed on `issues`
+  / `pr`).
+- Queue: 48 px header (17 px title, count, outlined repo filter), 30 px
+  sentence-case group headings without fill, 54 px rounded rows without
+  borders, repo in the code font, author avatar, unread dot, tinted
+  selection. `rows.rs` rows (Home, Repositories, Starred, Explore, Search)
+  are rounded and inset the same way.
+- Reading pane: 21 px title, state pill with icon, `author wants to merge
+  into base`, `+N -N`, `n of m checks`, label pills outlined in the label's
+  hue (`Palette::label`), Approve as the one primary button, tab counts as
+  badges (Checks tinted while failing / pending), conversation as avatars and
+  bordered cards. Markdown body text is 13.5 px now (the kit's `font_size`).
+- Footer: sync icon, key hints on the right.
+- Syntax colours in diffs and code blocks: `gpui-kit` tree-sitter features
+  for 17 languages (`crates/fl-app/Cargo.toml`); colours from
+  `Palette::syntax` through the kit's highlight theme. The kit's diff tints
+  lines with `success` / `danger` at 12 %, so the diff follows the theme.
+
+Tests: `theme/tests.rs` (contrast rules for both palettes: text, muted text,
+accent, button text, states, pills, diff, syntax, avatars, label hues every
+5 degrees; stable avatar hash; saved mode parsing), `rail.rs` initials, queue
+`switching_theme_keeps_the_selection`, `main.rs`
+`the_main_window_keeps_the_native_title_bar`. Tab-title expectations now
+read `#N title`.
+
+Bench after step 1 (release, 3 runs, Chrome and Surfshark still running):
+`launch_ms` 781 / 408 / 401 (the first run was a cold load of the new exe:
+422 ms before `main`), `app_startup_ms` 42-45, `switch_tab_ms` 4.1-4.2,
+`open_cached_item_ms` 5.6-5.9, `diff_scroll_fps` 240 / 30 / 240,
+`search_p95_ms` 11.3 / 66.7 / 11.3 (the 30 fps and 66 ms misses are the
+same noise the baseline had), `store_ready` -> `workspace_new` 23-26 ms.
+Clippy passes; `cargo test --workspace` 251 pass.
+
+Checked by eye (PrintWindow, `--offline` on copies of `target/tmp/shot-data`
+with `theme` set; Files tab during a release `--bench` run on `fake-data`,
+dark and light): rail, footer, Inbox queue, PR conversation, Files tab with
+syntax colours (the Files shots still show the removed custom bar). Images: `target/tmp/g2s1-*.png`.
+
+Open items from step 1:
+
+- Exe size: 23.5 MB -> 49 MB, almost all from the tree-sitter grammars.
+  Decided (2026-11-19): keep all 17 languages; the size is accepted, also
+  with the 8-12 MB the fonts step adds.
+- The dock's active tab is square: the kit's `Tab` variant has no radius and
+  the dock builds its own tabs. Rounded needs a custom `DockAreaRenderer`.
+- Action buttons are the kit's `small` size (about 24 px); the board has
+  30 px.
+- The diff's add / remove backgrounds come from the kit (`success` /
+  `danger` at 12 %); `diff_add_bg` / `diff_del_bg` are not used by it.
+- System mode does not follow a live OS theme change (as before).
+
+Done (step 2, all built-in themes, 2026-11-19):
+
+- `theme.rs` has all eight palettes: Midnight, Graphite, Fjord, Forest,
+  Rosé (`rose`), High contrast (`high-contrast`) dark; Daylight, Paper light.
+  `THEMES` lists them. Board values (`theme-options.html`) for bg, surface,
+  raised, selected, border, text, muted, accent, on-accent and star; the
+  other tokens are worked out per theme. Each theme has its own GitHub state
+  colours, diff colours and syntax colours (hue fixed, lightness tuned for
+  its backgrounds). Accent buttons on the dark themes other than Midnight use
+  the board's dark on-accent text, so `accent_fill` = the board's accent.
+  Paper's muted text is `hsl(30,8%,35%)`, not the board's 38 %: 38 % is
+  below 4.5:1 on `raised`.
+- Picking a theme: settings `colors_dark` / `colors_light`, value
+  `{"kind":"theme","name":"graphite"}` (the plan's model). `main.rs` reads
+  them with `theme` in one DB read and sets the `theme::Choices` global;
+  `theme::apply` uses it for the current mode. Missing, malformed or
+  unknown values, `{"kind":"accent"}` (until step 4) and a theme of the
+  other mode load as Midnight / Daylight. No UI yet (step 5); set the rows
+  with `sqlite3` to try one.
+- Repo view: commits without a status had a `border`-coloured dot, almost
+  invisible on the light themes; now `text_faint`.
+
+Tests: the contrast tests in `theme/tests.rs` run over all eight themes;
+new: unique names and exactly Daylight / Paper light, `Choices` parsing and
+fallbacks, `apply` uses the chosen theme in each mode (kit background too).
+Clippy passes; `cargo test --workspace` 254 pass.
+
+Checked by eye (PrintWindow, release, `--offline` on copies of
+`target/tmp/shot-data` with `theme` + `colors_*` set and a saved layout per
+view; scripts `target/tmp/g2/shots.sh` and `files.sh`; images
+`target/tmp/g2s2-*.png`): Paper: Home, Inbox, Pull requests, Issues,
+Reviews, Starred, Repositories, Explore, repo overview, issue, PR
+conversation, Search, Settings, and the Files tab (10k-line diff, during a
+`--bench` run on a copy of `fake-data`). Inbox and PR conversation in
+Graphite, Fjord, Forest, Rosé and High contrast; Daylight PR and repo
+overview; High contrast Files tab.
+
+Open items from step 2 (not theme work; seen in the shots):
+
+- Fixed (`335b2f0`): Home / Repositories / Starred / Explore / Search rows
+  are full width again (step 1 had dropped `w_full` when it added the
+  inset; the inset is now the list's padding), so their right-hand columns
+  line up.
+- Fixed (`335b2f0`): the reading header's check icon follows GitHub's
+  roll-up `check_state`, as the merge row does (the check list decides
+  only without one); `fl-fake` derives the roll-up from its checks.
+  Regenerate fake data to see consistent states.
+- Fixed (decided 2026-11-19): the native title bar followed only the
+  Windows app mode (GPUI sets `DWMWA_USE_IMMERSIVE_DARK_MODE` from the OS
+  appearance), so it stayed dark in the light themes. New crate
+  `crates/fl-win`: the **only crate allowed to use `unsafe`** (its own
+  `[lints]`; `undocumented_unsafe_blocks = "deny"`), with safe wrappers over
+  Win32 calls GPUI does not expose. `fl_win::set_dark_title_bar(hwnd, dark)`
+  is called by `theme::sync_title_bar` from `theme::apply` (with a window)
+  and in `main.rs` while the window is built (before the first frame). Test
+  windows have no Win32 handle, so it is a no-op in tests. Checked by eye:
+  Paper light bar, Midnight dark bar (`target/tmp/g2s3tb-*.png`). Open: if
+  the OS switches app mode while Forkline runs, GPUI sets the bar from the
+  OS again until the next theme change.
+
+Done (step 3, repository colours, 2026-11-19):
+
+- Migration 0012: `repos.color` (0-9, NULL = from the name's hash; sync's
+  upsert does not list it, so it survives a re-sync).
+  `fl_db::queries::repo::{colors, set_color}`; `issue::tab_label` also
+  returns `owner/name`.
+- `theme.rs`: `REPO_HUES` (10 hues with names), `Palette::repo(index)`
+  (per-theme saturation / lightness in `Palette::repo`; a hue within 15
+  degrees of the accent moves 15 degrees away), `RepoColors` global
+  (picked colours, loaded in `main.rs` at startup; index = pick, else FNV
+  hash of `owner/name` % 10), `theme::repo_color(full_name, cx)`.
+- `repo_color.rs`: `dot` (8 px), `set` (updates the global, saves in the
+  background, refreshes windows), `menu_items` ("Automatic" + the ten
+  colours, the pick checked).
+- Dots: queue rows (before the repo name), Issue / PR tabs (after the state
+  icon), the pinned-repos menu, the queue's repo filter (button and menu),
+  the repo header. "Colour" submenu (per pinned repo) at the end of the
+  pinned-repos menu; a "Colour" button next to Pin in the repo header.
+
+Tests: every repo colour >= 3:1 on bg, surface, selected and menu in all
+eight themes and >= 15 degrees from the accent; the name hash is stable and
+spreads 50 fake names over >= 8 hues; a pick overrides and clears; DB
+`set_color` / `colors` and the 0-9 check; a pick survives a repo re-sync
+(`fl-sync` `repo_metadata_pages_starred_and_etag`); UI: a pick shows at
+once and is saved, "Automatic" clears it. Clippy passes; `cargo test
+--workspace` 258 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/shots.sh` with repo 1
+set to Pink; images `target/tmp/g2s3-*.png`): Midnight Inbox, repo header
+and PR tab; Paper Inbox and repo header. Not checked by eye: the opened
+menus (pinned "Colour" submenu, repo header menu, repo filter menu); they
+need a click, and keystrokes / clicks are not sent to the real window.
+
+Open items from step 3:
+
+- In a narrow queue pane the dot (14 px with its gap) truncates long author
+  logins sooner.
+- Midnight's Blue repo dot (moved to 213 degrees) is still close to the
+  indigo unread dot; a larger gap would push it onto Cyan.
+- Home and Search rows show a repo name without a dot (the plan lists only
+  queue rows).
+
+Done (step 4, accent derivation, 2026-11-19):
+
+- `crates/fl-app/src/theme/derive.rs`: `Accent { hue, muted, tint }` and
+  `derive(accent, dark) -> Palette` (pure). Setting `accent`:
+  `{"hue":0-359,"chroma":"normal"|"muted","tint":true|false}`; missing or
+  malformed (also hue >= 360, a non-integer hue, an unknown chroma, a
+  missing key) = indigo 268, normal, tinted. The palette's `name` is
+  `"accent"`.
+- Targets in OKLCH from the "Custom accent" board (dark: bg 0.19, surface
+  0.165, raised 0.245, border 0.27, selected 0.29 at chroma 0.06, text 0.94,
+  muted 0.71, accent 0.70 at 0.16, accent text 0.78; light: bg 0.995,
+  surface 0.972, raised 0.935, border 0.91, selected 0.95 at 0.035, text
+  0.22, muted 0.50, accent 0.55 at 0.17, accent text 0.50). Not on the
+  board, chosen here: control / hover / border-strong / text-strong / body /
+  read / faint, diff hunk, gutter, comment and punctuation; muted chroma
+  (accent 0.09 dark / 0.10 light, selection 0.035 / 0.02). Tint off sets the
+  surface and text chroma to 0 (selection and accent keep theirs). Colours
+  outside sRGB lose chroma (binary search) and keep L and hue.
+- Contrast pass (`fit`): a token that misses its rule moves its OKLCH L away
+  from the backgrounds in 0.005 steps. Buttons: dark mode = near-black text
+  (L 0.2) on the accent; light mode = white text, fill darkened until
+  >= 4.5:1. GitHub states, `added` / `removed`, star and the six coloured
+  syntax tokens start from Midnight / Daylight and move in HSL lightness
+  (`fit_hsla`, hue kept). `neutral` = muted text on `raised`. Repo dots:
+  Midnight / Daylight saturation, lightness moved until all ten hues (after
+  the 15 degree gap from the accent) pass on bg, surface, selected, control.
+  Yellow / amber accents in light mode end up brownish: the 3:1 / 4.5:1
+  rules force it.
+- `Choices` now holds `Palette` values, not `&'static`;
+  `Choices::from_settings(dark, light, accent)`. `{"kind":"accent"}` loads
+  `derive(Accent::from_setting(accent), mode)`. `main.rs` reads `accent` in
+  the same DB read as `theme` / `colors_*`. `luminance` / `contrast` are no
+  longer test-only. No picker (step 5): set the rows with `sqlite3`.
+
+Tests: the contrast tests in `theme/tests.rs` now run over the eight themes
+plus `derive` for every hue in steps of 5, both modes, both chroma levels,
+both tint settings (576 palettes): text, muted, read, body, accent, accent
+text, button text, states, pills, diff, syntax on every code background,
+avatars, label hues, repo dots and their accent gap. New: `accent` parsing
+and fallbacks, `{"kind":"accent"}` loads the derived palette (and indigo
+without a setting), the derived accent keeps its hue, muted is calmer, tint
+off is grey. Clippy passes; `cargo test --workspace` 261 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/accent.sh <hue>
+<normal|muted> <true|false> <dark|light> <views>`; images
+`target/tmp/g2s4-*.png`): indigo 268 dark Inbox + PR, green 150 light Inbox
++ PR, red 25 muted untinted dark Inbox, amber 75 light Inbox, teal 185 muted
+dark PR.
+
+Open items from step 4:
+
+- A green accent (about 140-160) looks like the `open` state colour, a red
+  one (about 15-35) like `closed`; states keep their hues by design.
+- Not measured: the cost of `derive` at startup (about 600 contrast checks;
+  expected well under 1 ms). Step 7's bench covers it.
+
+Done (step 5, picker, 2026-11-20):
+
+- `crates/fl-app/src/appearance.rs`: the "Appearance…" dialog. Mode
+  (System / Light / Dark), "Colours for" Dark mode / Light mode (the mode
+  being edited is shown in the app meanwhile), theme cards for that mode
+  (a small picture of the app in the theme: rail, selected unread row,
+  read row, button) plus a "Custom accent" card, the 12 board presets
+  (`PRESETS`; swatch colour OKLCH 0.66 / 0.16, `theme::swatch`), the hue
+  slider (kit `Slider`, 0-359), "Muted colours" and "Tint backgrounds"
+  switches, and the readout `Text n:1 · muted text n:1 · accent n:1` (the
+  edited palette's text, muted text and accent text on its `bg`). Touching
+  a swatch, the slider or a switch also picks the accent for the edited
+  mode. No dimmed backdrop, so the app behind shows each change.
+- Every change writes the `Choices` global and calls `theme::apply` with
+  the edited mode. `Esc` / Cancel puts back the choices and the dark /
+  light mode shown when it opened. Done shows the chosen mode and saves
+  `colors_dark`, `colors_light`, `accent` and `theme` (deleted for
+  System) in one background write.
+- `theme::Choices` now also holds `accent` and `mode` (the saved `theme`;
+  `None` = system). New: `Pick` (`Theme(name)` / `Accent`), `Choices::pick`,
+  `set`, `set_accent`, `settings` (the rows to save), `Accent::to_setting`,
+  `Palette::title` (display names, "Rosé"). `fl_db::queries::layout::
+  delete_setting`.
+- Rail: the theme button (moon / sun for the current mode) opens a menu:
+  System / Light / Dark (the saved mode checked) and "Appearance…".
+  `Workspace::set_mode` applies and saves `theme`; Ctrl+K "Toggle theme"
+  uses it too. Ctrl+K has "Appearance…" (`OpenAppearance`).
+- `--appearance` launch flag opens the dialog at start (for PrintWindow
+  shots; ignored with `--bench`).
+
+Tests: `appearance/tests.rs` (gpui_kit, test window only): the rail menu
+sets Light / Dark / System and saves `theme`, its last item opens the
+dialog; Ctrl+K "appearance" + Enter opens it; a card, a swatch, the tint
+switch and the light-mode tab apply live and save nothing; Esc restores
+the old choices and saves nothing; Done saves all four settings and they
+load back as the shown `Choices`. `theme/tests.rs`: `Choices` round-trips
+through `settings`. Clippy passes; `cargo test --workspace` 267 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/dialog.sh <name>
+<dark|light> <colors_dark> <colors_light> <accent>`; images
+`target/tmp/g2s5-*.png`): Midnight dark, Paper light, green 150 accent
+dark. Not checked by eye: the opened rail menu (needs a click).
+
+Open items from step 5:
+
+- System mode does not follow a live OS change (as before). The dialog's
+  System choice reads the window's appearance once.
+- The dialog has no scroll: about 790 px tall in dark mode (two card
+  rows); at the window's 500 px minimum height its bottom is cut off.
+- The hue slider track uses the kit's slider colours (accent), not a hue
+  gradient as on the board.
+
+Done (step 6, fonts, 2026-11-20):
+
+- `crates/fl-app/fonts/<id>/`: 21 bundled fonts with their `OFL.txt`
+  (all SIL OFL 1.1, unmodified, so the Reserved Font Names of Plex,
+  Source and Monaspace do not apply). Sources: google/fonts `ofl/*`
+  (Inter, Geist, IBM Plex Sans, Figtree, Atkinson Hyperlegible Next,
+  Source Serif 4, Google Sans, Space Grotesk, Google Sans Flex, Manrope,
+  Plus Jakarta Sans, JetBrains Mono, Geist Mono, IBM Plex Mono, Source
+  Code Pro, Atkinson Hyperlegible Mono, Space Mono, Google Sans Code),
+  Commit Mono v1.143 release (eigilnikolajsen/commit-mono, font licence
+  OFL), Monaspace v1.400 variable zip (githubnext/monaspace), Obel Mono
+  1.004 (typographic.systems; zip SHA-256 matches the install.sh pins).
+- `crates/fl-app/src/fonts.rs`: `UI_FONTS` (11, Inter first = default),
+  `CODE_FONTS` (10, Obel Mono first = default), `OBEL_MONO_MASKED`;
+  `Fonts { ui, mono, mask_secrets }` global; settings `ui_font`,
+  `mono_font` (JSON id, e.g. `"inter"`), `mask_secrets` (default true).
+  Unknown ids, a UI font id in `mono_font` (or the other way) and bad JSON
+  load the defaults. Only the chosen two fonts are registered at startup;
+  the Fonts tab registers the rest (`load_all`).
+- `theme.rs`: every text style has an explicit line height (`TextScale`
+  trait: `text_body`, `text_secondary`, `text_small`, `text_label`,
+  `text_pane_title`, `text_reading_title`). All views use it. Code is
+  `TEXT_CODE` 12.5 px in `LINE_CODE` 20 px rows (the kit diff's
+  `mono_font_size` is set from it). `theme::apply` writes the fonts into
+  the kit theme after the colours, so a palette change never resets them.
+- Appearance dialog: tabs Colours / Fonts. Fonts tab: interface font grid,
+  code font grid (each name in its own font), a live sample (queue row,
+  comment with inline code, diff hunk with a `ghp_` token), the "Hide
+  secrets in code" switch (only while Obel Mono is chosen), and a
+  scrollable licence list ("Licences" button). Live apply, Esc restores,
+  Done saves the colour rows and the three font rows.
+- `--appearance-fonts` launch flag opens the dialog on the Fonts tab (for
+  PrintWindow shots).
+
+Deviations:
+
+- Masking uses the font Obel Mono Masked (the foundry's build with `ss01`
+  on), not the `ss01` feature. DirectWrite does apply `ss01` (test
+  `directwrite_applies_ss01`), but GPUI passes font features to every
+  child text run and the kit diff / markdown have no hook for code text
+  alone: interface fonts would turn on their own `ss01` (Inter's digits).
+- Commit Mono: regular only. The release files register one family per
+  weight ("CommitMono 400", "CommitMono 700"); bold code text uses
+  synthetic bold.
+- Exe 49.3 MB -> 66.4 MB (+17.1 MB, above the 8-12 MB estimate; Google
+  Sans 5 MB and Google Sans Flex 3.9 MB are the largest).
+- Diff code was 10.5 px in 17 px rows (kit rem 13.5 x mono_font_size/16);
+  now 12.5 px in 20 px rows. Diffs look larger than in step 5.
+
+Tests: `fonts/tests.rs` (real DirectWrite): table of 21 OFL fonts, unique
+ids; fallback for unknown / bad values; settings round trip; only Obel
+Mono masks; every font registers its family and a bold weight; every
+ASCII letter's ink fits each text style's line box (weights 400 and 600);
+Obel Mono Masked draws `ghp_` + 4 characters then one mask glyph, same
+advance; `ss01` works. `files/tests.rs`: copying the masked token line
+gives the full token; with every UI font, every code font and Obel
+unmasked, queue rows, tab titles and diff lines keep their heights (real
+text system, `test_support::with_real_text`). `appearance/tests.rs`: font
+picks apply live, Esc restores them, Done saves them. Clippy passes;
+`cargo test --workspace` 280 pass.
+
+Bench (release, fake data, `target/tmp/g6/fontbench.sh <ui> <mono>`):
+
+- Cold first launch after build: 891 ms (494 ms before `main`: the larger
+  exe loads from disk once).
+- Quiet machine, interleaved with the step 5 exe: `app_startup_ms` base
+  46.5 / 72.5 / 59.3, new 72.1 / 66.8 / 52.9; launch base 424 / 548 /
+  437, new 499 / 496 / 408. The steady cost is the first frame
+  (`workspace_built` -> `window_open` 19-22 ms, base 9-11 ms): shaping
+  with Inter's 870 KB variable font and Obel Mono.
+- `diff_scroll_fps`, default fonts, quiet machine: 240 / 238 / 240.
+  Widest code font (Atkinson Hyperlegible Mono, 5 % wider than the
+  others): interleaved with base and default on a busy machine, 195 /
+  68 / 51 vs base 165 / 35 / 80 and default 193 / 31 / 36; no measurable
+  cost, but not repeated on a quiet machine.
+
+Checked by eye (PrintWindow, `target/tmp/g6/shot.sh`; images
+`target/tmp/g6/g2s6-*.png`): Fonts tab dark and light (defaults), Source
+Serif 4 + JetBrains Mono (switch hidden), a PR in light mode; diff frames
+`target/tmp/g6/burst/dark-28.png` (Obel Mono Masked) and `light-17.png`
+(Atkinson fonts, same row heights).
+
+Open items from step 6:
+
+- `app_startup_ms` (budget 60) now often misses by about 10 ms (first
+  frame shaping). A fix to try: static Inter instances instead of the
+  variable font.
+- No italic files are bundled (DirectWrite slants the uprights).
+- Monaspace Neon (line gap 200) sits slightly low in its picker chip.
+- The "Atkinson Hyperlegible Next" chip title is cut off at the dialog
+  width.
+
+Done (step 7, checks, 2026-11-20). No code change; this step closes G2.
+
+Screenshots (PrintWindow only, no input sent): one `--bench` run per
+setting on `target/tmp/g6/bench-data`, a capture every 150 ms with its
+time, then the frame in the middle of the Inbox reading pane scroll and the
+one in the middle of the Files tab scroll (picked against the bench marks;
+black capture frames skipped). Scripts `target/tmp/g7/` (`run.sh <name>
+<dark|light> <colors_json|-> <accent_json|-> <ui> <mono>`, `burst.ps1`,
+`pick.py`, `all.sh`, `montage.py`); images `target/tmp/g7/g2s7-*.png`,
+Inbox + Files montages in `target/tmp/g7/m/`. Checked by eye:
+
+- All 8 themes (Midnight, Graphite, Fjord, Forest, Rosé, High contrast,
+  Daylight, Paper): Inbox queue, reading pane, PR header, Files tab with
+  syntax colours and add / remove rows.
+- 3 accents: red 25 dark, green 150 light, cyan 210 muted untinted dark.
+- All 21 fonts, in 11 runs pairing one interface font with one code font
+  (Inter + Obel Mono in the Midnight run; the others alternate dark /
+  light). No clipped text, rows keep their heights.
+- Seen, not changed: with wide code fonts (Atkinson Hyperlegible Mono,
+  Space Mono, Monaspace Neon) the queue row's author login truncates
+  sooner (step 3's narrow-pane item). Diff hunk headers (`@@ ... @@`) use
+  the interface font (the kit draws them).
+
+Bench (release, fake data, `target/tmp/g7/quietbench.sh`: 5 interleaved
+rounds of `main` (pre-G2, `1d8c6e5`), G2 (`f1c06da`) and a test build with
+static Inter; then 3 rounds of the step 5 exe, G2 + Atkinson Hyperlegible
+Mono and G2 default fonts; raw logs `target/tmp/g7/logs/`). Machine idle
+apart from the runs, but noisier than step 1: `main`'s own `launch_ms` was
+521-683. The first run of each round is the slowest.
+
+| | `main` | G2 |
+|---|---|---|
+| `launch_ms` (600) | 521-683, 3 of 5 miss | 549-615, 1 of 8 miss |
+| `app_startup_ms` (60) | 45-74, 3 of 5 miss | 62-123, 8 of 8 miss |
+| `switch_tab_ms` (8) | 4.0-4.1 | 4.0-4.8 |
+| `store_ready` -> `workspace_new` | 23-31 (46 first run) | 24-28 (41-59 in 3 runs) |
+| `workspace_built` -> `window_open` | 10-12 (31 once) | 23-26 (64 once) |
+
+- `launch_ms` and `switch_tab_ms` stay in budget. `store_ready` ->
+  `workspace_new` does not change: theme apply, `derive` and the font
+  choice cost nothing measurable.
+- `app_startup_ms` misses in every G2 run: by 2-18 ms warm, 63 ms in the
+  first run (median about 65).
+  The whole gap is the first frame (`workspace_built` -> `window_open`,
+  +13 ms), as in step 6.
+- Static Inter (4 instances, opsz 14, wght 400 / 500 / 600 / 700, made with
+  fontTools from the bundled file): `workspace_built` -> `window_open`
+  22-24 ms, `app_startup_ms` 62-82. No gain, so the variable font is not
+  the cause and the shipped fonts are unchanged.
+- `diff_scroll_fps` with the widest code font: Atkinson 86 / 212 / 192,
+  G2 default fonts 193 / 178 / 193, step 5 exe 30 / 186 / 166 (first run
+  of each round noisy). No cost from the wide font. All below step 1's
+  240 on this machine today, `main` included (145-238).
+- Other budgets in all warm runs: `open_cached_item_ms` 9-10,
+  `search_p95_ms` 15-22.
+
+Clippy passes; `cargo test --workspace` 280 pass (no code change).
+
+G2 summary: the look refresh, eight themes, repository colours, accent
+derivation, the Appearance dialog and 21 bundled fonts are done
+(steps 1-6, PR #9). Plan: `docs/design/themes-plan.md`.
+
+Open decisions (for the user):
+
+1. `app_startup_ms` (budget 60) now misses by about 5 ms warm. Options:
+   a) raise the budget to 75 and note the bundled fonts as the reason;
+   b) profile the first frame (DirectWrite font face creation and glyph
+   rasterisation for in-memory fonts are the suspects, since static
+   files do not help); c) register the fonts after the first frame and
+   paint it with the system font (a visible font swap).
+2. The step 1-6 open items below are not done; pick which go into G3.
+
+Open items carried from G2:
+
+- Dock tabs square (needs a custom `DockAreaRenderer`); action buttons
+  24 px vs the board's 30 px; diff add / remove backgrounds from the kit.
+- System mode does not follow a live OS change; the title bar follows the
+  OS again after an OS app-mode switch.
+- Appearance dialog: no scroll (cut off below about 790 px), hue slider
+  without a hue gradient, Atkinson Hyperlegible Next chip title cut off,
+  Monaspace Neon sits low in its chip.
+- Repo dots: narrow queue truncates logins sooner; Midnight Blue close to
+  the unread dot; Home and Search rows have no dot.
+- Green / red accents look like the open / closed state colours.
+- No italic font files; Commit Mono bold is synthetic.
+- Not checked by eye: opened menus (rail theme menu, pinned "Colour"
+  submenu, repo header and repo filter menus); they need a click.
+
+Next: merge PR #9 after review, then settle the open decisions above.

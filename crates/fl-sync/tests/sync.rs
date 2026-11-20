@@ -58,9 +58,12 @@ async fn repo_metadata_pages_starred_and_etag() {
         .mount(&env.server)
         .await;
 
+    // A colour the user picked survives the re-sync of repo 1.
+    env.db.write(|c| c.execute_batch("UPDATE repos SET color = 4 WHERE id = 1")).unwrap();
     env.engine.sync_once().await;
     assert_eq!(env.engine.status().await.unwrap().error, None);
     assert_eq!(env.q::<i64>("SELECT count(*) FROM repos"), 4);
+    assert_eq!(env.q::<i64>("SELECT color FROM repos WHERE id = 1"), 4);
     assert_eq!(env.q::<i64>("SELECT stars FROM repos WHERE id = 1"), 7);
     assert_eq!(env.q::<String>("SELECT license FROM repos WHERE id = 3000"), "MIT");
     assert_eq!(env.q::<i64>("SELECT starred FROM repos WHERE id = 4000"), 1);

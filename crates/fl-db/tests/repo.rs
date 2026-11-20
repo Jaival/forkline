@@ -108,3 +108,18 @@ fn merge_method_is_kept_per_repo() {
     db.write(|c| c.execute("DELETE FROM repos WHERE id = 2", [])).unwrap();
     assert_eq!(db.read(|c| repo::merge_method(c, 2)).unwrap(), None);
 }
+
+#[test]
+fn a_picked_repo_colour_is_kept_until_cleared() {
+    let (_d, db) = seeded();
+    assert!(db.read(repo::colors).unwrap().is_empty());
+    db.write(|c| repo::set_color(c, 1, Some(7))).unwrap();
+    db.write(|c| repo::set_color(c, 3, Some(0))).unwrap();
+    let mut colors = db.read(repo::colors).unwrap();
+    colors.sort();
+    assert_eq!(colors, [("acme/rocket".to_owned(), 7), ("zed/tool".to_owned(), 0)]);
+    db.write(|c| repo::set_color(c, 1, None)).unwrap();
+    assert_eq!(db.read(repo::colors).unwrap(), [("zed/tool".to_owned(), 0)]);
+    // Only the 10 hue indexes are allowed.
+    assert!(db.write(|c| repo::set_color(c, 3, Some(10))).is_err());
+}

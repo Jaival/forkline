@@ -45,6 +45,17 @@ pub fn get(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<IssueDetai
     Ok(Some(detail))
 }
 
+/// `number`, `title` and `state` (`open` / `closed` / `merged`): what a tab
+/// shows for the item.
+pub fn tab_label(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<(i64, String, String, String)>> {
+    conn.prepare_cached(
+        "SELECT i.number, i.title, i.state, r.owner || '/' || r.name FROM issues i JOIN repos r ON r.id = i.repo_id
+         WHERE i.id = ?1",
+    )?
+    .query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+    .optional()
+}
+
 /// Opening an item clears its unread dot (GitHub state is not changed).
 pub fn mark_viewed(conn: &Connection, id: IssueId, now: i64) -> rusqlite::Result<()> {
     conn.prepare_cached("UPDATE issues SET last_viewed_at = ?2 WHERE id = ?1")?

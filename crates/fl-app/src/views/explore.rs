@@ -7,7 +7,7 @@ use fl_db::queries::explore;
 use fl_types::{DataChanged, ExploreRow, PAGE_MAX};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, FocusHandle, FontWeight, InteractiveElement as _, IntoElement,
@@ -18,9 +18,11 @@ use super::repos::set_pinned;
 use super::{Built, TogglePin};
 use super::queue::age;
 use super::rows::{self, HasRows, Rows};
+use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
+use crate::theme::TextScale as _;
 
 const ROW_HEIGHT: f32 = 62.;
 
@@ -63,10 +65,10 @@ impl ExploreView {
     }
 
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let r = &self.rows.items[ix];
         let (id, pinned) = (r.repo_id, r.pinned);
-        let muted = theme.muted_foreground;
+        let muted = theme.text_muted;
         rows::row_shell("explore-row", ix, ROW_HEIGHT, self, cx)
             .child(Icon::new(IconName::BookMarked).with_size(px(14.)).text_color(muted))
             .child(
@@ -77,25 +79,25 @@ impl ExploreView {
                         h_flex()
                             .gap(px(6.))
                             .items_center()
-                            .text_sm()
+                            .text_body()
                             .child(div().text_color(muted).child(format!("{} /", r.owner)))
                             .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(r.name.clone()))
                             .when(r.starred, |d| {
-                                d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.warning))
+                                d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.pending.fg))
                             })
                             .when(pinned, |d| d.child(Icon::new(IconName::Pin).with_size(px(12.)).text_color(muted))),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(muted)
                             .child(r.description.clone().unwrap_or_else(|| "No description.".into())),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(muted)
                             .child(format!("{} \u{b7} {}", starred_by(r), age(fl_sync::now(), r.last_starred_at))),
                     ),
@@ -105,7 +107,7 @@ impl ExploreView {
                     .flex_none()
                     .gap(px(16.))
                     .items_center()
-                    .text_xs()
+                    .text_small()
                     .text_color(muted)
                     .child(div().w(px(72.)).truncate().child(r.language.clone().unwrap_or_default()))
                     .child(
@@ -155,7 +157,7 @@ impl Render for ExploreView {
         if self.rows.loaded {
             bench::ready("explore", window, cx);
         }
-        let theme = cx.theme();
+        let theme = *cx.palette();
         let header = h_flex()
             .flex_none()
             .h(px(36.))
@@ -165,7 +167,7 @@ impl Render for ExploreView {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Explore"))
-            .child(div().text_xs().text_color(theme.muted_foreground).child("Recent stars from people you follow"));
+            .child(div().text_small().text_color(theme.text_muted).child("Recent stars from people you follow"));
         let body = if self.rows.items.is_empty() {
             super::empty(
                 if self.rows.failed {
