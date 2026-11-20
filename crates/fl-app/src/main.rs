@@ -8,6 +8,7 @@ mod bench;
 mod drafts;
 mod fonts;
 mod footer;
+mod menu_preview;
 mod palette;
 mod panel;
 mod rail;
@@ -42,6 +43,9 @@ struct Args {
     appearance: bool,
     /// `--appearance-fonts`: the same, on its Fonts tab.
     appearance_fonts: bool,
+    /// `--open-menu <name>`: show dropdown menus at launch (screenshots; see
+    /// `menu_preview.rs`).
+    open_menu: Option<&'static str>,
 }
 
 impl Args {
@@ -53,6 +57,11 @@ impl Args {
                 "--offline" => a.offline = true,
                 "--appearance" => a.appearance = true,
                 "--appearance-fonts" => a.appearance_fonts = true,
+                "--open-menu" => {
+                    let name = it.next().ok_or("--open-menu needs a menu name")?;
+                    let known = menu_preview::NAMES.iter().copied().find(|n| *n == name);
+                    a.open_menu = Some(known.ok_or_else(|| format!("unknown menu: {name} (one of {})", menu_preview::NAMES.join(", ")))?);
+                }
                 "--bench" => a.bench_out = Some(it.next().ok_or("--bench needs an output path")?.into()),
                 other => return Err(format!("unknown argument: {other}")),
             }
@@ -86,6 +95,7 @@ fn main() {
     let offline = bench || args.offline;
     let open_appearance = (args.appearance || args.appearance_fonts) && !bench;
     let appearance_fonts = args.appearance_fonts;
+    let open_menu = args.open_menu.filter(|_| !bench);
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
 
     let app = gpui_kit::application().with_assets(assets::AppAssets);
@@ -138,6 +148,10 @@ fn main() {
                         dialog.update(cx, |dialog, cx| dialog.show_fonts(cx));
                     }
                 });
+            }
+            if let Some(name) = open_menu {
+                let menus = menu_preview::build(name, &ws, window, cx);
+                ws.update(cx, |ws, cx| ws.preview_menus(menus, cx));
             }
             ws
         })

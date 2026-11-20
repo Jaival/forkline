@@ -11,6 +11,7 @@ use gpui_kit::component::dock::{
     ClosePanel, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
     InsertTarget, NodeId, PaneRef, PanelId, panel_handle,
 };
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
@@ -96,6 +97,8 @@ pub struct Workspace {
     appearance: Option<Entity<Appearance>>,
     appearance_return: Option<FocusHandle>,
     _appearance_subscription: Option<Subscription>,
+    /// `--open-menu`: menus shown at launch for screenshots.
+    menu_preview: Vec<Entity<PopupMenu>>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -160,6 +163,7 @@ impl Workspace {
             appearance: None,
             appearance_return: None,
             _appearance_subscription: None,
+            menu_preview: Vec::new(),
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -340,6 +344,12 @@ impl Workspace {
             crate::theme::sync_title_bar(window, cx.palette().dark);
         }
         window.refresh();
+    }
+
+    /// Show `menus` near the top left (`--open-menu`, see `menu_preview.rs`).
+    pub(crate) fn preview_menus(&mut self, menus: Vec<Entity<PopupMenu>>, cx: &mut Context<Self>) {
+        self.menu_preview = menus;
+        cx.notify();
     }
 
     pub(crate) fn open_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -763,7 +773,19 @@ impl Render for Workspace {
                         .child(div().flex().max_h_full().child(dialog)),
                 )
                 .with_priority(2)
-}))
+            }))
+            .children((!self.menu_preview.is_empty()).then(|| {
+                deferred(
+                    h_flex()
+                        .absolute()
+                        .top(px(48.))
+                        .left(px(64.))
+                        .gap(px(12.))
+                        .items_start()
+                        .children(self.menu_preview.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 

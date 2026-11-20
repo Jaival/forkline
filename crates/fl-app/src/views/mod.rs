@@ -4,7 +4,7 @@ mod explore;
 mod home;
 mod list_view;
 mod placeholder;
-mod queue;
+pub(crate) mod queue;
 mod reading;
 mod rows;
 mod repo;
