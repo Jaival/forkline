@@ -266,7 +266,9 @@ impl Appearance {
     }
 }
 
-/// A grid of font chips, each name drawn in its own font, four to a row.
+/// Font chips, each name drawn in its own font, in rows that wrap. Each chip
+/// is as wide as its name (long names such as "Atkinson Hyperlegible Next"
+/// are never cut off), and the chips in a row grow to fill it.
 fn font_grid(
     id: &'static str,
     list: &'static [FontInfo],
@@ -275,48 +277,31 @@ fn font_grid(
     cx: &mut Context<Appearance>,
     on_pick: fn(&mut Fonts, &'static FontInfo),
 ) -> impl IntoElement {
-    let mut chips: Vec<AnyElement> = list
-        .iter()
-        .enumerate()
-        .map(|(ix, f)| {
-            let on = std::ptr::eq(f, chosen);
-            div()
-                .id((id, ix))
-                .test_support()
-                .flex_1()
-                .min_w_0()
-                .h(px(30.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .rounded(RADIUS)
-                .border_1()
-                .border_color(if on { ui.accent_text } else { ui.border })
-                .when(on, |d| d.bg(ui.selected).text_color(ui.text_strong))
-                .when(!on, |d| d.text_color(ui.text).hover(|s| s.bg(ui.hover)))
-                .cursor_pointer()
-                .font_family(f.family)
-                .text_body()
-                .on_click(cx.listener(move |this, _, w, cx| this.edit_fonts(|fonts| on_pick(fonts, f), w, cx)))
-                .child(div().truncate().child(f.title))
-                .into_any_element()
-        })
-        .collect();
-    // Fillers with the chips' padding and border, so the last row's columns
-    // line up with the others.
-    while !chips.len().is_multiple_of(4) {
-        chips.push(div().flex_1().min_w_0().px(px(10.)).border_1().border_color(ui.border.opacity(0.)).into_any_element());
-    }
-    let mut grid = v_flex().gap(px(6.));
-    let mut chips = chips.into_iter();
-    loop {
-        let row: Vec<AnyElement> = chips.by_ref().take(4).collect();
-        if row.is_empty() {
-            break;
-        }
-        grid = grid.child(h_flex().gap(px(6.)).children(row));
-    }
-    grid
+    h_flex().flex_wrap().gap(px(6.)).children(list.iter().enumerate().map(|(ix, f)| {
+        let on = std::ptr::eq(f, chosen);
+        div()
+            .id((id, ix))
+            .test_support()
+            .flex_grow(1.)
+            .h(px(30.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(RADIUS)
+            .border_1()
+            .border_color(if on { ui.accent_text } else { ui.border })
+            .when(on, |d| d.bg(ui.selected).text_color(ui.text_strong))
+            .when(!on, |d| d.text_color(ui.text).hover(|s| s.bg(ui.hover)))
+            .cursor_pointer()
+            .font_family(f.family)
+            .text_body()
+            // Monaspace Neon's line box puts its letters about 2 px below
+            // the others'.
+            .when(f.id == "monaspace-neon", |d| d.pb(px(2.)))
+            .on_click(cx.listener(move |this, _, w, cx| this.edit_fonts(|fonts| on_pick(fonts, f), w, cx)))
+            .child(div().whitespace_nowrap().child(f.title))
+    }))
 }
 
 /// A queue row, a comment and a diff hunk in the chosen fonts.
@@ -421,6 +406,17 @@ fn segment(
         .child(label)
 }
 
+/// The hue slider's track: the swatch colour at every hue, left (0°) to
+/// right (359°). GPUI gradients have two stops, so it is one segment per 30°.
+fn hue_strip() -> impl IntoElement {
+    use gpui_kit::{linear_color_stop, linear_gradient};
+    // The kit slider's track is 24 px high; the strip sits in its middle.
+    h_flex().absolute().left_0().right_0().top(px(8.)).h(px(8.)).rounded_full().overflow_hidden().children((0..12u16).map(|i| {
+        let (from, to) = (theme::swatch(i * 30), theme::swatch((i * 30 + 30).min(359)));
+        div().flex_1().h_full().bg(linear_gradient(90., linear_color_stop(from, 0.), linear_color_stop(to, 1.)))
+    }))
+}
+
 fn heading(text: impl Into<SharedString>, ui: &Palette) -> gpui_kit::Div {
     div().text_label().font_weight(FontWeight::SEMIBOLD).text_color(ui.text_muted).child(text.into())
 }
@@ -513,7 +509,17 @@ impl Render for Appearance {
                 v_flex()
                     .gap(px(4.))
                     .child(div().text_secondary().text_color(ui.text).child(format!("Any colour (hue {}°)", accent.hue)))
-                    .child(Slider::new(&self.hue).accessibility_label("Accent hue")),
+                    .child(
+                        div()
+                            .relative()
+                            .child(hue_strip())
+                            .child(
+                                Slider::new(&self.hue)
+                                    .bg(gpui_kit::transparent_black())
+                                    .text_color(ui.text_strong)
+                                    .accessibility_label("Accent hue"),
+                            ),
+                    ),
             )
             .child(
                 h_flex()
@@ -607,6 +613,7 @@ impl Render for Appearance {
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::cancel))
             .w(px(680.))
+            .max_h_full()
             .p(px(20.))
             .gap(px(16.))
             .rounded(px(10.))
@@ -626,12 +633,21 @@ impl Render for Appearance {
                     })),
             )
             .child(tabs)
-            .when(tab == Tab::Colours, |d| {
-                d.child(v_flex().gap(px(6.)).child(heading("Mode", &ui)).child(mode_row))
-                    .child(v_flex().gap(px(6.)).child(heading("Colours for", &ui)).child(edit_row).child(grid))
-                    .child(accent_section)
-            })
-            .when(tab == Tab::Fonts, |d| d.child(fonts_tab))
+            .child(
+                // Scrolls when the window is too low for the whole dialog.
+                v_flex()
+                    .id("appearance-body")
+                    .test_support()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .gap(px(16.))
+                    .when(tab == Tab::Colours, |d| {
+                        d.child(v_flex().gap(px(6.)).child(heading("Mode", &ui)).child(mode_row))
+                            .child(v_flex().gap(px(6.)).child(heading("Colours for", &ui)).child(edit_row).child(grid))
+                            .child(accent_section)
+                    })
+                    .when(tab == Tab::Fonts, |d| d.child(fonts_tab)),
+            )
             .child(
                 h_flex()
                     .gap(px(8.))

@@ -743,7 +743,9 @@ impl Render for Workspace {
                         .flex()
                         .justify_center()
                         .pt(px(48.))
-                        .child(div().child(dialog)),
+                        .pb(px(24.))
+                        .items_start()
+                        .child(div().flex().max_h_full().child(dialog)),
                 )
                 .with_priority(2)
 }))
