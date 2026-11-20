@@ -25,6 +25,7 @@ use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
 use crate::workspace::{GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
+use crate::theme::TextScale as _;
 
 #[cfg(test)]
 mod tests;
@@ -268,7 +269,7 @@ fn kbd(text: impl Into<SharedString>, cx: &App) -> AnyElement {
         .rounded(px(3.))
         .border_1()
         .border_color(theme.border)
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .child(text.into())
         .into_any_element()
@@ -292,7 +293,7 @@ impl Render for Palette {
                     let hint = hint.clone().map(|hint| match hint {
                         Hint::Key(key) => kbd(key, cx),
                         Hint::Text(text) => {
-                            div().text_xs().text_color(cx.palette().text_muted).child(text).into_any_element()
+                            div().text_small().text_color(cx.palette().text_muted).child(text).into_any_element()
                         }
                     });
                     h_flex()
@@ -337,7 +338,7 @@ impl Render for Palette {
                     .gap(px(8.))
                     .border_t_1()
                     .border_color(theme.border)
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(div().flex_1().child("Enter to run"))
                     .child(kbd("Esc", cx)),

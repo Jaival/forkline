@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use gpui_kit::component::highlighter::{HighlightTheme, ThemeStyle};
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Global, Hsla, Pixels, Rgba, Window, hsla, px};
+use gpui_kit::{App, Global, Hsla, Pixels, Rgba, Styled, Window, hsla, px};
 
 pub use derive::{Accent, derive, swatch};
 
@@ -26,7 +26,51 @@ pub const TEXT_PANE_TITLE: Pixels = px(17.);
 pub const TEXT_READING_TITLE: Pixels = px(21.);
 pub const LINE_BODY: Pixels = px(20.);
 pub const LINE_SECONDARY: Pixels = px(18.);
+pub const LINE_SMALL: Pixels = px(16.);
 pub const LINE_LABEL: Pixels = px(16.);
+pub const LINE_PANE_TITLE: Pixels = px(24.);
+pub const LINE_READING_TITLE: Pixels = px(28.);
+/// Code in the diff: the kit's row height is 1.6 x the code font size.
+pub const TEXT_CODE: Pixels = px(12.5);
+pub const LINE_CODE: Pixels = px(20.);
+
+/// Every (size, line height) pair the app sets; the font tests check that
+/// each bundled font's letters fit inside these line boxes.
+#[cfg(test)]
+pub const TEXT_STYLES: [(Pixels, Pixels); 7] = [
+    (TEXT_BODY, LINE_BODY),
+    (TEXT_SECONDARY, LINE_SECONDARY),
+    (TEXT_SMALL, LINE_SMALL),
+    (TEXT_LABEL, LINE_LABEL),
+    (TEXT_PANE_TITLE, LINE_PANE_TITLE),
+    (TEXT_READING_TITLE, LINE_READING_TITLE),
+    (TEXT_CODE, LINE_CODE),
+];
+
+/// The type scale as styles: each sets a size and its line height, so a font
+/// with taller metrics cannot change a row's height.
+pub trait TextScale: Styled + Sized {
+    fn text_body(self) -> Self {
+        self.text_size(TEXT_BODY).line_height(LINE_BODY)
+    }
+    fn text_secondary(self) -> Self {
+        self.text_size(TEXT_SECONDARY).line_height(LINE_SECONDARY)
+    }
+    fn text_small(self) -> Self {
+        self.text_size(TEXT_SMALL).line_height(LINE_SMALL)
+    }
+    fn text_label(self) -> Self {
+        self.text_size(TEXT_LABEL).line_height(LINE_LABEL)
+    }
+    fn text_pane_title(self) -> Self {
+        self.text_size(TEXT_PANE_TITLE).line_height(LINE_PANE_TITLE)
+    }
+    fn text_reading_title(self) -> Self {
+        self.text_size(TEXT_READING_TITLE).line_height(LINE_READING_TITLE)
+    }
+}
+
+impl<T: Styled> TextScale for T {}
 
 // Layout.
 pub const RAIL_WIDTH: f32 = 52.;
@@ -840,7 +884,9 @@ impl Palette {
     /// Write this palette over gpui-component's theme.
     fn write_kit(&self, t: &mut Theme) {
         t.font_size = TEXT_BODY;
-        t.mono_font_size = TEXT_SECONDARY;
+        // The kit's diff draws code at `rem * mono_font_size / 16` (rem = the
+        // body size) in rows 1.6 times that: this gives TEXT_CODE / LINE_CODE.
+        t.mono_font_size = TEXT_CODE * (16. / f32::from(TEXT_BODY));
         t.radius = RADIUS;
         t.radius_lg = px(8.);
         t.shadow = false;
@@ -962,7 +1008,11 @@ pub fn apply(mode: Option<ThemeMode>, mut window: Option<&mut Window>, cx: &mut 
     }
     let choices = cx.try_global::<Choices>().copied().unwrap_or_default();
     let palette = if Theme::global(cx).is_dark() { choices.dark } else { choices.light };
-    Theme::update(cx, |t| palette.write_kit(t));
+    let fonts = crate::fonts::register_chosen(cx);
+    Theme::update(cx, |t| {
+        palette.write_kit(t);
+        crate::fonts::write_kit(&fonts, t);
+    });
     cx.set_global(palette);
     if let Some(window) = window {
         sync_title_bar(window, palette.dark);

@@ -28,10 +28,7 @@ use rusqlite::Connection;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
-use crate::theme::{
-    ActivePalette as _, GROUP_HEADER, LINE_BODY, LINE_LABEL, PANE_HEADER, Palette, RADIUS, ROW_HEIGHT, TEXT_BODY,
-    TEXT_LABEL, TEXT_PANE_TITLE, TEXT_SECONDARY, TEXT_SMALL,
-};
+use crate::theme::{ActivePalette as _, GROUP_HEADER, PANE_HEADER, Palette, RADIUS, ROW_HEIGHT, TextScale as _};
 use crate::view_ref::ViewRef;
 use crate::workspace::{OpenView, SaveLayout, SetViewRef};
 
@@ -496,8 +493,7 @@ impl Queue {
             .pb(px(4.))
             .gap(px(6.))
             .items_center()
-            .text_size(TEXT_LABEL)
-            .line_height(LINE_LABEL)
+            .text_label()
             .font_weight(FontWeight::MEDIUM)
             .text_color(p.text_muted)
             .child(group.label())
@@ -561,8 +557,7 @@ impl Queue {
                             .child(
                                 div()
                                     .truncate()
-                                    .text_size(TEXT_BODY)
-                                    .line_height(LINE_BODY)
+                                    .text_body()
                                     .map(|d| {
                                         if row.unread {
                                             d.font_weight(FontWeight::MEDIUM).text_color(p.text_strong)
@@ -576,12 +571,11 @@ impl Queue {
                                 h_flex()
                                     .gap(px(6.))
                                     .items_center()
-                                    .text_size(TEXT_SMALL)
-                                    .line_height(LINE_LABEL)
+                                    .text_small()
                                     .text_color(p.text_muted)
                                     .overflow_hidden()
                                     .when(!row.repo.is_empty(), |d| d.child(crate::repo_color::dot(&row.repo, cx)))
-                                    .child(div().flex_none().font_family(mono).text_size(TEXT_LABEL).child(repo))
+                                    .child(div().flex_none().font_family(mono).text_label().child(repo))
                                     .when_some(author, |d, author| d.child("\u{b7}").child(author))
                                     .when_some(check, |d, (icon, color)| {
                                         d.child(Icon::new(icon).with_size(px(12.)).flex_none().text_color(color))
@@ -593,8 +587,7 @@ impl Queue {
                             .flex_none()
                             .gap(px(6.))
                             .items_end()
-                            .text_size(TEXT_SMALL)
-                            .line_height(LINE_LABEL)
+                            .text_small()
                             .text_color(p.text_muted)
                             .child(
                                 h_flex()
@@ -679,7 +672,7 @@ impl Queue {
             .flex_none()
             .border_b_1()
             .border_color(p.border)
-            .text_size(TEXT_SECONDARY)
+            .text_secondary()
             .child(
                 h_flex()
                     .key_context("QueryBar")
@@ -732,7 +725,7 @@ impl Queue {
                         .px(px(12.))
                         .gap(px(8.))
                         .items_center()
-                        .text_size(TEXT_SMALL)
+                        .text_small()
                         .text_color(p.text_muted)
                         .child(div().id("queue-result-count").child(result))
                         .child(div().flex_1())
@@ -825,13 +818,12 @@ impl Render for Queue {
             .items_center()
             .child(
                 div()
-                    .text_size(TEXT_PANE_TITLE)
-                    .line_height(px(24.))
+                    .text_pane_title()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.title.clone()),
             )
             .when(counts_ready, |d| {
-                d.child(div().text_size(TEXT_SECONDARY).text_color(p.text_muted).child(total.to_string()))
+                d.child(div().text_secondary().text_color(p.text_muted).child(total.to_string()))
             })
             .child(div().flex_1())
             .child(self.filter_button(cx));

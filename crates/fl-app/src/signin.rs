@@ -21,6 +21,7 @@ use gpui_kit::{
 
 use crate::theme::ActivePalette as _;
 use crate::store::Store;
+use crate::theme::TextScale as _;
 
 #[cfg(test)]
 mod tests;
@@ -229,7 +230,7 @@ impl Render for SignIn {
                                 .rounded(px(4.))
                                 .bg(theme.raised)
                                 .font_family(cx.theme().mono_font_family.clone())
-                                .text_lg()
+                                .text_size(px(18.)).line_height(px(26.))
                                 .child(code.user_code.clone()),
                         )
                         .child(
@@ -328,9 +329,9 @@ impl Render for SignIn {
             .border_color(theme.border)
             .bg(theme.control)
             .text_color(theme.text)
-            .text_sm()
+            .text_body()
             .shadow_lg()
-            .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child("Sign in to GitHub"))
+            .child(div().text_size(px(16.)).line_height(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Sign in to GitHub"))
             .child(body)
             .when_some(self.message.clone(), |d, m| d.child(div().id("signin-message").text_color(theme.closed.fg).child(m)))
             .child(

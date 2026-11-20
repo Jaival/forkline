@@ -27,7 +27,7 @@ use super::pickers::{EditAssignees, EditLabels};
 use super::{Detail, ReadingPane};
 use crate::drafts::Drafts;
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, TEXT_BODY, TEXT_LABEL, TEXT_SMALL};
+use crate::theme::{ActivePalette as _, TextScale as _};
 
 actions!(reading, [Approve, Reply, ToggleState, Done, Snooze, CancelReply]);
 
@@ -312,7 +312,7 @@ impl ReadingPane {
                 .small()
                 .outline()
                 .label(label)
-                .when(!key.is_empty(), |b| b.child(div().text_size(TEXT_LABEL).text_color(p.text_faint).child(key)))
+                .when(!key.is_empty(), |b| b.child(div().text_label().text_color(p.text_faint).child(key)))
         };
         Some(
             h_flex()
@@ -322,7 +322,7 @@ impl ReadingPane {
                 .pb(px(14.))
                 .gap(px(8.))
                 .items_center()
-                .text_size(TEXT_BODY)
+                .text_body()
                 .when(approve, |d| {
                     d.child(
                         Button::new("action-approve")
@@ -335,7 +335,7 @@ impl ReadingPane {
                                     .px(px(5.))
                                     .rounded(px(3.))
                                     .bg(p.on_accent.opacity(0.22))
-                                    .text_size(TEXT_LABEL)
+                                    .text_label()
                                     .child("A"),
                             )
                             .on_click(cx.listener(|this, _, window, cx| this.approve(&Approve, window, cx))),
@@ -375,7 +375,7 @@ impl ReadingPane {
                 .children(merge)
                 .child(div().flex_1())
                 .when_some(self.notice.clone(), |d, notice: SharedString| {
-                    d.child(div().truncate().min_w_0().text_size(TEXT_SMALL).text_color(p.closed.fg).child(notice))
+                    d.child(div().truncate().min_w_0().text_small().text_color(p.closed.fg).child(notice))
                 })
                 .into_any_element(),
         )
@@ -397,7 +397,7 @@ impl ReadingPane {
                 .test_support()
                 .gap(px(3.))
                 .items_center()
-                .text_size(TEXT_SMALL)
+                .text_small()
                 .text_color(color)
                 .child(Icon::new(icon).with_size(px(12.)))
                 .child(text)
@@ -408,7 +408,7 @@ impl ReadingPane {
                 .gap(px(6.))
                 .items_center()
                 .child(Button::new("action-merge").small().outline().label("Merge").disabled(true))
-                .child(div().text_size(TEXT_SMALL).text_color(p.text_muted).child(reason))
+                .child(div().text_small().text_color(p.text_muted).child(reason))
                 .into_any_element(),
             (MergeState::Ready, Some(method)) => h_flex()
                 .gap(px(2.))
@@ -484,7 +484,7 @@ impl ReadingPane {
                     h_flex()
                         .gap(px(8.))
                         .items_center()
-                        .text_size(TEXT_SMALL)
+                        .text_small()
                         .text_color(p.text_muted)
                         .child("Ctrl+Enter to send, Esc to cancel")
                         .when(drafts > 0, |d| {

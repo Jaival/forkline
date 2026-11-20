@@ -1419,4 +1419,96 @@ Open items from step 5:
 - The hue slider track uses the kit's slider colours (accent), not a hue
   gradient as on the board.
 
-Next: step 6 (fonts).
+Done (step 6, fonts, 2026-11-20):
+
+- `crates/fl-app/fonts/<id>/`: 21 bundled fonts with their `OFL.txt`
+  (all SIL OFL 1.1, unmodified, so the Reserved Font Names of Plex,
+  Source and Monaspace do not apply). Sources: google/fonts `ofl/*`
+  (Inter, Geist, IBM Plex Sans, Figtree, Atkinson Hyperlegible Next,
+  Source Serif 4, Google Sans, Space Grotesk, Google Sans Flex, Manrope,
+  Plus Jakarta Sans, JetBrains Mono, Geist Mono, IBM Plex Mono, Source
+  Code Pro, Atkinson Hyperlegible Mono, Space Mono, Google Sans Code),
+  Commit Mono v1.143 release (eigilnikolajsen/commit-mono, font licence
+  OFL), Monaspace v1.400 variable zip (githubnext/monaspace), Obel Mono
+  1.004 (typographic.systems; zip SHA-256 matches the install.sh pins).
+- `crates/fl-app/src/fonts.rs`: `UI_FONTS` (11, Inter first = default),
+  `CODE_FONTS` (10, Obel Mono first = default), `OBEL_MONO_MASKED`;
+  `Fonts { ui, mono, mask_secrets }` global; settings `ui_font`,
+  `mono_font` (JSON id, e.g. `"inter"`), `mask_secrets` (default true).
+  Unknown ids, a UI font id in `mono_font` (or the other way) and bad JSON
+  load the defaults. Only the chosen two fonts are registered at startup;
+  the Fonts tab registers the rest (`load_all`).
+- `theme.rs`: every text style has an explicit line height (`TextScale`
+  trait: `text_body`, `text_secondary`, `text_small`, `text_label`,
+  `text_pane_title`, `text_reading_title`). All views use it. Code is
+  `TEXT_CODE` 12.5 px in `LINE_CODE` 20 px rows (the kit diff's
+  `mono_font_size` is set from it). `theme::apply` writes the fonts into
+  the kit theme after the colours, so a palette change never resets them.
+- Appearance dialog: tabs Colours / Fonts. Fonts tab: interface font grid,
+  code font grid (each name in its own font), a live sample (queue row,
+  comment with inline code, diff hunk with a `ghp_` token), the "Hide
+  secrets in code" switch (only while Obel Mono is chosen), and a
+  scrollable licence list ("Licences" button). Live apply, Esc restores,
+  Done saves the colour rows and the three font rows.
+- `--appearance-fonts` launch flag opens the dialog on the Fonts tab (for
+  PrintWindow shots).
+
+Deviations:
+
+- Masking uses the font Obel Mono Masked (the foundry's build with `ss01`
+  on), not the `ss01` feature. DirectWrite does apply `ss01` (test
+  `directwrite_applies_ss01`), but GPUI passes font features to every
+  child text run and the kit diff / markdown have no hook for code text
+  alone: interface fonts would turn on their own `ss01` (Inter's digits).
+- Commit Mono: regular only. The release files register one family per
+  weight ("CommitMono 400", "CommitMono 700"); bold code text uses
+  synthetic bold.
+- Exe 49.3 MB -> 66.4 MB (+17.1 MB, above the 8-12 MB estimate; Google
+  Sans 5 MB and Google Sans Flex 3.9 MB are the largest).
+- Diff code was 10.5 px in 17 px rows (kit rem 13.5 x mono_font_size/16);
+  now 12.5 px in 20 px rows. Diffs look larger than in step 5.
+
+Tests: `fonts/tests.rs` (real DirectWrite): table of 21 OFL fonts, unique
+ids; fallback for unknown / bad values; settings round trip; only Obel
+Mono masks; every font registers its family and a bold weight; every
+ASCII letter's ink fits each text style's line box (weights 400 and 600);
+Obel Mono Masked draws `ghp_` + 4 characters then one mask glyph, same
+advance; `ss01` works. `files/tests.rs`: copying the masked token line
+gives the full token; with every UI font, every code font and Obel
+unmasked, queue rows, tab titles and diff lines keep their heights (real
+text system, `test_support::with_real_text`). `appearance/tests.rs`: font
+picks apply live, Esc restores them, Done saves them. Clippy passes;
+`cargo test --workspace` 280 pass.
+
+Bench (release, fake data, `target/tmp/g6/fontbench.sh <ui> <mono>`):
+
+- Cold first launch after build: 891 ms (494 ms before `main`: the larger
+  exe loads from disk once).
+- Quiet machine, interleaved with the step 5 exe: `app_startup_ms` base
+  46.5 / 72.5 / 59.3, new 72.1 / 66.8 / 52.9; launch base 424 / 548 /
+  437, new 499 / 496 / 408. The steady cost is the first frame
+  (`workspace_built` -> `window_open` 19-22 ms, base 9-11 ms): shaping
+  with Inter's 870 KB variable font and Obel Mono.
+- `diff_scroll_fps`, default fonts, quiet machine: 240 / 238 / 240.
+  Widest code font (Atkinson Hyperlegible Mono, 5 % wider than the
+  others): interleaved with base and default on a busy machine, 195 /
+  68 / 51 vs base 165 / 35 / 80 and default 193 / 31 / 36; no measurable
+  cost, but not repeated on a quiet machine.
+
+Checked by eye (PrintWindow, `target/tmp/g6/shot.sh`; images
+`target/tmp/g6/g2s6-*.png`): Fonts tab dark and light (defaults), Source
+Serif 4 + JetBrains Mono (switch hidden), a PR in light mode; diff frames
+`target/tmp/g6/burst/dark-28.png` (Obel Mono Masked) and `light-17.png`
+(Atkinson fonts, same row heights).
+
+Open items from step 6:
+
+- `app_startup_ms` (budget 60) now often misses by about 10 ms (first
+  frame shaping). A fix to try: static Inter instances instead of the
+  variable font.
+- No italic files are bundled (DirectWrite slants the uprights).
+- Monaspace Neon (line gap 200) sits slightly low in its picker chip.
+- The "Atkinson Hyperlegible Next" chip title is cut off at the dialog
+  width.
+
+Next: step 7.

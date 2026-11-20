@@ -20,7 +20,7 @@ use gpui_kit::{
 };
 
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, LINE_LABEL, TEXT_SMALL};
+use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, TextScale as _};
 
 /// The relative time ticks once a second; the status itself is refetched on
 /// a `sync` change and every `REFETCH_EVERY` ticks.
@@ -264,7 +264,7 @@ fn popover_box(id: &'static str, cx: &Context<Footer>) -> gpui_kit::Stateful<gpu
         .border_color(p.border_strong)
         .bg(p.control)
         .text_color(p.text)
-        .text_size(TEXT_SMALL)
+        .text_small()
         .shadow_lg()
 }
 
@@ -360,8 +360,7 @@ impl Render for Footer {
                     .bg(p.surface)
                     .border_t_1()
                     .border_color(p.border)
-                    .text_size(TEXT_SMALL)
-                    .line_height(LINE_LABEL)
+                    .text_small()
                     .text_color(p.text_muted)
                     .child(left)
                     .child(right),

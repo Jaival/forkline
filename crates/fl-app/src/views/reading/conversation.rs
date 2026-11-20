@@ -15,7 +15,7 @@ use gpui_kit::{
 
 use super::Detail;
 use crate::smooth_scroll::SmoothWheel;
-use crate::theme::{ActivePalette as _, LINE_LABEL, LINE_SECONDARY, RADIUS_LG, TEXT_SECONDARY, TEXT_SMALL};
+use crate::theme::{ActivePalette as _, RADIUS_LG, TextScale as _};
 use crate::views::queue::age;
 
 enum Body {
@@ -187,8 +187,7 @@ impl Conversation {
             let aside = |text: String| {
                 div()
                     .pl(px(42.))
-                    .text_size(TEXT_SMALL)
-                    .line_height(LINE_LABEL)
+                    .text_small()
                     .text_color(p.text_muted)
                     .child(text)
                     .into_any_element()
@@ -238,8 +237,7 @@ impl Conversation {
                                 .child(
                                     h_flex()
                                         .gap(px(6.))
-                                        .text_size(TEXT_SECONDARY)
-                                        .line_height(LINE_SECONDARY)
+                                        .text_secondary()
                                         .child(
                                             div()
                                                 .font_weight(FontWeight::SEMIBOLD)

@@ -146,7 +146,7 @@ pub fn render(
             .rounded_full()
             .bg(bg)
             .text_color(fg)
-            .text_size(px(11.))
+            .text_size(px(11.)).line_height(px(14.))
             .font_weight(FontWeight::SEMIBOLD)
             .flex()
             .items_center()

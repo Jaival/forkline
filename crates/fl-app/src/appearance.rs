@@ -1,12 +1,15 @@
 //! The "Appearance…" dialog: the mode (System / Light / Dark), one colour
 //! choice per mode (a built-in theme or the custom accent), and the accent
-//! itself (12 presets, a hue slider, muted colours, tinted backgrounds).
+//! itself (12 presets, a hue slider, muted colours, tinted backgrounds); on
+//! the Fonts tab the interface font, the code font, "Hide secrets in code"
+//! and a live sample.
 //!
-//! Every change applies at once: the dialog writes the edited [`Choices`]
-//! global and shows the mode being edited. `Esc` or "Cancel" puts back the
-//! choices from when it opened; "Done" keeps them and saves `colors_dark`,
-//! `colors_light`, `accent` and `theme`. Like the sign-in dialog it never
-//! closes itself: it emits [`AppearanceEvent`] and the workspace closes it.
+//! Every change applies at once: the dialog writes the edited [`Choices`] and
+//! [`Fonts`] globals and shows the mode being edited. `Esc` or "Cancel" puts
+//! back the choices from when it opened; "Done" keeps them and saves
+//! `colors_dark`, `colors_light`, `accent`, `theme`, `ui_font`, `mono_font`
+//! and `mask_secrets`. Like the sign-in dialog it never closes itself: it
+//! emits [`AppearanceEvent`] and the workspace closes it.
 
 use fl_db::queries::layout;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -20,11 +23,9 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions, div, px,
 };
 
+use crate::fonts::{self, CODE_FONTS, FontInfo, Fonts, UI_FONTS};
 use crate::store::Store;
-use crate::theme::{
-    self, Accent, ActivePalette as _, Choices, LINE_LABEL, Palette, Pick, RADIUS, TEXT_LABEL, TEXT_PANE_TITLE,
-    TEXT_SECONDARY, THEMES, contrast,
-};
+use crate::theme::{self, Accent, ActivePalette as _, Choices, Palette, Pick, RADIUS, THEMES, contrast, TextScale as _};
 
 #[cfg(test)]
 mod tests;
@@ -57,9 +58,20 @@ pub enum AppearanceEvent {
 
 impl EventEmitter<AppearanceEvent> for Appearance {}
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Colours,
+    Fonts,
+}
+
 pub struct Appearance {
     /// The choices when the dialog opened; Cancel puts them back.
     original: Choices,
+    original_fonts: Fonts,
+    fonts: Fonts,
+    tab: Tab,
+    /// The Fonts tab shows the chosen fonts' licences instead of the sample.
+    licences: bool,
     /// Dark or light as shown when it opened.
     original_dark: bool,
     choices: Choices,
@@ -83,12 +95,26 @@ impl Appearance {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let dark = cx.palette().dark;
-        Self { original: choices, original_dark: dark, choices, editing_dark: dark, hue, focus, _subscription: subscription }
+        let fonts = cx.try_global::<Fonts>().copied().unwrap_or_default();
+        Self {
+            original: choices,
+            original_fonts: fonts,
+            fonts,
+            tab: Tab::Colours,
+            licences: false,
+            original_dark: dark,
+            choices,
+            editing_dark: dark,
+            hue,
+            focus,
+            _subscription: subscription,
+        }
     }
 
-    /// The edited choices, written to the global and shown in the edited mode.
+    /// The edited choices, written to the globals and shown in the edited mode.
     fn preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(self.choices);
+        cx.set_global(self.fonts);
         let shown = if self.editing_dark { ThemeMode::Dark } else { ThemeMode::Light };
         theme::apply(Some(shown), Some(window), cx);
         window.refresh();
@@ -98,6 +124,25 @@ impl Appearance {
     fn set_mode(&mut self, mode: Option<ThemeMode>, window: &mut Window, cx: &mut Context<Self>) {
         self.choices.mode = mode;
         self.editing_dark = mode.unwrap_or_else(|| window.appearance().into()).is_dark();
+        self.preview(window, cx);
+    }
+
+    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if tab == Tab::Fonts {
+            // The pickers show every font in itself.
+            fonts::load_all(cx);
+        }
+        self.tab = tab;
+        cx.notify();
+    }
+
+    /// Open on the Fonts tab (the `--appearance-fonts` launch flag).
+    pub fn show_fonts(&mut self, cx: &mut Context<Self>) {
+        self.set_tab(Tab::Fonts, cx);
+    }
+
+    fn edit_fonts(&mut self, edit: impl FnOnce(&mut Fonts), window: &mut Window, cx: &mut Context<Self>) {
+        edit(&mut self.fonts);
         self.preview(window, cx);
     }
 
@@ -120,18 +165,21 @@ impl Appearance {
 
     fn cancel(&mut self, _: &CancelAppearance, window: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(self.original);
+        cx.set_global(self.original_fonts);
         let shown = if self.original_dark { ThemeMode::Dark } else { ThemeMode::Light };
         theme::apply(Some(shown), Some(window), cx);
         window.refresh();
         cx.emit(AppearanceEvent::Close);
     }
 
-    /// Keep the choices: show the saved mode and save all four settings.
+    /// Keep the choices: show the saved mode and save all seven settings.
     fn done(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(self.choices);
+        cx.set_global(self.fonts);
         theme::apply(self.choices.mode, Some(window), cx);
         window.refresh();
-        let rows = self.choices.settings();
+        let mut rows = self.choices.settings().to_vec();
+        rows.extend(self.fonts.settings().map(|(key, value)| (key, Some(value))));
         let db = Store::global(cx).read(cx).db().clone();
         cx.background_spawn(async move {
             let _ = db.write(|c| {
@@ -208,8 +256,7 @@ impl Appearance {
             .child(
                 div()
                     .px(px(2.))
-                    .text_size(TEXT_SECONDARY)
-                    .line_height(px(18.))
+                    .text_secondary()
                     .text_color(if selected { ui.text_strong } else { ui.text })
                     .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
                     .truncate()
@@ -217,6 +264,136 @@ impl Appearance {
             )
             .into_any_element()
     }
+}
+
+/// A grid of font chips, each name drawn in its own font, four to a row.
+fn font_grid(
+    id: &'static str,
+    list: &'static [FontInfo],
+    chosen: &'static FontInfo,
+    ui: &Palette,
+    cx: &mut Context<Appearance>,
+    on_pick: fn(&mut Fonts, &'static FontInfo),
+) -> impl IntoElement {
+    let mut chips: Vec<AnyElement> = list
+        .iter()
+        .enumerate()
+        .map(|(ix, f)| {
+            let on = std::ptr::eq(f, chosen);
+            div()
+                .id((id, ix))
+                .test_support()
+                .flex_1()
+                .min_w_0()
+                .h(px(30.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(RADIUS)
+                .border_1()
+                .border_color(if on { ui.accent_text } else { ui.border })
+                .when(on, |d| d.bg(ui.selected).text_color(ui.text_strong))
+                .when(!on, |d| d.text_color(ui.text).hover(|s| s.bg(ui.hover)))
+                .cursor_pointer()
+                .font_family(f.family)
+                .text_body()
+                .on_click(cx.listener(move |this, _, w, cx| this.edit_fonts(|fonts| on_pick(fonts, f), w, cx)))
+                .child(div().truncate().child(f.title))
+                .into_any_element()
+        })
+        .collect();
+    // Fillers with the chips' padding and border, so the last row's columns
+    // line up with the others.
+    while !chips.len().is_multiple_of(4) {
+        chips.push(div().flex_1().min_w_0().px(px(10.)).border_1().border_color(ui.border.opacity(0.)).into_any_element());
+    }
+    let mut grid = v_flex().gap(px(6.));
+    let mut chips = chips.into_iter();
+    loop {
+        let row: Vec<AnyElement> = chips.by_ref().take(4).collect();
+        if row.is_empty() {
+            break;
+        }
+        grid = grid.child(h_flex().gap(px(6.)).children(row));
+    }
+    grid
+}
+
+/// A queue row, a comment and a diff hunk in the chosen fonts.
+fn sample(fonts: &Fonts, p: &Palette) -> impl IntoElement {
+    let code = fonts.code().family;
+    let row = h_flex()
+        .h(px(crate::theme::ROW_HEIGHT))
+        .px(px(12.))
+        .gap(px(10.))
+        .items_center()
+        .rounded(RADIUS)
+        .bg(p.selected)
+        .child(div().size(px(7.)).flex_none().rounded_full().bg(p.accent))
+        .child(
+            v_flex()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_body()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.text_strong)
+                        .truncate()
+                        .child("Retry sync after a rate limit instead of failing"),
+                )
+                .child(
+                    h_flex()
+                        .gap(px(6.))
+                        .text_small()
+                        .text_color(p.text_muted)
+                        .child(div().font_family(code).child("forkline/forkline"))
+                        .child("#128 · jaival opened 2h ago"),
+                ),
+        );
+    let comment = div()
+        .text_body()
+        .text_color(p.text_body)
+        .child(
+            h_flex()
+                .flex_wrap()
+                .child("Looks good. Can we read ")
+                .child(div().px(px(4.)).rounded(px(4.)).bg(p.raised).font_family(code).child("retry_after"))
+                .child(" from the response headers?"),
+        );
+    let line = |sign: &'static str, text: &'static str, bg: Hsla, fg: Hsla| {
+        h_flex()
+            .h(crate::theme::LINE_CODE)
+            .px(px(8.))
+            .bg(bg)
+            .text_color(fg)
+            .child(div().w(px(16.)).flex_none().child(sign))
+            .child(div().whitespace_nowrap().child(text))
+    };
+    let hunk = v_flex()
+        .overflow_hidden()
+        .rounded(RADIUS)
+        .border_1()
+        .border_color(p.border)
+        .font_family(code)
+        .text_size(crate::theme::TEXT_CODE)
+        .line_height(crate::theme::LINE_CODE)
+        .child(line("", "@@ -12,3 +12,4 @@ fn client()", p.diff_hunk_bg, p.text_muted))
+        .child(line(" ", "let base = config.api_url();", p.bg, p.text))
+        .child(line("-", "let token = env::var(\"TOKEN\")?;", p.diff_del_bg, p.diff_del_fg))
+        .child(line("+", "let token = \"ghp_x7Kq2mN9pR4tW8vY3zB6cD1fH5jL0sA2eG7i\";", p.diff_add_bg, p.diff_add_fg))
+        .child(line("+", "let retry = Retry::after(Duration::from_secs(30));", p.diff_add_bg, p.diff_add_fg));
+    v_flex()
+        .id("appearance-sample")
+        .test_support()
+        .gap(px(10.))
+        .p(px(10.))
+        .rounded(px(8.))
+        .bg(p.bg)
+        .border_1()
+        .border_color(p.border)
+        .child(row)
+        .child(comment)
+        .child(hunk)
 }
 
 /// One button of a segmented control.
@@ -236,7 +413,7 @@ fn segment(
         .items_center()
         .justify_center()
         .rounded(px(5.))
-        .text_size(TEXT_SECONDARY)
+        .text_secondary()
         .cursor_pointer()
         .when(on, |d| d.bg(ui.selected).text_color(ui.text_strong).font_weight(FontWeight::SEMIBOLD))
         .when(!on, |d| d.text_color(ui.text_muted).hover(|s| s.bg(ui.hover)))
@@ -245,7 +422,7 @@ fn segment(
 }
 
 fn heading(text: impl Into<SharedString>, ui: &Palette) -> gpui_kit::Div {
-    div().text_size(TEXT_LABEL).line_height(LINE_LABEL).font_weight(FontWeight::SEMIBOLD).text_color(ui.text_muted).child(text.into())
+    div().text_label().font_weight(FontWeight::SEMIBOLD).text_color(ui.text_muted).child(text.into())
 }
 
 impl Render for Appearance {
@@ -286,7 +463,7 @@ impl Render for Appearance {
         let accent_ix = cards.len();
         cards.push(self.card(accent_ix, theme::derive(accent, dark), Pick::Accent, cx));
         while !cards.len().is_multiple_of(4) {
-            cards.push(div().flex_1().min_w_0().into_any_element());
+            cards.push(div().flex_1().min_w_0().p(px(3.)).border_2().border_color(ui.border.opacity(0.)).into_any_element());
         }
         let mut grid = v_flex().gap(px(6.));
         let mut cards = cards.into_iter();
@@ -335,7 +512,7 @@ impl Render for Appearance {
             .child(
                 v_flex()
                     .gap(px(4.))
-                    .child(div().text_size(TEXT_SECONDARY).text_color(ui.text).child(format!("Any colour (hue {}°)", accent.hue)))
+                    .child(div().text_secondary().text_color(ui.text).child(format!("Any colour (hue {}°)", accent.hue)))
                     .child(Slider::new(&self.hue).accessibility_label("Accent hue")),
             )
             .child(
@@ -359,6 +536,71 @@ impl Render for Appearance {
                     ),
             );
 
+        let tab = self.tab;
+        let tabs = h_flex()
+            .p(px(3.))
+            .gap(px(2.))
+            .rounded(RADIUS)
+            .bg(ui.surface)
+            .child(segment("appearance-tab-colours", "Colours", tab == Tab::Colours, &ui, cx.listener(|this, _, _, cx| this.set_tab(Tab::Colours, cx))))
+            .child(segment("appearance-tab-fonts", "Fonts", tab == Tab::Fonts, &ui, cx.listener(|this, _, _, cx| this.set_tab(Tab::Fonts, cx))));
+
+        let f = self.fonts;
+        let fonts_tab = v_flex()
+            .gap(px(16.))
+            .child(
+                v_flex()
+                    .gap(px(6.))
+                    .child(heading("Interface font", &ui))
+                    .child(font_grid("appearance-ui-font", &UI_FONTS, f.ui, &ui, cx, |fonts, font| fonts.ui = font)),
+            )
+            .child(
+                v_flex()
+                    .gap(px(6.))
+                    .child(heading("Code font", &ui))
+                    .child(font_grid("appearance-code-font", &CODE_FONTS, f.mono, &ui, cx, |fonts, font| fonts.mono = font)),
+            )
+            .when(f.can_mask(), |d| {
+                d.child(
+                    Switch::new("appearance-mask")
+                        .checked(f.mask_secrets)
+                        .label("Hide secrets in code")
+                        .on_click(cx.listener(|this, on: &bool, w, cx| this.edit_fonts(|fonts| fonts.mask_secrets = *on, w, cx))),
+                )
+            })
+            .child(
+                v_flex()
+                    .gap(px(6.))
+                    .child(heading(if self.licences { "Licences" } else { "Sample" }, &ui))
+                    .map(|d| {
+                        if self.licences {
+                            let text = format!("{}\n\n{}", f.ui.licence, f.code().licence);
+                            d.child(
+                                div()
+                                    .id("appearance-licences")
+                                    .test_support()
+                                    .h(px(186.))
+                                    .overflow_y_scroll()
+                                    .p(px(10.))
+                                    .rounded(px(8.))
+                                    .bg(ui.bg)
+                                    .border_1()
+                                    .border_color(ui.border)
+                                    .text_small()
+                                    .text_color(ui.text_muted)
+                                    .child(text),
+                            )
+                        } else {
+                            d.child(sample(&f, &ui))
+                        }
+                    }),
+            );
+
+        let footer_note = match tab {
+            Tab::Colours => readout,
+            Tab::Fonts => "All fonts: SIL Open Font License 1.1".to_owned(),
+        };
+
         v_flex()
             .id("appearance")
             .key_context("Appearance")
@@ -372,22 +614,41 @@ impl Render for Appearance {
             .border_color(ui.border)
             .bg(ui.control)
             .text_color(ui.text)
-            .text_size(TEXT_SECONDARY)
+            .text_secondary()
             .shadow_lg()
             .child(
                 v_flex()
                     .gap(px(2.))
-                    .child(div().text_size(TEXT_PANE_TITLE).font_weight(FontWeight::SEMIBOLD).text_color(ui.text_strong).child("Appearance"))
-                    .child(div().text_color(ui.text_muted).child("One choice for dark mode and one for light. System follows Windows.")),
+                    .child(div().text_pane_title().font_weight(FontWeight::SEMIBOLD).text_color(ui.text_strong).child("Appearance"))
+                    .child(div().text_color(ui.text_muted).child(match tab {
+                        Tab::Colours => "One choice for dark mode and one for light. System follows Windows.",
+                        Tab::Fonts => "The code font is for diffs, code in comments, commit SHAs and branch names.",
+                    })),
             )
-            .child(v_flex().gap(px(6.)).child(heading("Mode", &ui)).child(mode_row))
-            .child(v_flex().gap(px(6.)).child(heading("Colours for", &ui)).child(edit_row).child(grid))
-            .child(accent_section)
+            .child(tabs)
+            .when(tab == Tab::Colours, |d| {
+                d.child(v_flex().gap(px(6.)).child(heading("Mode", &ui)).child(mode_row))
+                    .child(v_flex().gap(px(6.)).child(heading("Colours for", &ui)).child(edit_row).child(grid))
+                    .child(accent_section)
+            })
+            .when(tab == Tab::Fonts, |d| d.child(fonts_tab))
             .child(
                 h_flex()
                     .gap(px(8.))
                     .items_center()
-                    .child(div().id("appearance-contrast").flex_1().text_color(ui.text_muted).child(readout))
+                    .child(div().id("appearance-contrast").flex_1().text_color(ui.text_muted).child(footer_note))
+                    .when(tab == Tab::Fonts, |d| {
+                        d.child(
+                            Button::new("appearance-licences-toggle")
+                                .small()
+                                .ghost()
+                                .label(if self.licences { "Sample" } else { "Licences" })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.licences = !this.licences;
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("appearance-cancel")
                             .small()

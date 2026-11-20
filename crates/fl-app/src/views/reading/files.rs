@@ -47,6 +47,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
+use crate::theme::TextScale as _;
 
 /// Review threads read per PR; the rail says when there are more.
 const THREAD_LIMIT: u32 = 100;
@@ -494,7 +495,7 @@ impl FilesTab {
                 .gap(px(6.))
                 .items_center()
                 .rounded(px(4.))
-                .text_xs()
+                .text_small()
                 .font_family(cx.theme().mono_font_family.clone())
                 .when(self.current == Some(ix), |d| d.bg(theme.selected).text_color(theme.text))
                 .when(is_viewed, |d| d.text_color(theme.text_muted))
@@ -525,7 +526,7 @@ impl FilesTab {
                 div()
                     .px(px(4.))
                     .pb(px(4.))
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(format!("Files \u{b7} {viewed} of {} viewed", self.files.len())),
             )
@@ -552,11 +553,11 @@ impl FilesTab {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_xs()
+                    .text_small()
                     .font_family(cx.theme().mono_font_family.clone())
                     .children(current.map(|f| f.path().clone())),
             )
-            .child(div().flex_none().text_xs().text_color(theme.text_muted).child("[ ] file"))
+            .child(div().flex_none().text_small().text_color(theme.text_muted).child("[ ] file"))
             .child(
                 Button::new("files-comment")
                     .xsmall()
@@ -579,7 +580,7 @@ impl FilesTab {
                     .selected(is_viewed)
                     .when(is_viewed, |b| b.icon(IconName::Check))
                     .label("Viewed")
-                    .child(div().text_xs().text_color(theme.text_muted).child("V"))
+                    .child(div().text_small().text_color(theme.text_muted).child("V"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_current(cx))),
             )
             .into_any_element()
@@ -634,7 +635,7 @@ impl FilesTab {
                 .rounded(px(6.))
                 .border_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_small()
                 .child(
                     v_flex()
                         .id(("files-thread", ix))
@@ -715,7 +716,7 @@ impl FilesTab {
             h_flex()
                 .gap(px(6.))
                 .items_center()
-                .text_xs()
+                .text_small()
                 .child(div().size(px(7.)).flex_none().rounded_full().bg(color))
                 .child(div().flex_1().min_w_0().truncate().child(c.name.clone()))
         });
@@ -732,22 +733,22 @@ impl FilesTab {
             .child(
                 h_flex()
                     .gap(px(6.))
-                    .text_sm()
+                    .text_body()
                     .child(div().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Threads"))
-                    .child(div().text_xs().text_color(theme.text_muted).child(format!("{open} open"))),
+                    .child(div().text_small().text_color(theme.text_muted).child(format!("{open} open"))),
             )
             .when_some(self.notice.clone(), |d, notice| {
-                d.child(div().id("files-notice").test_support().text_xs().text_color(theme.closed.fg).child(notice))
+                d.child(div().id("files-notice").test_support().text_small().text_color(theme.closed.fg).child(notice))
             })
             .when(self.threads.is_empty(), |d| {
-                d.child(div().text_xs().text_color(theme.text_muted).child("No review threads."))
+                d.child(div().text_small().text_color(theme.text_muted).child("No review threads."))
             })
             .children(cards)
             .when(self.more_threads, |d| {
-                d.child(div().text_xs().text_color(theme.text_muted).child("More threads on GitHub."))
+                d.child(div().text_small().text_color(theme.text_muted).child("More threads on GitHub."))
             })
             .when(!self.checks.is_empty(), |d| {
-                d.child(div().pt(px(4.)).text_xs().text_color(theme.text_muted).child("CHECKS")).children(checks)
+                d.child(div().pt(px(4.)).text_small().text_color(theme.text_muted).child("CHECKS")).children(checks)
             })
             .into_any_element()
     }
@@ -869,7 +870,7 @@ fn annotation_element(tab: &Entity<FilesTab>, annotation: &DiffAnnotation, cx: &
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_xs();
+        .text_small();
     if annotation.id() == &gpui_kit::ElementId::from("draft-composer") {
         let Some((range, state)) = tab.read(cx).composer.clone() else { return div().into_any_element() };
         let empty = state.read(cx).value().trim().is_empty();

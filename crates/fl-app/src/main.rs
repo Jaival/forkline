@@ -6,6 +6,7 @@ mod appearance;
 mod assets;
 mod bench;
 mod drafts;
+mod fonts;
 mod footer;
 mod palette;
 mod panel;
@@ -39,6 +40,8 @@ struct Args {
     offline: bool,
     /// `--appearance`: open the "Appearance…" dialog at launch (screenshots).
     appearance: bool,
+    /// `--appearance-fonts`: the same, on its Fonts tab.
+    appearance_fonts: bool,
 }
 
 impl Args {
@@ -49,6 +52,7 @@ impl Args {
                 "--data-dir" => a.data_dir = Some(it.next().ok_or("--data-dir needs a path")?.into()),
                 "--offline" => a.offline = true,
                 "--appearance" => a.appearance = true,
+                "--appearance-fonts" => a.appearance_fonts = true,
                 "--bench" => a.bench_out = Some(it.next().ok_or("--bench needs an output path")?.into()),
                 other => return Err(format!("unknown argument: {other}")),
             }
@@ -80,7 +84,8 @@ fn main() {
     let bench_out = args.bench_out;
     let bench = bench_out.is_some();
     let offline = bench || args.offline;
-    let open_appearance = args.appearance && !bench;
+    let open_appearance = (args.appearance || args.appearance_fonts) && !bench;
+    let appearance_fonts = args.appearance_fonts;
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
 
     let app = gpui_kit::application().with_assets(assets::AppAssets);
@@ -105,13 +110,17 @@ fn main() {
         }
         bench::mark("store_ready", cx);
 
-        let [mode, dark, light, accent] = Store::global(cx)
+        let [mode, dark, light, accent, ui_font, mono_font, mask] = Store::global(cx)
             .read(cx)
             .db()
-            .read(|c| Ok(["theme", "colors_dark", "colors_light", "accent"].map(|key| layout::setting(c, key).ok().flatten())))
+            .read(|c| {
+                Ok(["theme", "colors_dark", "colors_light", "accent", "ui_font", "mono_font", "mask_secrets"]
+                    .map(|key| layout::setting(c, key).ok().flatten()))
+            })
             .unwrap_or_default();
         let mode = theme::mode_from_setting(mode.as_deref());
         cx.set_global(theme::Choices { mode, ..theme::Choices::from_settings(dark.as_deref(), light.as_deref(), accent.as_deref()) });
+        cx.set_global(fonts::Fonts::from_settings(ui_font.as_deref(), mono_font.as_deref(), mask.as_deref()));
         let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
         cx.set_global(theme::RepoColors::new(picked));
         theme::apply(mode, None, cx);
@@ -122,7 +131,12 @@ fn main() {
             theme::sync_title_bar(window, cx.global::<theme::Palette>().dark);
             let ws = cx.new(|cx| Workspace::new(!bench, window, cx));
             if open_appearance {
-                ws.update(cx, |ws, cx| ws.open_appearance(window, cx));
+                ws.update(cx, |ws, cx| {
+                    ws.open_appearance(window, cx);
+                    if appearance_fonts && let Some(dialog) = ws.appearance() {
+                        dialog.update(cx, |dialog, cx| dialog.show_fonts(cx));
+                    }
+                });
             }
             ws
         })

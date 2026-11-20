@@ -13,7 +13,7 @@ use fl_types::DataChanged;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
-    PromptLevel, Window, div, px,
+    PromptLevel, TestSupportExt as _, Window, div, px,
 };
 
 use crate::drafts::{self, Drafts};
@@ -22,6 +22,7 @@ use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 use crate::views;
 use crate::workspace::{RemoveTab, SetViewRef};
+use crate::theme::TextScale as _;
 
 pub const PANEL_NAME: &str = "forkline.view";
 /// Saved-layout key of a queue tab shown flat.
@@ -199,8 +200,10 @@ impl Panel for ViewPanel {
             _ => (self.view_ref.icon(), p.accent_text),
         };
         h_flex()
+            .id("tab-title")
+            .test_support()
             .gap(px(8.))
-            .text_size(crate::theme::TEXT_SECONDARY)
+            .text_secondary()
             .child(Icon::new(icon).with_size(px(13.)).text_color(color))
             .when_some(self.item.as_ref(), |d, (.., repo)| d.child(crate::repo_color::dot(repo, cx)))
             .child(div().max_w(px(220.)).truncate().child(ViewPanel::title(self)))

@@ -20,6 +20,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
+use crate::theme::TextScale as _;
 
 const ROW_HEIGHT: f32 = 46.;
 
@@ -79,14 +80,14 @@ impl HomeView {
                     .child(
                         div()
                             .truncate()
-                            .text_sm()
+                            .text_body()
                             .when(r.unread, |d| d.font_weight(FontWeight::SEMIBOLD))
                             .child(r.title.clone()),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .child(format!("{} #{} \u{b7} {}{comments}", r.repo, r.number, r.author)),
                     ),
@@ -96,7 +97,7 @@ impl HomeView {
                     .flex_none()
                     .gap(px(6.))
                     .items_center()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .when(r.unread, |d| d.child(div().size(px(6.)).rounded_full().bg(theme.accent)))
                     .child(age(fl_sync::now(), r.updated_at)),
@@ -146,7 +147,7 @@ impl Render for HomeView {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Home"))
-            .child(div().text_xs().text_color(theme.text_muted).child("Recent activity"));
+            .child(div().text_small().text_color(theme.text_muted).child("Recent activity"));
         let body = if self.rows.items.is_empty() {
             super::empty(
                 if self.rows.failed { "Could not read the local activity cache." } else { "No cached activity yet." },

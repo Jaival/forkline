@@ -34,7 +34,7 @@ use super::Built;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, LINE_LABEL, TEXT_LABEL};
+use crate::theme::{ActivePalette as _, TextScale as _};
 
 /// Everything the pane shows for one item.
 #[expect(clippy::large_enum_variant, reason = "one value per pane")]
@@ -359,8 +359,7 @@ impl ReadingPane {
                             .rounded(px(8.))
                             .bg(bg)
                             .text_color(fg)
-                            .text_size(TEXT_LABEL)
-                            .line_height(LINE_LABEL)
+                            .text_label()
                             .child(count),
                     )
                 })

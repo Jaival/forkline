@@ -23,6 +23,7 @@ use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::workspace::SetViewRef;
+use crate::theme::TextScale as _;
 
 const ROW_HEIGHT: f32 = 52.;
 const PAGE: u32 = 50;
@@ -161,14 +162,14 @@ impl SearchView {
                     .child(
                         h_flex()
                             .gap(px(6.))
-                            .text_sm()
+                            .text_body()
                             .child(div().flex_none().text_color(theme.text_muted).child(format!("{} #{}", r.repo, r.number)))
                             .child(div().truncate().child(r.title.clone())),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .child(StyledText::new(text).with_highlights(highlights)),
                     ),
@@ -242,7 +243,7 @@ impl Render for SearchView {
                 .flex_1()
                 .p(px(16.))
                 .gap(px(6.))
-                .text_sm()
+                .text_body()
                 .child(div().text_color(theme.text_muted).child("Type a query and press Enter. Operators:"))
                 .children(HELP.iter().map(|(op, what)| {
                     h_flex()
@@ -257,7 +258,7 @@ impl Render for SearchView {
                 .h(px(26.))
                 .px(px(12.))
                 .items_center()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .border_b_1()
                 .border_color(theme.border)

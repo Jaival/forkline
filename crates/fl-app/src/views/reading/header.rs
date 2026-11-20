@@ -10,10 +10,7 @@ use gpui_kit::{
 };
 
 use super::Detail;
-use crate::theme::{
-    ActivePalette as _, LINE_SECONDARY, Palette, StateColor, TEXT_LABEL, TEXT_READING_TITLE, TEXT_SECONDARY,
-    TEXT_SMALL,
-};
+use crate::theme::{ActivePalette as _, Palette, StateColor, TextScale as _};
 
 /// What the header shows beside the detail: assignees and pending markers.
 pub(super) struct Extra<'a> {
@@ -65,8 +62,7 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Ext
         .flex_wrap()
         .items_center()
         .gap(px(10.))
-        .text_size(TEXT_SECONDARY)
-        .line_height(LINE_SECONDARY)
+        .text_secondary()
         .text_color(p.text_muted)
         .children(badge.map(|(text, icon, color)| state_pill(text, icon, color)))
         .when_some(pr, |d, pr| {
@@ -83,7 +79,7 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Ext
                             .bg(p.raised)
                             .text_color(p.accent_text)
                             .font_family(mono.clone())
-                            .text_size(TEXT_LABEL)
+                            .text_label()
                             .child(pr.base_ref.clone()),
                     ),
             )
@@ -121,10 +117,9 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Ext
 
     let mut path = h_flex()
         .gap(px(6.))
-        .text_size(TEXT_SECONDARY)
-        .line_height(LINE_SECONDARY)
+        .text_secondary()
         .text_color(p.text_muted)
-        .child(div().font_family(mono).text_size(TEXT_SMALL).child(repo.clone()));
+        .child(div().font_family(mono).text_small().child(repo.clone()));
     if let Some(number) = number {
         path = path.child(format!("#{number}"));
     }
@@ -132,8 +127,7 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Ext
         .child(path)
         .child(
             div()
-                .text_size(TEXT_READING_TITLE)
-                .line_height(px(28.))
+                .text_reading_title()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.text_strong)
                 .child(title.clone()),

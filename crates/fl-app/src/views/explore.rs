@@ -22,6 +22,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
+use crate::theme::TextScale as _;
 
 const ROW_HEIGHT: f32 = 62.;
 
@@ -78,7 +79,7 @@ impl ExploreView {
                         h_flex()
                             .gap(px(6.))
                             .items_center()
-                            .text_sm()
+                            .text_body()
                             .child(div().text_color(muted).child(format!("{} /", r.owner)))
                             .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(r.name.clone()))
                             .when(r.starred, |d| {
@@ -89,14 +90,14 @@ impl ExploreView {
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(muted)
                             .child(r.description.clone().unwrap_or_else(|| "No description.".into())),
                     )
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(muted)
                             .child(format!("{} \u{b7} {}", starred_by(r), age(fl_sync::now(), r.last_starred_at))),
                     ),
@@ -106,7 +107,7 @@ impl ExploreView {
                     .flex_none()
                     .gap(px(16.))
                     .items_center()
-                    .text_xs()
+                    .text_small()
                     .text_color(muted)
                     .child(div().w(px(72.)).truncate().child(r.language.clone().unwrap_or_default()))
                     .child(
@@ -166,7 +167,7 @@ impl Render for ExploreView {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Explore"))
-            .child(div().text_xs().text_color(theme.text_muted).child("Recent stars from people you follow"));
+            .child(div().text_small().text_color(theme.text_muted).child("Recent stars from people you follow"));
         let body = if self.rows.items.is_empty() {
             super::empty(
                 if self.rows.failed {

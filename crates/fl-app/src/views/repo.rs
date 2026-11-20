@@ -23,6 +23,7 @@ use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::workspace::OpenView;
+use crate::theme::TextScale as _;
 
 enum Load {
     Loading,
@@ -150,13 +151,13 @@ fn section(title: impl Into<SharedString>, body: impl IntoElement, cx: &App) -> 
         .rounded(px(6.))
         .border_1()
         .border_color(theme.border)
-        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.text_muted).child(title.into().to_uppercase()))
+        .child(div().text_small().font_weight(FontWeight::SEMIBOLD).text_color(theme.text_muted).child(title.into().to_uppercase()))
         .child(body)
         .into_any_element()
 }
 
 fn muted(text: &'static str, cx: &App) -> AnyElement {
-    div().text_sm().text_color(cx.palette().text_muted).child(text).into_any_element()
+    div().text_body().text_color(cx.palette().text_muted).child(text).into_any_element()
 }
 
 fn card(id: &'static str, count: u32, label: &'static str, view: ViewRef, cx: &App) -> AnyElement {
@@ -172,8 +173,8 @@ fn card(id: &'static str, count: u32, label: &'static str, view: ViewRef, cx: &A
         .cursor_pointer()
         .hover(|s| s.bg(theme.hover))
         .on_click(move |_, window, cx| window.dispatch_action(Box::new(OpenView(view.clone())), cx))
-        .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(count.to_string()))
-        .child(div().text_sm().text_color(theme.text_muted).child(label))
+        .child(div().text_size(px(24.)).line_height(px(30.)).font_weight(FontWeight::SEMIBOLD).child(count.to_string()))
+        .child(div().text_body().text_color(theme.text_muted).child(label))
         .into_any_element()
 }
 
@@ -190,7 +191,7 @@ fn languages(o: &RepoOverview, cx: &App) -> AnyElement {
                 shares.iter().map(|(name, pct)| div().h_full().w(gpui_kit::relative(pct / 100.)).bg(rgb(language_color(name)))),
             ),
         )
-        .child(h_flex().flex_wrap().gap_x(px(16.)).gap_y(px(4.)).text_sm().children(shares.iter().map(|(name, pct)| {
+        .child(h_flex().flex_wrap().gap_x(px(16.)).gap_y(px(4.)).text_body().children(shares.iter().map(|(name, pct)| {
             h_flex()
                 .gap(px(6.))
                 .items_center()
@@ -242,7 +243,7 @@ fn commits(o: &RepoOverview, cx: &App) -> AnyElement {
                 .gap(px(10.))
                 .py(px(5.))
                 .items_center()
-                .text_sm()
+                .text_body()
                 .border_b_1()
                 .border_color(theme.border)
                 .child(div().flex_none().size(px(8.)).rounded_full().bg(dot))
@@ -251,7 +252,7 @@ fn commits(o: &RepoOverview, cx: &App) -> AnyElement {
                     h_flex()
                         .flex_none()
                         .gap(px(6.))
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(c.author.clone().unwrap_or_else(|| "unknown".into()))
                         .child(div().font_family(cx.theme().mono_font_family.clone()).child(c.oid.chars().take(7).collect::<String>()))
@@ -271,10 +272,10 @@ fn releases(o: &RepoOverview, cx: &App) -> AnyElement {
         .children(o.releases.iter().map(|r| {
             h_flex()
                 .gap(px(8.))
-                .text_sm()
+                .text_body()
                 .child(div().flex_none().font_family(cx.theme().mono_font_family.clone()).child(r.tag.clone()))
                 .child(div().flex_1().min_w_0().truncate().text_color(theme.text_muted).child(r.name.clone().unwrap_or_default()))
-                .child(div().flex_none().text_xs().text_color(theme.text_muted).child(r.published_at.map(date).unwrap_or_default()))
+                .child(div().flex_none().text_small().text_color(theme.text_muted).child(r.published_at.map(date).unwrap_or_default()))
         }))
         .into_any_element()
 }
@@ -289,7 +290,7 @@ fn contributors(o: &RepoOverview, cx: &App) -> AnyElement {
         .children(o.contributors.iter().map(|c| {
             h_flex()
                 .justify_between()
-                .text_sm()
+                .text_body()
                 .child(c.login.clone())
                 .child(div().text_color(theme.text_muted).child(c.contributions.to_string()))
         }))
@@ -318,7 +319,7 @@ impl RepoView {
                         h_flex()
                             .flex_1()
                             .gap(px(6.))
-                            .text_xl()
+                            .text_reading_title()
                             .items_center()
                             .child(crate::repo_color::dot(&full_name, cx))
                             .child(div().text_color(theme.text_muted).child(format!("{} /", o.owner)))
@@ -349,7 +350,7 @@ impl RepoView {
                     ),
             )
             .child(div().text_color(theme.text_muted).child(o.description.clone().unwrap_or_else(|| "No description.".into())))
-            .child(h_flex().flex_wrap().gap_x(px(16.)).text_sm().text_color(theme.text_muted).children(stats));
+            .child(h_flex().flex_wrap().gap_x(px(16.)).text_body().text_color(theme.text_muted).children(stats));
         let history: Vec<u32> = o.star_history.iter().map(|p| p.stars).collect();
         let history = if history.len() < 2 { muted("Not enough history yet.", cx) } else { sparkline(history, theme.accent) };
         v_flex()

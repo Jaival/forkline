@@ -29,6 +29,7 @@ use crate::signin::{SignIn, SignInEvent};
 use crate::store::Store;
 use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
+use crate::theme::TextScale as _;
 
 actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, OpenAppearance, NextTab, PrevTab]);
 
@@ -354,7 +355,6 @@ impl Workspace {
     }
 
     /// The open "Appearance…" dialog, if any.
-    #[cfg(test)]
     pub(crate) fn appearance(&self) -> Option<&Entity<Appearance>> {
         self.appearance.as_ref()
     }
@@ -678,7 +678,7 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.palette().bg)
             .text_color(cx.palette().text)
-            .text_size(crate::theme::TEXT_BODY)
+            .text_body()
             .child(
                 h_flex()
                     .flex_1()

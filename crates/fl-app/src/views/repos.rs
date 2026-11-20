@@ -22,6 +22,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
+use crate::theme::TextScale as _;
 
 const ROW_HEIGHT: f32 = 48.;
 
@@ -121,7 +122,7 @@ impl ReposView {
                         h_flex()
                             .gap(px(6.))
                             .items_center()
-                            .text_sm()
+                            .text_body()
                             .child(div().text_color(muted).child(format!("{} /", r.owner)))
                             .child(div().truncate().font_weight(FontWeight::SEMIBOLD).child(r.name.clone()))
                             .when(r.starred, |d| d.child(Icon::new(IconName::Star).with_size(px(12.)).text_color(theme.pending.fg)))
@@ -130,7 +131,7 @@ impl ReposView {
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_small()
                             .text_color(muted)
                             .child(r.description.clone().unwrap_or_else(|| "No description.".into())),
                     ),
@@ -140,7 +141,7 @@ impl ReposView {
                     .flex_none()
                     .gap(px(16.))
                     .items_center()
-                    .text_xs()
+                    .text_small()
                     .text_color(muted)
                     .child(format!("{} PRs \u{b7} {} issues", r.open_prs, r.open_issues))
                     .child(div().w(px(72.)).truncate().child(r.language.clone().unwrap_or_default()))

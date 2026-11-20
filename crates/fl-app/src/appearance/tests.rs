@@ -163,3 +163,88 @@ fn done_saves_the_settings(cx: &mut TestAppContext) {
     };
     assert_eq!(loaded, cx.read(|cx| *cx.global::<Choices>()));
 }
+
+fn fonts(cx: &mut TestAppContext) -> crate::fonts::Fonts {
+    cx.read(|cx| cx.try_global::<crate::fonts::Fonts>().copied().unwrap_or_default())
+}
+
+/// The kit theme's interface and code families: what the app draws with.
+fn families(cx: &mut TestAppContext) -> (String, String) {
+    use gpui_kit::component::ActiveTheme as _;
+    cx.read(|cx| (cx.theme().font_family.to_string(), cx.theme().mono_font_family.to_string()))
+}
+
+fn has(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> bool {
+    cx.update_window(handle, |_, window, _| window.try_find(id).is_some()).unwrap()
+}
+
+#[gpui_kit::test]
+fn font_changes_apply_live(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    assert_eq!(families(cx), ("Inter".into(), "Obel Mono Masked".into()));
+    open_dialog(cx, handle, &ws);
+    click(cx, handle, "appearance-tab-fonts");
+    assert!(has(cx, handle, "appearance-sample"));
+    // Interface fonts: Inter 0, Geist 1, ...; code fonts: Obel Mono 0, JetBrains Mono 1, ...
+    click(cx, handle, ("appearance-ui-font", 1usize));
+    assert_eq!(families(cx).0, "Geist");
+    assert!(has(cx, handle, "appearance-mask"), "Obel Mono offers the switch");
+    click(cx, handle, "appearance-mask");
+    assert!(!fonts(cx).mask_secrets);
+    assert_eq!(families(cx).1, "Obel Mono");
+    click(cx, handle, "appearance-mask");
+    assert_eq!(families(cx).1, "Obel Mono Masked");
+    // Another code font has no masking: the switch is hidden.
+    click(cx, handle, ("appearance-code-font", 1usize));
+    assert_eq!(families(cx).1, "JetBrains Mono");
+    assert!(!has(cx, handle, "appearance-mask"));
+    // The licences replace the sample.
+    click(cx, handle, "appearance-licences-toggle");
+    assert!(has(cx, handle, "appearance-licences"));
+    assert!(!has(cx, handle, "appearance-sample"));
+    // Nothing is saved while the dialog is open.
+    assert_eq!(setting(cx, "ui_font"), None);
+    assert_eq!(setting(cx, "mono_font"), None);
+}
+
+#[gpui_kit::test]
+fn esc_restores_the_fonts(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    let before = fonts(cx);
+    open_dialog(cx, handle, &ws);
+    click(cx, handle, "appearance-tab-fonts");
+    click(cx, handle, ("appearance-ui-font", 5usize));
+    click(cx, handle, ("appearance-code-font", 3usize));
+    assert_eq!(families(cx), ("Source Serif 4".into(), "IBM Plex Mono".into()));
+    press(cx, handle, "escape");
+    assert!(!is_open(cx, &ws));
+    assert_eq!(fonts(cx), before);
+    assert_eq!(families(cx), ("Inter".into(), "Obel Mono Masked".into()));
+    cx.run_until_parked();
+    assert_eq!(setting(cx, "ui_font"), None);
+    assert_eq!(setting(cx, "mask_secrets"), None);
+}
+
+#[gpui_kit::test]
+fn done_saves_the_fonts(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    open_dialog(cx, handle, &ws);
+    click(cx, handle, "appearance-tab-fonts");
+    click(cx, handle, ("appearance-ui-font", 9usize)); // Manrope
+    click(cx, handle, "appearance-mask");
+    click(cx, handle, ("appearance-code-font", 6usize)); // Space Mono
+    click(cx, handle, "appearance-done");
+    assert!(!is_open(cx, &ws));
+    assert_eq!(families(cx), ("Manrope".into(), "Space Mono".into()));
+    wait_for_setting(cx, "ui_font", Some("\"manrope\""));
+    assert_eq!(setting(cx, "mono_font").as_deref(), Some("\"space-mono\""));
+    assert_eq!(setting(cx, "mask_secrets").as_deref(), Some("false"));
+    // The colours are saved with them; what was saved loads as what is shown.
+    assert!(setting(cx, "colors_dark").is_some());
+    let loaded = crate::fonts::Fonts::from_settings(
+        setting(cx, "ui_font").as_deref(),
+        setting(cx, "mono_font").as_deref(),
+        setting(cx, "mask_secrets").as_deref(),
+    );
+    assert_eq!(loaded, fonts(cx));
+}
