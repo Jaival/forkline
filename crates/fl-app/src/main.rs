@@ -124,6 +124,7 @@ fn main() {
         let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
         cx.set_global(theme::RepoColors::new(picked));
         theme::apply(mode, None, cx);
+        fonts::prewarm(cx.global::<fonts::Fonts>(), cx);
 
         let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
