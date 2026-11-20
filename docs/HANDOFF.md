@@ -1511,4 +1511,92 @@ Open items from step 6:
 - The "Atkinson Hyperlegible Next" chip title is cut off at the dialog
   width.
 
-Next: step 7.
+Done (step 7, checks, 2026-11-20). No code change; this step closes G2.
+
+Screenshots (PrintWindow only, no input sent): one `--bench` run per
+setting on `target/tmp/g6/bench-data`, a capture every 150 ms with its
+time, then the frame in the middle of the Inbox reading pane scroll and the
+one in the middle of the Files tab scroll (picked against the bench marks;
+black capture frames skipped). Scripts `target/tmp/g7/` (`run.sh <name>
+<dark|light> <colors_json|-> <accent_json|-> <ui> <mono>`, `burst.ps1`,
+`pick.py`, `all.sh`, `montage.py`); images `target/tmp/g7/g2s7-*.png`,
+Inbox + Files montages in `target/tmp/g7/m/`. Checked by eye:
+
+- All 8 themes (Midnight, Graphite, Fjord, Forest, Rosé, High contrast,
+  Daylight, Paper): Inbox queue, reading pane, PR header, Files tab with
+  syntax colours and add / remove rows.
+- 3 accents: red 25 dark, green 150 light, cyan 210 muted untinted dark.
+- All 21 fonts, in 11 runs pairing one interface font with one code font
+  (Inter + Obel Mono in the Midnight run; the others alternate dark /
+  light). No clipped text, rows keep their heights.
+- Seen, not changed: with wide code fonts (Atkinson Hyperlegible Mono,
+  Space Mono, Monaspace Neon) the queue row's author login truncates
+  sooner (step 3's narrow-pane item). Diff hunk headers (`@@ ... @@`) use
+  the interface font (the kit draws them).
+
+Bench (release, fake data, `target/tmp/g7/quietbench.sh`: 5 interleaved
+rounds of `main` (pre-G2, `1d8c6e5`), G2 (`f1c06da`) and a test build with
+static Inter; then 3 rounds of the step 5 exe, G2 + Atkinson Hyperlegible
+Mono and G2 default fonts; raw logs `target/tmp/g7/logs/`). Machine idle
+apart from the runs, but noisier than step 1: `main`'s own `launch_ms` was
+521-683. The first run of each round is the slowest.
+
+| | `main` | G2 |
+|---|---|---|
+| `launch_ms` (600) | 521-683, 3 of 5 miss | 549-615, 1 of 8 miss |
+| `app_startup_ms` (60) | 45-74, 3 of 5 miss | 62-123, 8 of 8 miss |
+| `switch_tab_ms` (8) | 4.0-4.1 | 4.0-4.8 |
+| `store_ready` -> `workspace_new` | 23-31 (46 first run) | 24-28 (41-59 in 3 runs) |
+| `workspace_built` -> `window_open` | 10-12 (31 once) | 23-26 (64 once) |
+
+- `launch_ms` and `switch_tab_ms` stay in budget. `store_ready` ->
+  `workspace_new` does not change: theme apply, `derive` and the font
+  choice cost nothing measurable.
+- `app_startup_ms` misses in every G2 run: by 2-18 ms warm, 63 ms in the
+  first run (median about 65).
+  The whole gap is the first frame (`workspace_built` -> `window_open`,
+  +13 ms), as in step 6.
+- Static Inter (4 instances, opsz 14, wght 400 / 500 / 600 / 700, made with
+  fontTools from the bundled file): `workspace_built` -> `window_open`
+  22-24 ms, `app_startup_ms` 62-82. No gain, so the variable font is not
+  the cause and the shipped fonts are unchanged.
+- `diff_scroll_fps` with the widest code font: Atkinson 86 / 212 / 192,
+  G2 default fonts 193 / 178 / 193, step 5 exe 30 / 186 / 166 (first run
+  of each round noisy). No cost from the wide font. All below step 1's
+  240 on this machine today, `main` included (145-238).
+- Other budgets in all warm runs: `open_cached_item_ms` 9-10,
+  `search_p95_ms` 15-22.
+
+Clippy passes; `cargo test --workspace` 280 pass (no code change).
+
+G2 summary: the look refresh, eight themes, repository colours, accent
+derivation, the Appearance dialog and 21 bundled fonts are done
+(steps 1-6, PR #9). Plan: `docs/design/themes-plan.md`.
+
+Open decisions (for the user):
+
+1. `app_startup_ms` (budget 60) now misses by about 5 ms warm. Options:
+   a) raise the budget to 75 and note the bundled fonts as the reason;
+   b) profile the first frame (DirectWrite font face creation and glyph
+   rasterisation for in-memory fonts are the suspects, since static
+   files do not help); c) register the fonts after the first frame and
+   paint it with the system font (a visible font swap).
+2. The step 1-6 open items below are not done; pick which go into G3.
+
+Open items carried from G2:
+
+- Dock tabs square (needs a custom `DockAreaRenderer`); action buttons
+  24 px vs the board's 30 px; diff add / remove backgrounds from the kit.
+- System mode does not follow a live OS change; the title bar follows the
+  OS again after an OS app-mode switch.
+- Appearance dialog: no scroll (cut off below about 790 px), hue slider
+  without a hue gradient, Atkinson Hyperlegible Next chip title cut off,
+  Monaspace Neon sits low in its chip.
+- Repo dots: narrow queue truncates logins sooner; Midnight Blue close to
+  the unread dot; Home and Search rows have no dot.
+- Green / red accents look like the open / closed state colours.
+- No italic font files; Commit Mono bold is synthetic.
+- Not checked by eye: opened menus (rail theme menu, pinned "Colour"
+  submenu, repo header and repo filter menus); they need a click.
+
+Next: merge PR #9 after review, then settle the open decisions above.

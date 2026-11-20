@@ -1,6 +1,6 @@
 # Plan: look refresh, colour themes, custom accent and fonts (GPUI G2)
 
-Date: 2026-11-17. Status: planned, not started.
+Date: 2026-11-17. Status: done (steps 1-7, 2026-11-20; see `docs/HANDOFF.md`).
 Mockups: the "Forkline before / after", "Theme options" and "Custom accent"
 boards on the design canvas (https://claude.ai/artifact/KB3eRiBLYpyWRS8SiJBpcA).
 
