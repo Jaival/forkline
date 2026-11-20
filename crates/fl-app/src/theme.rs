@@ -663,7 +663,7 @@ const REPO_ACCENT_GAP: f32 = 15.;
 /// lighter (dark themes) or darker (light themes) than the accent, and less
 /// saturated next to a vivid accent. A hue shift alone left Midnight's Blue
 /// repos looking like unread dots.
-const REPO_ACCENT_NEAR: f32 = 35.;
+const REPO_ACCENT_NEAR: f32 = 25.;
 
 /// Repository colours the user picked: `owner/name` -> index into
 /// [`REPO_HUES`]. Loaded at startup; changed by [`RepoColors::set`].
