@@ -14,7 +14,7 @@ use gpui_kit::component::highlighter::{HighlightTheme, ThemeStyle};
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Global, Hsla, Pixels, Rgba, Window, hsla, px};
 
-pub use derive::{Accent, derive};
+pub use derive::{Accent, derive, swatch};
 
 // Type scale (px). Every text style also sets its line height, so a font with
 // taller metrics cannot change a fixed row height.
@@ -655,17 +655,27 @@ pub(crate) fn stable_hash(s: &str) -> u32 {
 /// Every built-in theme: the dark ones, then the light ones.
 pub const THEMES: [&Palette; 8] = [&MIDNIGHT, &GRAPHITE, &FJORD, &FOREST, &ROSE, &HIGH_CONTRAST, &DAYLIGHT, &PAPER];
 
-/// The palette used in each mode (settings `colors_dark` / `colors_light`):
-/// a built-in theme or the one derived from the `accent` setting.
+/// One mode's choice: a built-in theme (by `name`) or the custom accent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Theme(&'static str),
+    Accent,
+}
+
+/// The appearance settings: the palette used in each mode (settings
+/// `colors_dark` / `colors_light`: a built-in theme or the one derived from
+/// `accent`), the accent, and the mode (`theme`; `None` = follow the system).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Choices {
     pub dark: Palette,
     pub light: Palette,
+    pub accent: Accent,
+    pub mode: Option<ThemeMode>,
 }
 
 impl Default for Choices {
     fn default() -> Self {
-        Self { dark: MIDNIGHT, light: DAYLIGHT }
+        Self { dark: MIDNIGHT, light: DAYLIGHT, accent: Accent::default(), mode: None }
     }
 }
 
@@ -676,22 +686,86 @@ impl Choices {
     /// `{"kind":"theme","name":"graphite"}` or `{"kind":"accent"}` (the
     /// palette derived from `accent`, see [`Accent::from_setting`]). Missing,
     /// malformed or unknown values, and a theme of the other mode, load as the
-    /// default.
+    /// default. `mode` stays `None`; see [`mode_from_setting`].
     pub fn from_settings(dark: Option<&str>, light: Option<&str>, accent: Option<&str>) -> Self {
+        let accent = Accent::from_setting(accent);
         let pick = |value: Option<&str>, is_dark: bool, default: Palette| {
             let v: serde_json::Value = value.and_then(|v| serde_json::from_str(v).ok()).unwrap_or_default();
             match v["kind"].as_str() {
-                Some("accent") => derive(Accent::from_setting(accent), is_dark),
+                Some("accent") => derive(accent, is_dark),
                 Some("theme") => THEMES.into_iter().find(|p| p.dark == is_dark && v["name"] == p.name).copied().unwrap_or(default),
                 _ => default,
             }
         };
         let d = Self::default();
-        Self { dark: pick(dark, true, d.dark), light: pick(light, false, d.light) }
+        Self { dark: pick(dark, true, d.dark), light: pick(light, false, d.light), accent, mode: None }
+    }
+
+    pub fn palette(&self, dark: bool) -> &Palette {
+        if dark { &self.dark } else { &self.light }
+    }
+
+    /// What the mode's palette is: a built-in theme or the accent.
+    pub fn pick(&self, dark: bool) -> Pick {
+        let name = self.palette(dark).name;
+        THEMES.into_iter().find(|p| p.name == name).map_or(Pick::Accent, |p| Pick::Theme(p.name))
+    }
+
+    /// Use `pick` in the dark or light mode. An unknown or other-mode theme
+    /// name changes nothing.
+    pub fn set(&mut self, dark: bool, pick: Pick) {
+        let palette = match pick {
+            Pick::Accent => derive(self.accent, dark),
+            Pick::Theme(name) => match THEMES.into_iter().find(|p| p.dark == dark && p.name == name) {
+                Some(p) => *p,
+                None => return,
+            },
+        };
+        if dark { self.dark = palette } else { self.light = palette }
+    }
+
+    /// Change the accent; each mode that uses it gets the new palette.
+    pub fn set_accent(&mut self, accent: Accent) {
+        self.accent = accent;
+        for dark in [true, false] {
+            if self.pick(dark) == Pick::Accent {
+                self.set(dark, Pick::Accent);
+            }
+        }
+    }
+
+    /// The settings rows these choices save as: (key, JSON value); `None`
+    /// deletes the row (`theme` absent = follow the system).
+    pub fn settings(&self) -> [(&'static str, Option<String>); 4] {
+        let color = |dark: bool| match self.pick(dark) {
+            Pick::Accent => r#"{"kind":"accent"}"#.to_owned(),
+            Pick::Theme(name) => serde_json::json!({ "kind": "theme", "name": name }).to_string(),
+        };
+        let mode = self.mode.map(|m| if m.is_dark() { "\"dark\"" } else { "\"light\"" }.to_owned());
+        [
+            ("colors_dark", Some(color(true))),
+            ("colors_light", Some(color(false))),
+            ("accent", Some(self.accent.to_setting())),
+            ("theme", mode),
+        ]
     }
 }
 
 impl Palette {
+    /// The name shown in the picker (`name` is the saved slug).
+    pub fn title(&self) -> &'static str {
+        match self.name {
+            "midnight" => "Midnight",
+            "graphite" => "Graphite",
+            "fjord" => "Fjord",
+            "forest" => "Forest",
+            "rose" => "Rosé",
+            "high-contrast" => "High contrast",
+            "daylight" => "Daylight",
+            "paper" => "Paper",
+            _ => "Custom accent",
+        }
+    }
 
     /// Colour of repo hue `index` (see [`REPO_HUES`]) in this theme, moved
     /// away from the accent's hue when it is too close.
@@ -880,6 +954,7 @@ pub fn mode_from_setting(value: Option<&str>) -> Option<ThemeMode> {
 
 /// Switch to `mode` (`None`: the system's), then write the palette chosen for
 /// it ([`Choices`] global, else Midnight / Daylight) over the kit theme.
+/// `mode` is what is shown; the saved mode is [`Choices::mode`].
 pub fn apply(mode: Option<ThemeMode>, mut window: Option<&mut Window>, cx: &mut App) {
     match mode {
         Some(mode) => Theme::change(mode, window.as_deref_mut(), cx),

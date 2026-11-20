@@ -1,18 +1,18 @@
-//! The icon rail on the left edge: navigation, pinned repositories, theme and
-//! the account avatar.
+//! The icon rail on the left edge: navigation, pinned repositories, the theme
+//! menu and the account avatar.
 
 use fl_types::RepoSummary;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Sizable as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use crate::theme::{ActivePalette as _, Palette, RAIL_BUTTON, RAIL_WIDTH};
+use crate::theme::{ActivePalette as _, Choices, Palette, RAIL_BUTTON, RAIL_WIDTH};
 use crate::view_ref::ViewRef;
 use crate::workspace::Workspace;
 
@@ -113,10 +113,27 @@ pub fn render(
         },
     );
 
+    // System / Light / Dark, then "Appearance…" (the saved mode checked).
     let ws_theme = ws.clone();
-    let (theme_icon, theme_tip) = if p.dark { (IconName::Sun, "Light theme") } else { (IconName::Moon, "Dark theme") };
-    let theme_button = button("rail-theme", theme_icon, theme_tip, false)
-        .on_click(move |_, window, cx| ws_theme.update(cx, |ws, cx| ws.toggle_theme(window, cx)));
+    let theme_icon = if p.dark { IconName::Moon } else { IconName::Sun };
+    let theme_button = button("rail-theme", theme_icon, "Theme", false).dropdown_menu(move |menu, _, cx| {
+        let mode = cx.try_global::<Choices>().and_then(|c| c.mode);
+        let item = |label: &'static str, pick: Option<ThemeMode>| {
+            let ws = ws_theme.clone();
+            PopupMenuItem::new(label)
+                .checked(mode == pick)
+                .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.set_mode(pick, window, cx)))
+        };
+        let ws = ws_theme.clone();
+        menu.item(item("System", None))
+            .item(item("Light", Some(ThemeMode::Light)))
+            .item(item("Dark", Some(ThemeMode::Dark)))
+            .separator()
+            .item(
+                PopupMenuItem::new("Appearance…")
+                    .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))),
+            )
+    });
 
     let avatar = login.map(|login| {
         let (bg, fg) = p.avatar(login);

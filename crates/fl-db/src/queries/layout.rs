@@ -31,3 +31,8 @@ pub fn set_setting(conn: &Connection, key: &str, value_json: &str) -> rusqlite::
     .execute([key, value_json])?;
     Ok(())
 }
+
+pub fn delete_setting(conn: &Connection, key: &str) -> rusqlite::Result<()> {
+    conn.prepare_cached("DELETE FROM settings WHERE key = ?1")?.execute([key])?;
+    Ok(())
+}

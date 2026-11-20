@@ -46,6 +46,18 @@ impl Accent {
         };
         parse().unwrap_or_default()
     }
+
+    /// The saved value: `{"hue":268,"chroma":"normal","tint":true}`.
+    pub fn to_setting(self) -> String {
+        let chroma = if self.muted { "muted" } else { "normal" };
+        serde_json::json!({ "hue": self.hue, "chroma": chroma, "tint": self.tint }).to_string()
+    }
+}
+
+/// A preset swatch in the picker: the hue at the board's swatch lightness
+/// and chroma (OKLCH 0.66, 0.16).
+pub fn swatch(hue: u16) -> Hsla {
+    Lch(0.66, 0.16, hue as f32).hsla()
 }
 
 /// A colour in OKLCH: lightness 0-1, chroma, hue in degrees.

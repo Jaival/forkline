@@ -1367,5 +1367,56 @@ Open items from step 4:
 - Not measured: the cost of `derive` at startup (about 600 contrast checks;
   expected well under 1 ms). Step 7's bench covers it.
 
-Next: step 5 (picker: "Appearance…" dialog, theme cards, 12 swatches, hue
-slider, the two switches, contrast readout, live apply, Esc restores).
+Done (step 5, picker, 2026-11-20):
+
+- `crates/fl-app/src/appearance.rs`: the "Appearance…" dialog. Mode
+  (System / Light / Dark), "Colours for" Dark mode / Light mode (the mode
+  being edited is shown in the app meanwhile), theme cards for that mode
+  (a small picture of the app in the theme: rail, selected unread row,
+  read row, button) plus a "Custom accent" card, the 12 board presets
+  (`PRESETS`; swatch colour OKLCH 0.66 / 0.16, `theme::swatch`), the hue
+  slider (kit `Slider`, 0-359), "Muted colours" and "Tint backgrounds"
+  switches, and the readout `Text n:1 · muted text n:1 · accent n:1` (the
+  edited palette's text, muted text and accent text on its `bg`). Touching
+  a swatch, the slider or a switch also picks the accent for the edited
+  mode. No dimmed backdrop, so the app behind shows each change.
+- Every change writes the `Choices` global and calls `theme::apply` with
+  the edited mode. `Esc` / Cancel puts back the choices and the dark /
+  light mode shown when it opened. Done shows the chosen mode and saves
+  `colors_dark`, `colors_light`, `accent` and `theme` (deleted for
+  System) in one background write.
+- `theme::Choices` now also holds `accent` and `mode` (the saved `theme`;
+  `None` = system). New: `Pick` (`Theme(name)` / `Accent`), `Choices::pick`,
+  `set`, `set_accent`, `settings` (the rows to save), `Accent::to_setting`,
+  `Palette::title` (display names, "Rosé"). `fl_db::queries::layout::
+  delete_setting`.
+- Rail: the theme button (moon / sun for the current mode) opens a menu:
+  System / Light / Dark (the saved mode checked) and "Appearance…".
+  `Workspace::set_mode` applies and saves `theme`; Ctrl+K "Toggle theme"
+  uses it too. Ctrl+K has "Appearance…" (`OpenAppearance`).
+- `--appearance` launch flag opens the dialog at start (for PrintWindow
+  shots; ignored with `--bench`).
+
+Tests: `appearance/tests.rs` (gpui_kit, test window only): the rail menu
+sets Light / Dark / System and saves `theme`, its last item opens the
+dialog; Ctrl+K "appearance" + Enter opens it; a card, a swatch, the tint
+switch and the light-mode tab apply live and save nothing; Esc restores
+the old choices and saves nothing; Done saves all four settings and they
+load back as the shown `Choices`. `theme/tests.rs`: `Choices` round-trips
+through `settings`. Clippy passes; `cargo test --workspace` 267 pass.
+
+Checked by eye (PrintWindow, release, `target/tmp/g2/dialog.sh <name>
+<dark|light> <colors_dark> <colors_light> <accent>`; images
+`target/tmp/g2s5-*.png`): Midnight dark, Paper light, green 150 accent
+dark. Not checked by eye: the opened rail menu (needs a click).
+
+Open items from step 5:
+
+- System mode does not follow a live OS change (as before). The dialog's
+  System choice reads the window's appearance once.
+- The dialog has no scroll: about 790 px tall in dark mode (two card
+  rows); at the window's 500 px minimum height its bottom is cut off.
+- The hue slider track uses the kit's slider colours (accent), not a hue
+  gradient as on the board.
+
+Next: step 6 (fonts).

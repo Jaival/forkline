@@ -237,7 +237,7 @@ fn the_derived_accent_keeps_the_chosen_hue() {
 fn apply_uses_the_chosen_theme_for_each_mode(cx: &mut gpui_kit::TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        cx.set_global(Choices { dark: FJORD, light: PAPER });
+        cx.set_global(Choices { dark: FJORD, light: PAPER, ..Choices::default() });
         apply(Some(ThemeMode::Dark), None, cx);
         assert_eq!(cx.palette().name, "fjord");
         assert_eq!(Theme::global(cx).background, FJORD.bg);
@@ -254,4 +254,27 @@ fn saved_mode_parses_and_falls_back_to_system() {
     assert_eq!(mode_from_setting(Some("\"sepia\"")), None);
     assert_eq!(mode_from_setting(Some("not json")), None);
     assert_eq!(mode_from_setting(None), None);
+}
+
+#[test]
+fn choices_round_trip_through_their_settings() {
+    let mut c = Choices::default();
+    assert_eq!((c.pick(true), c.pick(false)), (Pick::Theme("midnight"), Pick::Theme("daylight")));
+    c.set(true, Pick::Theme("forest"));
+    c.set(false, Pick::Theme("forest")); // a dark theme: the light choice stays
+    assert_eq!(c.light.name, "daylight");
+    c.set(false, Pick::Accent);
+    c.set_accent(Accent { hue: 25, muted: true, tint: false });
+    assert_eq!(c.light, derive(Accent { hue: 25, muted: true, tint: false }, false));
+    assert_eq!(c.dark.name, "forest");
+    c.mode = Some(ThemeMode::Light);
+    let rows = c.settings();
+    let get = |key: &str| rows.iter().find(|(k, _)| *k == key).and_then(|(_, v)| v.clone());
+    let loaded = Choices {
+        mode: mode_from_setting(get("theme").as_deref()),
+        ..Choices::from_settings(get("colors_dark").as_deref(), get("colors_light").as_deref(), get("accent").as_deref())
+    };
+    assert_eq!(loaded, c);
+    c.mode = None;
+    assert_eq!(c.settings()[3], ("theme", None));
 }

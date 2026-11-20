@@ -19,6 +19,7 @@ use gpui_kit::{
     deferred, div, px,
 };
 
+use crate::appearance::{Appearance, AppearanceEvent};
 use crate::drafts::{self, Drafts};
 use crate::footer::{Footer, FooterEvent};
 use crate::palette::{Palette, PaletteEvent, Run};
@@ -29,7 +30,7 @@ use crate::store::Store;
 use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, NextTab, PrevTab]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, OpenAppearance, NextTab, PrevTab]);
 
 // A tab's view changed state the saved layout holds (e.g. a queue went flat).
 actions!(forkline, [SaveLayout]);
@@ -90,6 +91,10 @@ pub struct Workspace {
     sign_in: Option<Entity<SignIn>>,
     sign_in_return: Option<FocusHandle>,
     _sign_in_subscription: Option<Subscription>,
+    /// The "Appearance…" dialog, while open, and the focus it came from.
+    appearance: Option<Entity<Appearance>>,
+    appearance_return: Option<FocusHandle>,
+    _appearance_subscription: Option<Subscription>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -150,6 +155,9 @@ impl Workspace {
             sign_in: None,
             sign_in_return: None,
             _sign_in_subscription: None,
+            appearance: None,
+            appearance_return: None,
+            _appearance_subscription: None,
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -313,6 +321,44 @@ impl Workspace {
         cx.notify();
     }
 
+    fn on_open_appearance(&mut self, _: &OpenAppearance, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_appearance(window, cx);
+    }
+
+    /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
+    pub(crate) fn open_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.appearance.is_some() || self.sign_in.is_some() {
+            return;
+        }
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+        }
+        self.appearance_return = window.focused(cx);
+        let dialog = cx.new(|cx| Appearance::new(window, cx));
+        self._appearance_subscription =
+            Some(cx.subscribe_in(&dialog, window, |this, _, _: &AppearanceEvent, window, cx| {
+                this.appearance = None;
+                this._appearance_subscription = None;
+                match this.appearance_return.take() {
+                    Some(focus) => window.focus(&focus, cx),
+                    None => {
+                        if let Some((_, id)) = this.focused_group(window, cx) {
+                            this.focus_panel(id, window, cx);
+                        }
+                    }
+                }
+                cx.notify();
+            }));
+        self.appearance = Some(dialog);
+        cx.notify();
+    }
+
+    /// The open "Appearance…" dialog, if any.
+    #[cfg(test)]
+    pub(crate) fn appearance(&self) -> Option<&Entity<Appearance>> {
+        self.appearance.as_ref()
+    }
+
     fn close_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sign_in = None;
         self._sign_in_subscription = None;
@@ -382,11 +428,23 @@ impl Workspace {
 
     pub(crate) fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mode = if cx.theme().is_dark() { ThemeMode::Light } else { ThemeMode::Dark };
-        crate::theme::apply(Some(mode), Some(window), cx);
-        let value = if mode.is_dark() { "\"dark\"" } else { "\"light\"" };
+        self.set_mode(Some(mode), window, cx);
+    }
+
+    /// Show `mode` (`None`: follow the system) and save it as `theme`.
+    pub(crate) fn set_mode(&mut self, mode: Option<ThemeMode>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut choices = cx.try_global::<crate::theme::Choices>().copied().unwrap_or_default();
+        choices.mode = mode;
+        cx.set_global(choices);
+        crate::theme::apply(mode, Some(window), cx);
+        window.refresh();
+        let value = choices.settings().into_iter().find(|(key, _)| *key == "theme").and_then(|(_, v)| v);
         let db = Store::global(cx).read(cx).db().clone();
         cx.background_spawn(async move {
-            let _ = db.write(|c| layout::set_setting(c, "theme", value));
+            let _ = db.write(|c| match &value {
+                Some(v) => layout::set_setting(c, "theme", v),
+                None => layout::delete_setting(c, "theme"),
+            });
         })
         .detach();
     }
@@ -614,6 +672,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_remove_tab))
             .on_action(cx.listener(Self::on_open_palette))
             .on_action(cx.listener(Self::on_open_sign_in))
+            .on_action(cx.listener(Self::on_open_appearance))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
             .size_full()
@@ -670,6 +729,24 @@ impl Render for Workspace {
                 )
                 .with_priority(2)
             }))
+            .children(self.appearance.clone().map(|dialog| {
+                // Modal, but without a dimmed backdrop: the app behind it
+                // shows each change live.
+                deferred(
+                    div()
+                        .id("appearance-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .occlude()
+                        .flex()
+                        .justify_center()
+                        .pt(px(48.))
+                        .child(div().child(dialog)),
+                )
+                .with_priority(2)
+}))
     }
 }
 

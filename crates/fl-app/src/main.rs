@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appearance;
 mod assets;
 mod bench;
 mod drafts;
@@ -36,6 +37,8 @@ struct Args {
     bench_out: Option<PathBuf>,
     /// `--offline`: do not start sync (looking at fake data).
     offline: bool,
+    /// `--appearance`: open the "Appearance…" dialog at launch (screenshots).
+    appearance: bool,
 }
 
 impl Args {
@@ -45,6 +48,7 @@ impl Args {
             match arg.as_str() {
                 "--data-dir" => a.data_dir = Some(it.next().ok_or("--data-dir needs a path")?.into()),
                 "--offline" => a.offline = true,
+                "--appearance" => a.appearance = true,
                 "--bench" => a.bench_out = Some(it.next().ok_or("--bench needs an output path")?.into()),
                 other => return Err(format!("unknown argument: {other}")),
             }
@@ -76,6 +80,7 @@ fn main() {
     let bench_out = args.bench_out;
     let bench = bench_out.is_some();
     let offline = bench || args.offline;
+    let open_appearance = args.appearance && !bench;
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
 
     let app = gpui_kit::application().with_assets(assets::AppAssets);
@@ -88,6 +93,7 @@ fn main() {
         workspace::init(cx);
         views::init(cx);
         signin::init(cx);
+        appearance::init(cx);
         drafts::Drafts::init(cx);
         if let Some(out) = bench_out.clone() {
             bench::init(out, &[("main", main_ms), ("app_created", app_ms), ("run_callback", run_ms), ("kit_init", kit_ms)], cx);
@@ -104,16 +110,21 @@ fn main() {
             .db()
             .read(|c| Ok(["theme", "colors_dark", "colors_light", "accent"].map(|key| layout::setting(c, key).ok().flatten())))
             .unwrap_or_default();
-        cx.set_global(theme::Choices::from_settings(dark.as_deref(), light.as_deref(), accent.as_deref()));
+        let mode = theme::mode_from_setting(mode.as_deref());
+        cx.set_global(theme::Choices { mode, ..theme::Choices::from_settings(dark.as_deref(), light.as_deref(), accent.as_deref()) });
         let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
         cx.set_global(theme::RepoColors::new(picked));
-        theme::apply(theme::mode_from_setting(mode.as_deref()), None, cx);
+        theme::apply(mode, None, cx);
 
         let options = window_options(Bounds::centered(None, size(px(1400.), px(900.)), cx));
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Forkline");
             theme::sync_title_bar(window, cx.global::<theme::Palette>().dark);
-            cx.new(|cx| Workspace::new(!bench, window, cx))
+            let ws = cx.new(|cx| Workspace::new(!bench, window, cx));
+            if open_appearance {
+                ws.update(cx, |ws, cx| ws.open_appearance(window, cx));
+            }
+            ws
         })
         .expect("cannot open the main window");
         bench::mark("window_open", cx);

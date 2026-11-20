@@ -24,7 +24,7 @@ use crate::view_ref::ViewRef;
 use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
-use crate::workspace::{GoTo, NewTab, NextTab, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
+use crate::workspace::{GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleTheme};
 
 #[cfg(test)]
 mod tests;
@@ -164,6 +164,7 @@ impl Palette {
             action("Next tab", Some("Ctrl+Tab"), NextTab),
             action("Previous tab", Some("Ctrl+Shift+Tab"), PrevTab),
             action("Toggle theme", None, ToggleTheme),
+            action("Appearance…", None, OpenAppearance),
             action("Sign in to GitHub", None, OpenSignIn),
         ];
 
