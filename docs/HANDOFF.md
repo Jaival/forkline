@@ -1599,4 +1599,81 @@ Open items carried from G2:
 - Not checked by eye: opened menus (rail theme menu, pinned "Colour"
   submenu, repo header and repo filter menus); they need a click.
 
-Next: merge PR #9 after review, then settle the open decisions above.
+PR #9 merged 2026-11-20; the decisions above are settled in "G2 polish" below.
+
+## G2 polish (branch `gpui-g2-polish`, 2026-11-20)
+
+PR #9 (G2) is merged. The step 7 open decisions were settled with the user
+(grilling session): fix the startup gap or raise the budget, fix the
+Appearance dialog, follow a live OS mode switch, fix the repo dots, add a
+menu flag for screenshots; the kit-level visuals go to G3; accept the rest.
+
+Done:
+
+1. Startup. Profiling (throwaway builds, `FL_EXP` switch): with system fonts
+   and nothing registered `workspace_built` -> `window_open` is 9-12 ms;
+   registering Inter but not using it 11 ms; using Inter in the first frame
+   21-23 ms. So DirectWrite's first use of an in-memory font costs about
+   12 ms; registration about 3 ms. `fonts::prewarm` shapes a sample line in
+   each weight of the chosen fonts on a background thread while the window
+   opens (done after about 10 ms, well before the first frame). Result,
+   8 interleaved rounds: `workspace_built` -> `window_open` 14-19 ms (G2
+   23-27, `main` 9-16); `app_startup_ms` 53-68 (G2 63-81, `main` 47-62).
+   The rest is glyph rasterisation, which GPUI gives no public way to warm.
+   `app_startup_ms` budget 60 -> 70 (ADR 0001 notes why).
+2. Appearance dialog: never taller than the window, its body scrolls (test
+   at the 800 x 500 minimum); the hue slider's track shows every hue;
+   font chips are as wide as their names and wrap (both Atkinson names
+   whole); Monaspace Neon gets 2 px bottom padding.
+3. System mode follows a live Windows dark / light switch: GPUI reports
+   it to the window's appearance observers (WM_SETTINGCHANGE
+   "ImmersiveColorSet") and resets the title bar to the OS mode; the
+   workspace now re-applies the system mode, or in a fixed mode only sets
+   the title bar back. GPUI also calls the observer once after the window
+   opens, so it acts only when the appearance changed. Not checked live:
+   that needs a change of the Windows setting.
+4. Repo dots: a repo hue within 25 degrees of the accent also takes another
+   tone (lighter in dark themes, darker in light ones; less saturated next
+   to a vivid accent). Midnight's and Daylight's Blue repos no longer look
+   like the unread dot. Home and Search rows show the dot.
+5. `--open-menu <theme|pinned|pinned-colour|repo-colour|repo-filter|all>`
+   draws the dropdown menus side by side at launch, built by the same
+   functions as their buttons' dropdowns. No input sent.
+
+Screenshots (PrintWindow; scripts and images in `target/tmp/g7/`:
+`s4.sh`, `s5.sh`, `s2/`): the dialog's Colours and Fonts tabs; Inbox in
+all 8 themes with Blue repos (`s2/s4-all.png`); Home and Search in
+Midnight; all menus in all 8 themes (`s2/s5-all.png`). Checked by eye: no
+clipped text, the near-accent repo dot is distinct from the unread dot in
+each theme. Seen, not changed: the "Colour" submenu's repo names have no
+dot; Monaspace Neon sits alone on the last chip row and fills it.
+
+Bench (release, fake data, `target/tmp/g7/p1bench.sh`: 6 interleaved
+rounds of this branch, G2 (`f1c06da`) and `main` (`1d8c6e5`); the machine
+was quiet for this run):
+
+| | `main` | G2 | polish |
+|---|---|---|---|
+| `app_startup_ms` (70) | 33-45 | 46-53 | 39-49 (159 cold first run) |
+| `workspace_built` -> `window_open` | 7-8 | 17-19 | 10-15 |
+| `launch_ms` (600) | 382-428 | 396-437 | 391-420 (1278 cold) |
+| `switch_tab_ms` (8) | 4.0-4.2 | 4.0-4.1 | 4.0-4.2 |
+| `diff_scroll_fps` (120) | 201-240 | 231-240 | 229-239, 30 twice |
+
+Later the same day `diff_scroll_fps` fell to 30 (with `search_p95_ms` 65)
+in about half the runs of both this branch and G2 (`target/tmp/g7/exp/`):
+a machine state, not this change. In 10 interleaved runs then,
+`app_startup_ms` was 49-63 here and 60-66 on G2.
+
+Checks: clippy passes; `cargo test --workspace` 284 pass.
+
+Open items for G3 (agreed with the user):
+
+- Dock tabs square (needs a custom `DockAreaRenderer`); action buttons
+  24 px vs the board's 30 px; diff add / remove backgrounds from the kit.
+
+Accepted, no change planned: green / red accents look like the open /
+closed state colours; no italic font files; Commit Mono bold is synthetic;
+the narrow queue truncates logins sooner with wide code fonts.
+
+Next: review and merge the polish PR, then plan G3.
