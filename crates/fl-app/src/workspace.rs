@@ -126,6 +126,7 @@ impl Workspace {
             cx.subscribe_in(&footer, window, |this, _, ev: &FooterEvent, window, cx| match ev {
                 FooterEvent::SignIn => this.open_sign_in(window, cx),
             }),
+            cx.observe_window_appearance(window, |this, window, cx| this.on_system_appearance(window, cx)),
             cx.subscribe_in(&dock, window, |this, _, ev: &DockEvent, window, cx| {
                 if matches!(ev, DockEvent::LayoutChanged) {
                     this.schedule_save(window, cx);
@@ -327,6 +328,20 @@ impl Workspace {
     }
 
     /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
+    /// Windows switched between dark and light app mode. In System mode,
+    /// show the other mode's colours; GPUI also resets the title bar to the
+    /// OS mode, so set it back to the palette in every mode. While the
+    /// Appearance dialog is open it shows the mode being edited instead.
+    fn on_system_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let system = cx.try_global::<crate::theme::Choices>().is_none_or(|c| c.mode.is_none());
+        if system && self.appearance.is_none() {
+            crate::theme::apply(None, Some(window), cx);
+        } else {
+            crate::theme::sync_title_bar(window, cx.palette().dark);
+        }
+        window.refresh();
+    }
+
     pub(crate) fn open_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.appearance.is_some() || self.sign_in.is_some() {
             return;
@@ -763,6 +778,26 @@ mod tests {
 
     fn groups(ws: &Workspace, cx: &App) -> Vec<Vec<String>> {
         ws.tab_groups(cx)
+    }
+
+    /// The test window's OS appearance is always light.
+    #[gpui_kit::test]
+    fn an_os_mode_change_shows_the_os_mode_only_in_system_mode(cx: &mut TestAppContext) {
+        use crate::theme::Choices;
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        let os_changed = |cx: &mut TestAppContext, mode: Option<ThemeMode>| {
+            cx.update_window(handle, |_, window, cx| {
+                cx.set_global(Choices { mode, ..Choices::default() });
+                crate::theme::apply(Some(ThemeMode::Dark), Some(window), cx);
+                ws.update(cx, |ws, cx| ws.on_system_appearance(window, cx));
+            })
+            .unwrap();
+            cx.read(|cx| cx.palette().name)
+        };
+        assert_eq!(os_changed(cx, Some(ThemeMode::Dark)), "midnight");
+        assert_eq!(os_changed(cx, None), "daylight");
     }
 
     #[gpui_kit::test]
