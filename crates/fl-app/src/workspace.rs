@@ -1,4 +1,4 @@
-//! The main window: rail, dock (tabs + split panes), footer.
+//! The main window: sidebar or rail, dock (tabs + split panes), footer.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -25,14 +25,14 @@ use crate::drafts::{self, Drafts};
 use crate::footer::{Footer, FooterEvent};
 use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
-use crate::rail;
+use crate::{rail, sidebar};
 use crate::signin::{SignIn, SignInEvent};
 use crate::store::Store;
 use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 use crate::theme::TextScale as _;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, OpenAppearance, NextTab, PrevTab]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, OpenAppearance, NextTab, PrevTab, ToggleSidebar]);
 
 // A tab's view changed state the saved layout holds (e.g. a queue went flat).
 actions!(forkline, [SaveLayout]);
@@ -66,6 +66,8 @@ const LAYOUT_KEY: &str = "gpui_layout";
 /// Bump when the default layout changes in a way old saved layouts break.
 const LAYOUT_VERSION: usize = 2;
 const SAVE_DELAY: Duration = Duration::from_secs(2);
+/// Settings key of the sidebar state: `"closed"` shows the icon rail.
+const SIDEBAR_KEY: &str = "sidebar";
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -75,6 +77,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-k", OpenPalette, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PrevTab, None),
+        KeyBinding::new("ctrl-b", ToggleSidebar, None),
     ]);
 }
 
@@ -83,6 +86,8 @@ pub struct Workspace {
     footer: Entity<Footer>,
     pinned: Vec<RepoSummary>,
     inbox_unread: u32,
+    /// The labelled sidebar is shown; false: the icon rail (Ctrl+B).
+    sidebar_open: bool,
     /// False in a bench run: it neither loads nor overwrites the user's layout.
     save_layout: bool,
     /// The command palette, while open, and the focus it came from.
@@ -114,6 +119,8 @@ impl Workspace {
         let saved = save_layout
             .then(|| store.read(cx).db().read(|c| layout::setting(c, LAYOUT_KEY)).ok().flatten())
             .flatten();
+        let sidebar_open = !save_layout
+            || store.read(cx).db().read(|c| layout::setting(c, SIDEBAR_KEY)).ok().flatten().as_deref() != Some("\"closed\"");
         let restored = saved
             .and_then(|json| serde_json::from_str::<DockAreaState>(&json).ok())
             .filter(|state| state.version == Some(LAYOUT_VERSION))
@@ -163,6 +170,7 @@ impl Workspace {
             footer,
             pinned: Vec::new(),
             inbox_unread: 0,
+            sidebar_open,
             save_layout,
             palette: None,
             palette_return: None,
@@ -484,6 +492,36 @@ impl Workspace {
         .detach();
     }
 
+    fn on_toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_sidebar(window, cx);
+    }
+
+    /// Swap the labelled sidebar and the icon rail, and save the choice.
+    pub(crate) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_open = !self.sidebar_open;
+        cx.notify();
+        // A click on the sidebar's own button leaves focus nowhere; keys need it.
+        if let Some((_, id)) = self.focused_group(window, cx) {
+            self.focus_panel(id, window, cx);
+        }
+        if !self.save_layout {
+            return;
+        }
+        let open = self.sidebar_open;
+        let db = Store::global(cx).read(cx).db().clone();
+        cx.background_spawn(async move {
+            let _ = db.write(|c| {
+                if open { layout::delete_setting(c, SIDEBAR_KEY) } else { layout::set_setting(c, SIDEBAR_KEY, "\"closed\"") }
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sidebar_open(&self) -> bool {
+        self.sidebar_open
+    }
+
     pub(crate) fn toggle_account(&mut self, cx: &mut Context<Self>) {
         self.footer.update(cx, |footer, cx| footer.toggle_account(cx));
     }
@@ -693,7 +731,12 @@ impl Render for Workspace {
             .auth()
             .filter(|a| a.signed_in)
             .map(|a| a.login.clone().unwrap_or_else(|| "?".to_owned()));
-        let rail = rail::render(&cx.entity(), active.as_ref(), self.inbox_unread, &self.pinned, login.as_deref(), cx);
+        let (ws, pinned, login) = (cx.entity(), &self.pinned, login.as_deref());
+        let nav = if self.sidebar_open {
+            sidebar::render(&ws, active.as_ref(), self.inbox_unread, pinned, login, cx).into_any_element()
+        } else {
+            rail::render(&ws, active.as_ref(), self.inbox_unread, pinned, login, cx).into_any_element()
+        };
         v_flex()
             .id("workspace")
             .key_context("Workspace")
@@ -710,6 +753,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_appearance))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
+            .on_action(cx.listener(Self::on_toggle_sidebar))
             .size_full()
             .bg(cx.palette().bg)
             .text_color(cx.palette().text)
@@ -719,7 +763,7 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .items_start()
-                    .child(rail)
+                    .child(nav)
                     .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
             )
             .child(self.footer.clone())
@@ -1001,17 +1045,66 @@ mod tests {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            window.click("rail-pulls", cx);
+            window.click("nav-pulls", cx);
         })
         .unwrap();
         cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Pull requests"]]));
 
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            window.click("rail-inbox", cx);
+            window.click("nav-inbox", cx);
         })
         .unwrap();
         cx.read(|cx| assert_eq!(groups(ws.read(cx), cx), [["*Inbox", "Pull requests"]]));
+    }
+
+    /// The sidebar shows first; Ctrl+B swaps it for the rail, whose buttons
+    /// open the same views; the rail's expand button brings it back.
+    #[gpui_kit::test]
+    fn ctrl_b_collapses_the_sidebar_to_the_rail(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        cx.read(|cx| assert!(ws.read(cx).sidebar_open()));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("ctrl-b", cx);
+            window.render_frame(cx);
+            window.click("nav-pulls", cx);
+        })
+        .unwrap();
+        cx.read(|cx| {
+            assert!(!ws.read(cx).sidebar_open());
+            assert_eq!(groups(ws.read(cx), cx), [["Inbox", "*Pull requests"]]);
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-expand", cx);
+        })
+        .unwrap();
+        cx.read(|cx| assert!(ws.read(cx).sidebar_open()));
+    }
+
+    /// A collapsed sidebar is saved and opens collapsed next time.
+    #[gpui_kit::test]
+    fn the_collapsed_sidebar_is_remembered(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, _) = open(cx, dir.path());
+        cx.run_until_parked();
+        let open_saved = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let (_, ws) =
+                    gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| cx.new(|cx| Workspace::new(true, window, cx)))
+                        .unwrap();
+                ws
+            })
+        };
+        let ws = open_saved(cx);
+        cx.read(|cx| assert!(ws.read(cx).sidebar_open(), "open by default"));
+        cx.update_window(handle, |_, window, cx| ws.update(cx, |ws, cx| ws.toggle_sidebar(window, cx))).unwrap();
+        cx.run_until_parked();
+        let ws = open_saved(cx);
+        cx.read(|cx| assert!(!ws.read(cx).sidebar_open()));
     }
 
     #[gpui_kit::test]
@@ -1073,7 +1166,7 @@ mod tests {
         });
 
         // The right pane has focus: its first Pulls tab, not the left one.
-        cx.update_window(handle, |_, window, cx| window.click("rail-pulls", cx)).unwrap();
+        cx.update_window(handle, |_, window, cx| window.click("nav-pulls", cx)).unwrap();
         cx.read(|cx| {
             assert_eq!(
                 groups(ws.read(cx), cx),
@@ -1084,7 +1177,7 @@ mod tests {
         // No Issues tab open: it opens the unfiltered one.
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            window.click("rail-issues", cx);
+            window.click("nav-issues", cx);
         })
         .unwrap();
         cx.read(|cx| assert_eq!(groups(ws.read(cx), cx)[1], ["o/a: Pull requests", "o/b: Pull requests", "*Issues"]));

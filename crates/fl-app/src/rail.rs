@@ -1,5 +1,6 @@
-//! The icon rail on the left edge: navigation, pinned repositories, the theme
-//! menu and the account avatar.
+//! The icon rail: the collapsed sidebar (`sidebar.rs`, Ctrl+B). Navigation,
+//! pinned repositories, the expand button, the theme menu and the account
+//! avatar.
 
 use fl_types::RepoSummary;
 use gpui_kit::assets::IconName;
@@ -45,11 +46,11 @@ pub fn render(
         btn.on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(view_ref.clone(), window, cx)))
     };
 
-    let inbox = div().relative().child(nav("rail-inbox", ViewRef::Inbox)).when(inbox_unread > 0, |d| {
+    let inbox = div().relative().child(nav("nav-inbox", ViewRef::Inbox)).when(inbox_unread > 0, |d| {
         let count = if inbox_unread > 99 { "99+".to_owned() } else { inbox_unread.to_string() };
         d.child(
             div()
-                .id("rail-inbox-count")
+                .id("nav-inbox-count")
                 .absolute()
                 .top(px(1.))
                 .right(px(0.))
@@ -72,15 +73,20 @@ pub fn render(
     });
 
     let pinned_button =
-        button("rail-pinned", IconName::Pin, "Pinned repositories", false).dropdown_menu(pinned_menu(ws, pinned));
+        button("nav-pinned", IconName::Pin, "Pinned repositories", false).dropdown_menu(pinned_menu(ws, pinned));
+    let expand = {
+        let ws = ws.clone();
+        button("nav-expand", IconName::PanelLeftOpen, "Expand sidebar (Ctrl+B)", false)
+            .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.toggle_sidebar(window, cx)))
+    };
     let theme_icon = if p.dark { IconName::Moon } else { IconName::Sun };
-    let theme_button = button("rail-theme", theme_icon, "Theme", false).dropdown_menu(theme_menu(ws));
+    let theme_button = button("nav-theme", theme_icon, "Theme", false).dropdown_menu(theme_menu(ws));
 
     let avatar = login.map(|login| {
         let (bg, fg) = p.avatar(login);
         let ws = ws.clone();
         div()
-            .id("rail-account")
+            .id("nav-account")
             .mt(px(4.))
             .size(px(28.))
             .flex_none()
@@ -112,16 +118,17 @@ pub fn render(
         .pb(px(10.))
         .bg(p.surface)
         .child(inbox)
-        .child(nav("rail-pulls", ViewRef::Pulls { repo_id: None }))
-        .child(nav("rail-issues", ViewRef::Issues { repo_id: None }))
-        .child(nav("rail-reviews", ViewRef::Reviews))
+        .child(nav("nav-pulls", ViewRef::Pulls { repo_id: None }))
+        .child(nav("nav-issues", ViewRef::Issues { repo_id: None }))
+        .child(nav("nav-reviews", ViewRef::Reviews))
         .child(div().w(px(20.)).h(px(1.)).my(px(4.)).bg(p.border))
-        .child(nav("rail-repos", ViewRef::Repos))
-        .child(nav("rail-starred", ViewRef::Starred))
-        .child(nav("rail-explore", ViewRef::Explore))
-        .child(nav("rail-search", ViewRef::Search { q: String::new() }))
+        .child(nav("nav-repos", ViewRef::Repos))
+        .child(nav("nav-starred", ViewRef::Starred))
+        .child(nav("nav-explore", ViewRef::Explore))
+        .child(nav("nav-search", ViewRef::Search { q: String::new() }))
         .child(pinned_button)
         .child(div().flex_1())
+        .child(expand)
         .child(theme_button)
         .children(avatar)
 }

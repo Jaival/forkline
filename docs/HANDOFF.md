@@ -1746,4 +1746,29 @@ Ctrl B collapse to the rail, C Tabs: top nav, one-line rows, reader
 replaces the list) and `docs/design/mockups/icon-options.html` (Lucide =
 today, Octicons, Phosphor, Tabler, Fluent; the same 14 icons). Generated
 by a local script (`target/tmp/icons/`, not committed); the HTML is self-contained.
-Waiting for the user's pick.
+The user picked B (Sidebar) and Tabler; Tabs is not built. See below.
+
+## Sidebar and Tabler icons (branch `gpui-sidebar-tabler`, on PR #11, 2026-11-21)
+
+- **Sidebar** (`sidebar.rs`, 228 px, the default): a "Commands" box (opens
+  Ctrl+K), Inbox / Pull requests / Issues / Reviews with the inbox count,
+  "Browse" (Repositories, Starred, Explore, Search), "Pinned" (colour dot,
+  repo name, open PRs · issues; full name on hover; the palette button opens
+  the colour menu), then account, theme menu and collapse. Ctrl+B (also in
+  the palette, "Toggle sidebar") swaps it for the icon rail, which gained an
+  expand button. Saved as setting `sidebar` = `"closed"` (missing = open);
+  bench and tests start open.
+- Navigation element ids are `nav-*` in both the sidebar and the rail (were
+  `rail-*`), so tests click the same ids in either state.
+- **Tabler icons** (MIT, v3.52.0): `crates/fl-app/assets/icons/*.svg`, saved
+  under the Lucide file names, served by `assets.rs` before the kit's Lucide
+  set. Every `IconName` keeps working; paths Tabler does not cover fall back
+  to Lucide. `assets/icons/fetch.sh` holds the Lucide -> Tabler map and
+  re-downloads them; test `every_extra_icon_is_drawn_from_tabler`.
+- Not done: counts for Pull requests / Issues / Reviews (needs count
+  queries); the Tabs preset.
+- Bench vs the rail build (clean rounds): `launch_ms` 254-269 / 245-274,
+  `diff_scroll_fps` and `search_p95_ms` the same; some rounds of both
+  builds hit the known 30 fps / 65 ms machine state.
+- One launch in about 15 (`check.ps1`) ended minimized right after a release
+  build; it did not repeat in the next 8. Cause unknown; watch for it.

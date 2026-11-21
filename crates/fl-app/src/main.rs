@@ -13,6 +13,7 @@ mod palette;
 mod panel;
 mod rail;
 mod repo_color;
+mod sidebar;
 mod signin;
 mod smooth_scroll;
 mod store;
