@@ -872,7 +872,6 @@ fn toggle_term(filter: &str, term: &str) -> String {
     }
 }
 
-
 /// The queue's repo filter: "All repos", then each pinned repo with its dot.
 /// Also built by `--open-menu` (see `menu_preview.rs`).
 pub fn repo_filter_menu(

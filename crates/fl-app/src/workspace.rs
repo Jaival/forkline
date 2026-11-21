@@ -341,7 +341,6 @@ impl Workspace {
         self.open_appearance(window, cx);
     }
 
-    /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
     /// Windows switched between dark and light app mode. In System mode,
     /// show the other mode's colours; GPUI also resets the title bar to the
     /// OS mode, so set it back to the palette in every mode. While the
@@ -362,6 +361,7 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
     pub(crate) fn open_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.appearance.is_some() || self.sign_in.is_some() {
             return;
@@ -830,6 +830,10 @@ mod tests {
         };
         assert_eq!(os_changed(cx, Some(ThemeMode::Dark)), "midnight");
         assert_eq!(os_changed(cx, None), "daylight");
+        // With the Appearance dialog open, the edited mode stays.
+        cx.update_window(handle, |_, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))).unwrap();
+        cx.run_until_parked();
+        assert_eq!(os_changed(cx, None), "midnight");
     }
 
     #[gpui_kit::test]
