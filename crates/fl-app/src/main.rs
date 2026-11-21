@@ -73,12 +73,24 @@ impl Args {
 /// The main window keeps the native title bar. A client-drawn frame (the
 /// kit's `TitleBar::window_options`, a transparent title bar) slowed every
 /// present on Windows: `diff_scroll_fps` 240 -> 103, `switch_tab_ms` 4 -> 10.
+///
+/// On Windows the window opens hidden; `main` shows it cloaked and uncloaks
+/// it after its first frame (GPUI draws no frames for a hidden window), so
+/// no blank window shows during startup.
 fn window_options(bounds: Bounds<gpui_kit::Pixels>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
+        show: !cfg!(windows),
         ..WindowOptions::default()
     }
+}
+
+/// The single-instance key of a data directory: its full path, lower case
+/// (Windows paths ignore case).
+fn instance_key(data_dir: &std::path::Path) -> String {
+    let full = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    full.to_string_lossy().to_lowercase()
 }
 
 fn main() {
@@ -97,6 +109,17 @@ fn main() {
     let appearance_fonts = args.appearance_fonts;
     let open_menu = args.open_menu.filter(|_| !bench);
     let data_dir = args.data_dir.unwrap_or_else(fl_db::default_data_dir);
+    // One app per data directory (see `fl_win::single_instance`). Bench runs
+    // skip it: a run must not exit because the last one is still closing.
+    let instance = if bench { None } else { Some(fl_win::single_instance(&instance_key(&data_dir))) };
+    let listener = match instance {
+        Some(fl_win::Instance::Other) => {
+            eprintln!("forkline: already running on this data directory; showed its window");
+            return;
+        }
+        Some(fl_win::Instance::First(listener)) => Some(listener),
+        None => None,
+    };
 
     let app = gpui_kit::application().with_assets(assets::AppAssets);
     let app_ms = bench::epoch_ms();
@@ -140,7 +163,18 @@ fn main() {
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Forkline");
             theme::sync_title_bar(window, cx.global::<theme::Palette>().dark);
-            let ws = cx.new(|cx| Workspace::new(!bench, window, cx));
+            let hwnd = theme::hwnd(window);
+            if let Some(hwnd) = hwnd {
+                fl_win::set_cloaked(hwnd, true);
+                fl_win::show_inactive(hwnd);
+            }
+            window.on_next_frame(move |window, _| {
+                if let Some(hwnd) = hwnd {
+                    fl_win::set_cloaked(hwnd, false);
+                }
+                window.activate_window();
+            });
+            let ws =cx.new(|cx| Workspace::new(!bench, window, cx));
             if open_appearance {
                 ws.update(cx, |ws, cx| {
                     ws.open_appearance(window, cx);
@@ -157,6 +191,24 @@ fn main() {
         })
         .expect("cannot open the main window");
         bench::mark("window_open", cx);
+        if let Some(listener) = listener {
+            // A later launch on this data directory: bring this window up.
+            let (tx, rx) = async_channel::unbounded::<()>();
+            listener.listen(move || {
+                let _ = tx.send_blocking(());
+            });
+            cx.spawn(async move |cx| {
+                while rx.recv().await.is_ok() {
+                    let _ = handle.update(cx, |_, window, _| {
+                        if let Some(hwnd) = theme::hwnd(window) {
+                            fl_win::restore_if_minimized(hwnd);
+                        }
+                        window.activate_window();
+                    });
+                }
+            })
+            .detach();
+        }
         if bench {
             let _ = handle.update(cx, |_, window, cx| {
                 window.spawn(cx, async move |cx| bench::run(ws, cx.clone()).await).detach();

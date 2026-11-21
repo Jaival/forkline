@@ -8,7 +8,16 @@ publish.workspace = true
 # the GPUI stack does not expose. Everything else keeps `unsafe_code = "forbid"`.
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
