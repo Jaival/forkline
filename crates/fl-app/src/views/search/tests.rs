@@ -134,7 +134,7 @@ fn the_rail_selects_the_open_search_tab_with_its_query_selected(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         ws.update(cx, |ws, cx| ws.open(ViewRef::Inbox, window, cx));
         window.render_frame(cx);
-        window.click("rail-search", cx);
+        window.click("nav-search", cx);
         window.render_frame(cx);
     })
     .unwrap();

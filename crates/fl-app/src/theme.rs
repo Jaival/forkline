@@ -75,6 +75,7 @@ impl<T: Styled> TextScale for T {}
 // Layout.
 pub const RAIL_WIDTH: f32 = 52.;
 pub const RAIL_BUTTON: f32 = 34.;
+pub const SIDEBAR_WIDTH: f32 = 228.;
 pub const PANE_HEADER: f32 = 48.;
 pub const GROUP_HEADER: f32 = 30.;
 pub const ROW_HEIGHT: f32 = 54.;

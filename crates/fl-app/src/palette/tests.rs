@@ -123,7 +123,7 @@ fn backdrop_click_closes(cx: &mut TestAppContext) {
     let before = focus_id(cx, handle);
     press(cx, handle, "ctrl-k");
     cx.update_window(handle, |_, window, cx| {
-        window.click_at("rail-inbox", point(px(2.), px(2.)), cx);
+        window.click_at("nav-inbox", point(px(2.), px(2.)), cx);
     })
     .unwrap();
     cx.run_until_parked();

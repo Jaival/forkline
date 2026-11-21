@@ -58,7 +58,7 @@ fn the_rail_menu_sets_the_mode_and_opens_appearance(cx: &mut TestAppContext) {
     let (handle, ws, _dir) = start(cx);
     // Menu: System 0, Light 1, Dark 2, separator 3, Appearance… 4.
     let pick = |cx: &mut TestAppContext, ix: usize| {
-        click(cx, handle, "rail-theme");
+        click(cx, handle, "nav-theme");
         cx.update_window(handle, |_, window, cx| {
             window.within("popup-menu").click(ix, cx);
             window.render_frame(cx);
