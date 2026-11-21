@@ -1720,15 +1720,30 @@ Not taken:
   data (`PresetSpec`) over one nav model. Product decision; not started.
 - Tray and hide-on-close: suits a mail client; not decided for forkline.
 
-Open decisions:
+Then, with the user's OK (2026-11-21):
 
-- tidemail's `vendor/gpui-pre-windows` patch creates the DirectX devices on
-  a thread while DirectWrite starts (about 15 lines; same `gpui-pre`
-  0.3.11 pin as forkline). tidemail measured 450-630 -> 256-297 ms to the
-  first frame. Forkline spends about 180 ms from `main` to
-  `app_created`, which is where this cost is. It needs a vendored GPUI crate with
-  `unsafe` outside `fl-win` and a `[patch.crates-io]` entry: a stack change,
-  so ask first.
-- `Appearance::cancel` restores the light / dark state from when the
-  dialog opened. In System mode, an OS switch while the dialog is open,
-  then Esc, shows the old mode until the next switch. Fix: about 4 lines.
+3. Parallel DirectX start (stack change). `vendor/gpui-pre-windows` is the
+   pristine `gpui-pre-windows` 0.3.11 plus tidemail's
+   `vendor/gpui-pre-windows-parallel-dx.patch`: `WindowsPlatform::new`
+   starts `DirectXDevices::new()` on a thread, `attach_gpu` joins it. Wired
+   with `[patch.crates-io]`; the workspace `exclude`s it, so its `unsafe`
+   and lints are not ours. tidemail's other patch (DirectComposition not
+   topmost, for its WebView2) is not taken. **On every `gpui-pre` bump,
+   re-vendor the new version and re-apply the patch** (or drop it if
+   upstream starts the devices in parallel).
+   Bench (5 interleaved rounds, before / after): `launch_ms` 416-454 /
+   261-274; `app_startup_ms`, `diff_scroll_fps`, `search_p95_ms` unchanged.
+4. `Appearance::cancel` now applies the saved mode (`original.mode`), so
+   in System mode Esc shows the OS mode of now, not of when the dialog
+   opened. Test `appearance_cancel_in_system_mode_shows_the_current_os_mode`.
+   `esc_restores_the_choices_from_when_it_opened` now starts in a saved
+   Dark mode (it started in System mode forced dark, a state the app
+   cannot reach).
+
+Next (asked 2026-11-21): layout presets and an icon set, mockups first.
+`docs/design/mockups/layout-presets.html` (A Rail = today, B Sidebar with
+Ctrl B collapse to the rail, C Tabs: top nav, one-line rows, reader
+replaces the list) and `docs/design/mockups/icon-options.html` (Lucide =
+today, Octicons, Phosphor, Tabler, Fluent; the same 14 icons). Generated
+by a local script (`target/tmp/icons/`, not committed); the HTML is self-contained.
+Waiting for the user's pick.
