@@ -85,11 +85,13 @@ impl HomeView {
                             .child(r.title.clone()),
                     )
                     .child(
-                        div()
-                            .truncate()
+                        h_flex()
+                            .gap(px(6.))
+                            .items_center()
                             .text_small()
                             .text_color(theme.text_muted)
-                            .child(format!("{} #{} \u{b7} {}{comments}", r.repo, r.number, r.author)),
+                            .child(crate::repo_color::dot(&r.repo, cx))
+                            .child(div().min_w_0().truncate().child(format!("{} #{} \u{b7} {}{comments}", r.repo, r.number, r.author))),
                     ),
             )
             .child(

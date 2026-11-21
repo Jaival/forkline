@@ -13,14 +13,14 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::VirtualListScrollHandle;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollStrategy, SharedString,
-    Size, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions,
+    Size, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window, actions,
     div, px, size,
 };
 use rusqlite::Connection;
@@ -633,25 +633,7 @@ impl Queue {
                 h_flex().gap(px(6.)).items_center().child(crate::repo_color::dot(&label, cx)).child(label),
             ),
         };
-        button.dropdown_menu(move |mut menu, _, _| {
-            let all = queue.clone();
-            menu = menu.item(PopupMenuItem::new("All repos").on_click(move |_, window, cx| {
-                let _ = all.update(cx, |q, cx| q.pick_repo(None, window, cx));
-            }));
-            for (name, id) in repos.iter() {
-                let queue = queue.clone();
-                let (name, repo_id) = (name.clone(), Some(*id));
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, cx| {
-                        h_flex().gap(px(8.)).items_center().child(crate::repo_color::dot(&name, cx)).child(name.clone())
-                    })
-                    .on_click(move |_, window, cx| {
-                        let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
-                    }),
-                );
-            }
-            menu
-        })
+        button.dropdown_menu(repo_filter_menu(repos, queue))
     }
 
     /// The `/` row under the header, and the result line when a filter is set.
@@ -887,6 +869,33 @@ fn toggle_term(filter: &str, term: &str) -> String {
         term.to_owned()
     } else {
         format!("{} {term}", filter.trim_end())
+    }
+}
+
+/// The queue's repo filter: "All repos", then each pinned repo with its dot.
+/// Also built by `--open-menu` (see `menu_preview.rs`).
+pub fn repo_filter_menu(
+    repos: Rc<Vec<(String, i64)>>,
+    queue: WeakEntity<Queue>,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |mut menu, _, _| {
+        let all = queue.clone();
+        menu = menu.item(PopupMenuItem::new("All repos").on_click(move |_, window, cx| {
+            let _ = all.update(cx, |q, cx| q.pick_repo(None, window, cx));
+        }));
+        for (name, id) in repos.iter() {
+            let queue = queue.clone();
+            let (name, repo_id) = (name.clone(), Some(*id));
+            menu = menu.item(
+                PopupMenuItem::element(move |_, cx| {
+                    h_flex().gap(px(8.)).items_center().child(crate::repo_color::dot(&name, cx)).child(name.clone())
+                })
+                .on_click(move |_, window, cx| {
+                    let _ = queue.update(cx, |q, cx| q.pick_repo(repo_id, window, cx));
+                }),
+            );
+        }
+        menu
     }
 }
 

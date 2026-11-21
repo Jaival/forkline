@@ -162,7 +162,9 @@ impl SearchView {
                     .child(
                         h_flex()
                             .gap(px(6.))
+                            .items_center()
                             .text_body()
+                            .child(crate::repo_color::dot(&r.repo, cx))
                             .child(div().flex_none().text_color(theme.text_muted).child(format!("{} #{}", r.repo, r.number)))
                             .child(div().truncate().child(r.title.clone())),
                     )

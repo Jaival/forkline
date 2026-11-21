@@ -181,6 +181,35 @@ pub fn register_chosen(cx: &mut App) -> Fonts {
     fonts
 }
 
+/// Shape a sample line in each weight of the chosen fonts on a background
+/// thread. DirectWrite reads an in-memory font's tables on first use, which
+/// put about 12 ms into the first frame; this overlaps it with opening the
+/// window. The first frame still shapes on demand if this is not done yet.
+pub fn prewarm(fonts: &Fonts, cx: &App) {
+    use gpui_kit::{FontWeight, TextRun, WindowTextSystem, font, hsla, px};
+    let text_system = cx.text_system().clone();
+    let (ui, mono) = (fonts.ui.family, fonts.code().family);
+    cx.background_executor()
+        .spawn(async move {
+            let shaper = WindowTextSystem::new(text_system);
+            let weights = [FontWeight::NORMAL, FontWeight::MEDIUM, FontWeight::SEMIBOLD, FontWeight::BOLD];
+            let fonts = weights.map(|w| (ui, w)).into_iter().chain([(mono, FontWeight::NORMAL), (mono, FontWeight::BOLD)]);
+            let sample = "The quick brown fox jumps over the lazy dog 0123456789 #@{}";
+            for (family, weight) in fonts {
+                let run = TextRun {
+                    len: sample.len(),
+                    font: gpui_kit::Font { weight, ..font(family) },
+                    color: hsla(0., 0., 0., 1.),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                shaper.layout_line(sample, px(13.), &[run], None);
+            }
+        })
+        .detach();
+}
+
 /// Make `fonts` the kit theme's interface and code fonts.
 pub fn write_kit(fonts: &Fonts, t: &mut Theme) {
     t.font_family = fonts.ui.family.into();

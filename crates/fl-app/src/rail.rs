@@ -4,12 +4,12 @@
 use fl_types::RepoSummary;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Sizable as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    App, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 use crate::theme::{ActivePalette as _, Choices, Palette, RAIL_BUTTON, RAIL_WIDTH};
@@ -71,69 +71,10 @@ pub fn render(
         )
     });
 
-    // (owner/name, counts, id)
-    let entries: Vec<(String, String, i64)> = pinned
-        .iter()
-        .map(|r| (format!("{}/{}", r.owner, r.name), format!("{} · {}", r.open_prs, r.open_issues), r.id))
-        .collect();
-    let ws_for_menu = ws.clone();
-    let pinned_button = button("rail-pinned", IconName::Pin, "Pinned repositories", false).dropdown_menu(
-        move |mut menu, window, cx| {
-            if entries.is_empty() {
-                return menu.item(PopupMenuItem::new("No pinned repositories").disabled(true));
-            }
-            for (name, counts, repo_id) in &entries {
-                let ws = ws_for_menu.clone();
-                let repo_id = *repo_id;
-                let (name, counts) = (name.clone(), counts.clone());
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, cx| {
-                        h_flex()
-                            .gap(px(8.))
-                            .items_center()
-                            .child(crate::repo_color::dot(&name, cx))
-                            .child(name.clone())
-                            .child(div().text_color(cx.palette().text_muted).child(counts.clone()))
-                    })
-                    .on_click(move |_, window, cx| {
-                        ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx));
-                    }),
-                );
-            }
-            let entries = entries.clone();
-            menu.separator().submenu("Colour", window, cx, move |mut menu, window, cx| {
-                for (name, _, repo_id) in &entries {
-                    let (name, repo_id) = (name.clone(), *repo_id);
-                    menu = menu.submenu(name.clone(), window, cx, move |menu, _, cx| {
-                        crate::repo_color::menu_items(menu, repo_id, &name, cx)
-                    });
-                }
-                menu
-            })
-        },
-    );
-
-    // System / Light / Dark, then "Appearance…" (the saved mode checked).
-    let ws_theme = ws.clone();
+    let pinned_button =
+        button("rail-pinned", IconName::Pin, "Pinned repositories", false).dropdown_menu(pinned_menu(ws, pinned));
     let theme_icon = if p.dark { IconName::Moon } else { IconName::Sun };
-    let theme_button = button("rail-theme", theme_icon, "Theme", false).dropdown_menu(move |menu, _, cx| {
-        let mode = cx.try_global::<Choices>().and_then(|c| c.mode);
-        let item = |label: &'static str, pick: Option<ThemeMode>| {
-            let ws = ws_theme.clone();
-            PopupMenuItem::new(label)
-                .checked(mode == pick)
-                .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.set_mode(pick, window, cx)))
-        };
-        let ws = ws_theme.clone();
-        menu.item(item("System", None))
-            .item(item("Light", Some(ThemeMode::Light)))
-            .item(item("Dark", Some(ThemeMode::Dark)))
-            .separator()
-            .item(
-                PopupMenuItem::new("Appearance…")
-                    .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))),
-            )
-    });
+    let theme_button = button("rail-theme", theme_icon, "Theme", false).dropdown_menu(theme_menu(ws));
 
     let avatar = login.map(|login| {
         let (bg, fg) = p.avatar(login);
@@ -210,6 +151,83 @@ pub fn initials(login: &str) -> String {
         out = login.chars().take(1).collect();
     }
     out.to_uppercase()
+}
+
+/// The pinned-repositories menu: each pinned repo, then the "Colour"
+/// submenu. Also built by `--open-menu` (see `menu_preview.rs`).
+pub fn pinned_menu(
+    ws: &Entity<Workspace>,
+    pinned: &[RepoSummary],
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    // (owner/name, counts, id)
+    let entries: Vec<(String, String, i64)> = pinned
+        .iter()
+        .map(|r| (format!("{}/{}", r.owner, r.name), format!("{} · {}", r.open_prs, r.open_issues), r.id))
+        .collect();
+    let ws_for_menu = ws.clone();
+    move |mut menu, window, cx| {
+        if entries.is_empty() {
+            return menu.item(PopupMenuItem::new("No pinned repositories").disabled(true));
+        }
+        for (name, counts, repo_id) in &entries {
+            let ws = ws_for_menu.clone();
+            let repo_id = *repo_id;
+            let (name, counts) = (name.clone(), counts.clone());
+            menu = menu.item(
+                PopupMenuItem::element(move |_, cx| {
+                    h_flex()
+                        .gap(px(8.))
+                        .items_center()
+                        .child(crate::repo_color::dot(&name, cx))
+                        .child(name.clone())
+                        .child(div().text_color(cx.palette().text_muted).child(counts.clone()))
+                })
+                .on_click(move |_, window, cx| {
+                    ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx));
+                }),
+            );
+        }
+        let repos = entries.iter().map(|(name, _, id)| (name.clone(), *id)).collect();
+        menu.separator().submenu("Colour", window, cx, colour_menu(repos))
+    }
+}
+
+/// The pinned menu's "Colour" submenu: one submenu of colours per repo
+/// (`owner/name`, id).
+pub fn colour_menu(repos: Vec<(String, i64)>) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |mut menu, window, cx| {
+        for (name, repo_id) in &repos {
+            let (name, repo_id) = (name.clone(), *repo_id);
+            menu = menu.submenu(name.clone(), window, cx, move |menu, _, cx| {
+                crate::repo_color::menu_items(menu, repo_id, &name, cx)
+            });
+        }
+        menu
+    }
+}
+
+/// The theme menu: System / Light / Dark (the saved mode checked), then
+/// "Appearance…".
+pub fn theme_menu(ws: &Entity<Workspace>) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    let ws_theme = ws.clone();
+    move |menu, _, cx| {
+        let mode = cx.try_global::<Choices>().and_then(|c| c.mode);
+        let item = |label: &'static str, pick: Option<ThemeMode>| {
+            let ws = ws_theme.clone();
+            PopupMenuItem::new(label)
+                .checked(mode == pick)
+                .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.set_mode(pick, window, cx)))
+        };
+        let ws = ws_theme.clone();
+        menu.item(item("System", None))
+            .item(item("Light", Some(ThemeMode::Light)))
+            .item(item("Dark", Some(ThemeMode::Dark)))
+            .separator()
+            .item(
+                PopupMenuItem::new("Appearance…")
+                    .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))),
+            )
+    }
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use gpui_kit::component::dock::{
     ClosePanel, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
     InsertTarget, NodeId, PaneRef, PanelId, panel_handle,
 };
+use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
@@ -96,6 +97,8 @@ pub struct Workspace {
     appearance: Option<Entity<Appearance>>,
     appearance_return: Option<FocusHandle>,
     _appearance_subscription: Option<Subscription>,
+    /// `--open-menu`: menus shown at launch for screenshots.
+    menu_preview: Vec<Entity<PopupMenu>>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -125,6 +128,17 @@ impl Workspace {
         let subscriptions = vec![
             cx.subscribe_in(&footer, window, |this, _, ev: &FooterEvent, window, cx| match ev {
                 FooterEvent::SignIn => this.open_sign_in(window, cx),
+            }),
+            // GPUI also calls this once after the window opens; act only on
+            // a real change.
+            cx.observe_window_appearance(window, {
+                let mut seen = window.appearance();
+                move |this, window, cx| {
+                    if window.appearance() != seen {
+                        seen = window.appearance();
+                        this.on_system_appearance(window, cx);
+                    }
+                }
             }),
             cx.subscribe_in(&dock, window, |this, _, ev: &DockEvent, window, cx| {
                 if matches!(ev, DockEvent::LayoutChanged) {
@@ -159,6 +173,7 @@ impl Workspace {
             appearance: None,
             appearance_return: None,
             _appearance_subscription: None,
+            menu_preview: Vec::new(),
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -324,6 +339,26 @@ impl Workspace {
 
     fn on_open_appearance(&mut self, _: &OpenAppearance, window: &mut Window, cx: &mut Context<Self>) {
         self.open_appearance(window, cx);
+    }
+
+    /// Windows switched between dark and light app mode. In System mode,
+    /// show the other mode's colours; GPUI also resets the title bar to the
+    /// OS mode, so set it back to the palette in every mode. While the
+    /// Appearance dialog is open it shows the mode being edited instead.
+    fn on_system_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let system = cx.try_global::<crate::theme::Choices>().is_none_or(|c| c.mode.is_none());
+        if system && self.appearance.is_none() {
+            crate::theme::apply(None, Some(window), cx);
+        } else {
+            crate::theme::sync_title_bar(window, cx.palette().dark);
+        }
+        window.refresh();
+    }
+
+    /// Show `menus` near the top left (`--open-menu`, see `menu_preview.rs`).
+    pub(crate) fn preview_menus(&mut self, menus: Vec<Entity<PopupMenu>>, cx: &mut Context<Self>) {
+        self.menu_preview = menus;
+        cx.notify();
     }
 
     /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
@@ -743,10 +778,24 @@ impl Render for Workspace {
                         .flex()
                         .justify_center()
                         .pt(px(48.))
-                        .child(div().child(dialog)),
+                        .pb(px(24.))
+                        .items_start()
+                        .child(div().flex().max_h_full().child(dialog)),
                 )
                 .with_priority(2)
-}))
+            }))
+            .children((!self.menu_preview.is_empty()).then(|| {
+                deferred(
+                    h_flex()
+                        .absolute()
+                        .top(px(48.))
+                        .left(px(64.))
+                        .gap(px(12.))
+                        .items_start()
+                        .children(self.menu_preview.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 
@@ -761,6 +810,30 @@ mod tests {
 
     fn groups(ws: &Workspace, cx: &App) -> Vec<Vec<String>> {
         ws.tab_groups(cx)
+    }
+
+    /// The test window's OS appearance is always light.
+    #[gpui_kit::test]
+    fn an_os_mode_change_shows_the_os_mode_only_in_system_mode(cx: &mut TestAppContext) {
+        use crate::theme::Choices;
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        let os_changed = |cx: &mut TestAppContext, mode: Option<ThemeMode>| {
+            cx.update_window(handle, |_, window, cx| {
+                cx.set_global(Choices { mode, ..Choices::default() });
+                crate::theme::apply(Some(ThemeMode::Dark), Some(window), cx);
+                ws.update(cx, |ws, cx| ws.on_system_appearance(window, cx));
+            })
+            .unwrap();
+            cx.read(|cx| cx.palette().name)
+        };
+        assert_eq!(os_changed(cx, Some(ThemeMode::Dark)), "midnight");
+        assert_eq!(os_changed(cx, None), "daylight");
+        // With the Appearance dialog open, the edited mode stays.
+        cx.update_window(handle, |_, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))).unwrap();
+        cx.run_until_parked();
+        assert_eq!(os_changed(cx, None), "midnight");
     }
 
     #[gpui_kit::test]

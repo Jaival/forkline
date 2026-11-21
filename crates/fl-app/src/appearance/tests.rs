@@ -248,3 +248,33 @@ fn done_saves_the_fonts(cx: &mut TestAppContext) {
     );
     assert_eq!(loaded, fonts(cx));
 }
+
+#[gpui_kit::test]
+fn the_dialog_fits_a_short_window_and_its_body_scrolls(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    // The window's minimum size.
+    cx.simulate_window_resize(handle, gpui_kit::size(gpui_kit::px(800.), gpui_kit::px(500.)));
+    open_dialog(cx, handle, &ws);
+    for tab in ["appearance-tab-colours", "appearance-tab-fonts"] {
+        click(cx, handle, tab);
+        let (done, body) = cx
+            .update_window(handle, |_, window, _| {
+                (window.find("appearance-done").bounds(), window.find("appearance-body").bounds())
+            })
+            .unwrap();
+        assert!(done.bottom() <= gpui_kit::px(500.), "{tab}: Done is below the window: {done:?}");
+        assert!(body.bottom() <= done.top(), "{tab}: the body overlaps the footer");
+    }
+    // The last control of the Colours tab scrolls into reach.
+    click(cx, handle, "appearance-tab-colours");
+    let tint = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| window.find("appearance-tint").bounds().top()).unwrap()
+    };
+    let before = tint(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.scroll("appearance-body", gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-400.))), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert!(tint(cx) < before, "the body did not scroll");
+}
