@@ -1677,3 +1677,58 @@ closed state colours; no italic font files; Commit Mono bold is synthetic;
 the narrow queue truncates logins sooner with wide code fonts.
 
 Next: review and merge the polish PR, then plan G3.
+
+PR #10 merged 2026-11-21.
+
+## Ideas from tidemail (branch `gpui-tidemail-ideas`, 2026-11-21)
+
+Read tidemail (`D:/t3/worktrees/tidemail/phase2-*`, the newest branch) for
+its title bar, OS theme following and sidebar. Taken:
+
+1. First-frame reveal. The main window opens with `show: false`; `main`
+   cloaks it (`fl_win::set_cloaked`, `DWMWA_CLOAK`), calls
+   `activate_window` (GPUI applies the stored placement, shows the window
+   and restores it if the launch asked for minimized), and uncloaks it in
+   `on_next_frame`. A 2 s timer uncloaks it if no frame comes. A first
+   version showed the window itself (`SW_SHOWNA`) and activated only after
+   the first frame: once in about ten bench runs the window was minimized,
+   no frame came and the bench hung. Checked with PrintWindow
+   (`target/tmp/tide/check.ps1`): normal and minimized launches end
+   visible, not cloaked, not minimized.
+2. One app per data directory (`fl_win::single_instance`, key = full data
+   dir path, lower case). Two processes on one database would run two
+   sync engines and two action workers, so a queued action could be sent
+   twice. The first process holds a named mutex and listens on a named
+   pipe; a later launch writes "show", the first calls `activate_window`,
+   the later one exits (about 55 ms). Bench runs skip the check.
+
+Bench (`target/tmp/tide/ab.sh`, 5 interleaved rounds, `main` / branch):
+`app_startup_ms` 47-64 / 31-36, `launch_ms` 429-480 / 417-479,
+`diff_scroll_fps` 209-239 / 240, `search_p95_ms` 15-16 / 14-15.
+
+Not taken:
+
+- Client-drawn title bar (tidemail uses the kit's `TitleBar`): forkline
+  measured it earlier, `diff_scroll_fps` 240 -> 103 ("Title bar:
+  native" above).
+- Live OS theme: tidemail re-applies its theme in
+  `observe_window_appearance`, as forkline already does; forkline also
+  keeps the mode being edited in the Appearance dialog, which tidemail
+  does not.
+- Sidebar open / closed: tidemail has none. It has layout presets (Tide:
+  208 px sidebar, Command: tabs in the title bar, Paper: 44 px rail) as
+  data (`PresetSpec`) over one nav model. Product decision; not started.
+- Tray and hide-on-close: suits a mail client; not decided for forkline.
+
+Open decisions:
+
+- tidemail's `vendor/gpui-pre-windows` patch creates the DirectX devices on
+  a thread while DirectWrite starts (about 15 lines; same `gpui-pre`
+  0.3.11 pin as forkline). tidemail measured 450-630 -> 256-297 ms to the
+  first frame. Forkline spends about 180 ms from `main` to
+  `app_created`, which is where this cost is. It needs a vendored GPUI crate with
+  `unsafe` outside `fl-win` and a `[patch.crates-io]` entry: a stack change,
+  so ask first.
+- `Appearance::cancel` restores the light / dark state from when the
+  dialog opened. In System mode, an OS switch while the dialog is open,
+  then Esc, shows the old mode until the next switch. Fix: about 4 lines.

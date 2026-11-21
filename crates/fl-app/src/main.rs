@@ -163,18 +163,21 @@ fn main() {
         let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Forkline");
             theme::sync_title_bar(window, cx.global::<theme::Palette>().dark);
-            let hwnd = theme::hwnd(window);
-            if let Some(hwnd) = hwnd {
+            // GPUI places, shows and activates the window (and restores it
+            // if it opens minimized); the cloak keeps it off screen until its
+            // first frame. If no frame comes in 2 s, uncloak it anyway.
+            if let Some(hwnd) = theme::hwnd(window) {
                 fl_win::set_cloaked(hwnd, true);
-                fl_win::show_inactive(hwnd);
+                window.on_next_frame(move |_, _| fl_win::set_cloaked(hwnd, false));
+                window
+                    .spawn(cx, async move |cx| {
+                        cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                        fl_win::set_cloaked(hwnd, false);
+                    })
+                    .detach();
             }
-            window.on_next_frame(move |window, _| {
-                if let Some(hwnd) = hwnd {
-                    fl_win::set_cloaked(hwnd, false);
-                }
-                window.activate_window();
-            });
-            let ws =cx.new(|cx| Workspace::new(!bench, window, cx));
+            window.activate_window();
+            let ws = cx.new(|cx| Workspace::new(!bench, window, cx));
             if open_appearance {
                 ws.update(cx, |ws, cx| {
                     ws.open_appearance(window, cx);
@@ -192,19 +195,15 @@ fn main() {
         .expect("cannot open the main window");
         bench::mark("window_open", cx);
         if let Some(listener) = listener {
-            // A later launch on this data directory: bring this window up.
+            // A later launch on this data directory: bring this window up
+            // (GPUI's activate also restores a minimized window).
             let (tx, rx) = async_channel::unbounded::<()>();
             listener.listen(move || {
                 let _ = tx.send_blocking(());
             });
             cx.spawn(async move |cx| {
                 while rx.recv().await.is_ok() {
-                    let _ = handle.update(cx, |_, window, _| {
-                        if let Some(hwnd) = theme::hwnd(window) {
-                            fl_win::restore_if_minimized(hwnd);
-                        }
-                        window.activate_window();
-                    });
+                    let _ = handle.update(cx, |_, window, _| window.activate_window());
                 }
             })
             .detach();

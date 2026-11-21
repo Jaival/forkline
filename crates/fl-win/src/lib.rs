@@ -55,34 +55,3 @@ pub fn set_cloaked(hwnd: isize, cloaked: bool) {
 
 #[cfg(not(windows))]
 pub fn set_cloaked(_hwnd: isize, _cloaked: bool) {}
-
-/// Show the window without activating it (it stays cloaked if it was).
-#[cfg(windows)]
-pub fn show_inactive(hwnd: isize) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWNA, ShowWindow};
-    // SAFETY: ShowWindow takes the handle by value and validates it; the
-    // returned previous visibility is not needed.
-    let _ = unsafe { ShowWindow(HWND(hwnd as *mut _), SW_SHOWNA) };
-}
-
-#[cfg(not(windows))]
-pub fn show_inactive(_hwnd: isize) {}
-
-/// Restore the window if it is minimized (a maximized or normal window keeps
-/// its size).
-#[cfg(windows)]
-pub fn restore_if_minimized(hwnd: isize) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, SW_RESTORE, ShowWindow};
-    let hwnd = HWND(hwnd as *mut _);
-    // SAFETY: both calls take the handle by value and validate it.
-    unsafe {
-        if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub fn restore_if_minimized(_hwnd: isize) {}
