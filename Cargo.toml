@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# Vendored third-party code: not linted, not ours (see [patch.crates-io]).
+exclude = ["vendor/gpui-pre-windows"]
 
 [workspace.package]
 version = "0.1.0"
@@ -22,6 +24,13 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 
 # GPUI stack. gpui-kit pins the exact gpui-pre snapshot; bump only together (ADR 0001).
 gpui-kit = "=0.9.0"
+
+# GPUI's Windows backend with one patch: create the DirectX devices on a
+# thread while the rest of the platform starts (faster first frame). Pristine
+# gpui-pre-windows 0.3.11 plus vendor/gpui-pre-windows-parallel-dx.patch
+# (from tidemail). Re-vendor and re-apply on every gpui-pre bump.
+[patch.crates-io]
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

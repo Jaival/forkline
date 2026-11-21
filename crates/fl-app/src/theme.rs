@@ -1041,11 +1041,18 @@ pub fn apply(mode: Option<ThemeMode>, mut window: Option<&mut Window>, cx: &mut 
 /// follows only the Windows app mode). No-op where the window has no Win32
 /// handle (other platforms, test windows).
 pub fn sync_title_bar(window: &Window, dark: bool) {
+    if let Some(hwnd) = hwnd(window) {
+        fl_win::set_dark_title_bar(hwnd, dark);
+    }
+}
+
+/// The window's Win32 handle, for `fl_win`. `None` on other platforms and
+/// for test windows.
+pub fn hwnd(window: &Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    if let Ok(handle) = HasWindowHandle::window_handle(window)
-        && let RawWindowHandle::Win32(h) = handle.as_raw()
-    {
-        fl_win::set_dark_title_bar(h.hwnd.get(), dark);
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        _ => None,
     }
 }
 

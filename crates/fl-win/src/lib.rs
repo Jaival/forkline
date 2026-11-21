@@ -32,3 +32,26 @@ pub fn set_dark_title_bar(hwnd: isize, dark: bool) {
 /// Other platforms draw their own title bars.
 #[cfg(not(windows))]
 pub fn set_dark_title_bar(_hwnd: isize, _dark: bool) {}
+
+mod instance;
+pub use instance::{Instance, Listener, single_instance};
+
+/// Hide (`true`) or show the window on screen while the OS still treats it as
+/// visible, so GPUI keeps drawing frames into it. The main window opens
+/// cloaked and is uncloaked after its first frame, so no blank frame shows.
+#[cfg(windows)]
+pub fn set_cloaked(hwnd: isize, cloaked: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DWMWA_CLOAK, DwmSetWindowAttribute};
+    use windows::core::BOOL;
+
+    let value = BOOL::from(cloaked);
+    // SAFETY: as in `set_dark_title_bar`: the pointer is to `value`, a live
+    // BOOL of the size passed; the OS validates the handle.
+    let _ = unsafe {
+        DwmSetWindowAttribute(HWND(hwnd as *mut _), DWMWA_CLOAK, (&raw const value).cast(), size_of::<BOOL>() as u32)
+    };
+}
+
+#[cfg(not(windows))]
+pub fn set_cloaked(_hwnd: isize, _cloaked: bool) {}

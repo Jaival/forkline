@@ -72,8 +72,6 @@ pub struct Appearance {
     tab: Tab,
     /// The Fonts tab shows the chosen fonts' licences instead of the sample.
     licences: bool,
-    /// Dark or light as shown when it opened.
-    original_dark: bool,
     choices: Choices,
     /// Which mode's choice is edited (and shown in the app meanwhile).
     editing_dark: bool,
@@ -102,7 +100,6 @@ impl Appearance {
             fonts,
             tab: Tab::Colours,
             licences: false,
-            original_dark: dark,
             choices,
             editing_dark: dark,
             hue,
@@ -166,8 +163,9 @@ impl Appearance {
     fn cancel(&mut self, _: &CancelAppearance, window: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(self.original);
         cx.set_global(self.original_fonts);
-        let shown = if self.original_dark { ThemeMode::Dark } else { ThemeMode::Light };
-        theme::apply(Some(shown), Some(window), cx);
+        // The saved mode; in System mode that is the OS mode now, which may
+        // have changed while the dialog was open.
+        theme::apply(self.original.mode, Some(window), cx);
         window.refresh();
         cx.emit(AppearanceEvent::Close);
     }

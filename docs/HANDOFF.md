@@ -1677,3 +1677,73 @@ closed state colours; no italic font files; Commit Mono bold is synthetic;
 the narrow queue truncates logins sooner with wide code fonts.
 
 Next: review and merge the polish PR, then plan G3.
+
+PR #10 merged 2026-11-21.
+
+## Ideas from tidemail (branch `gpui-tidemail-ideas`, 2026-11-21)
+
+Read tidemail (`D:/t3/worktrees/tidemail/phase2-*`, the newest branch) for
+its title bar, OS theme following and sidebar. Taken:
+
+1. First-frame reveal. The main window opens with `show: false`; `main`
+   cloaks it (`fl_win::set_cloaked`, `DWMWA_CLOAK`), calls
+   `activate_window` (GPUI applies the stored placement, shows the window
+   and restores it if the launch asked for minimized), and uncloaks it in
+   `on_next_frame`. A 2 s timer uncloaks it if no frame comes. A first
+   version showed the window itself (`SW_SHOWNA`) and activated only after
+   the first frame: once in about ten bench runs the window was minimized,
+   no frame came and the bench hung. Checked with PrintWindow
+   (`target/tmp/tide/check.ps1`): normal and minimized launches end
+   visible, not cloaked, not minimized.
+2. One app per data directory (`fl_win::single_instance`, key = full data
+   dir path, lower case). Two processes on one database would run two
+   sync engines and two action workers, so a queued action could be sent
+   twice. The first process holds a named mutex and listens on a named
+   pipe; a later launch writes "show", the first calls `activate_window`,
+   the later one exits (about 55 ms). Bench runs skip the check.
+
+Bench (`target/tmp/tide/ab.sh`, 5 interleaved rounds, `main` / branch):
+`app_startup_ms` 47-64 / 31-36, `launch_ms` 429-480 / 417-479,
+`diff_scroll_fps` 209-239 / 240, `search_p95_ms` 15-16 / 14-15.
+
+Not taken:
+
+- Client-drawn title bar (tidemail uses the kit's `TitleBar`): forkline
+  measured it earlier, `diff_scroll_fps` 240 -> 103 ("Title bar:
+  native" above).
+- Live OS theme: tidemail re-applies its theme in
+  `observe_window_appearance`, as forkline already does; forkline also
+  keeps the mode being edited in the Appearance dialog, which tidemail
+  does not.
+- Sidebar open / closed: tidemail has none. It has layout presets (Tide:
+  208 px sidebar, Command: tabs in the title bar, Paper: 44 px rail) as
+  data (`PresetSpec`) over one nav model. Product decision; not started.
+- Tray and hide-on-close: suits a mail client; not decided for forkline.
+
+Then, with the user's OK (2026-11-21):
+
+3. Parallel DirectX start (stack change). `vendor/gpui-pre-windows` is the
+   pristine `gpui-pre-windows` 0.3.11 plus tidemail's
+   `vendor/gpui-pre-windows-parallel-dx.patch`: `WindowsPlatform::new`
+   starts `DirectXDevices::new()` on a thread, `attach_gpu` joins it. Wired
+   with `[patch.crates-io]`; the workspace `exclude`s it, so its `unsafe`
+   and lints are not ours. tidemail's other patch (DirectComposition not
+   topmost, for its WebView2) is not taken. **On every `gpui-pre` bump,
+   re-vendor the new version and re-apply the patch** (or drop it if
+   upstream starts the devices in parallel).
+   Bench (5 interleaved rounds, before / after): `launch_ms` 416-454 /
+   261-274; `app_startup_ms`, `diff_scroll_fps`, `search_p95_ms` unchanged.
+4. `Appearance::cancel` now applies the saved mode (`original.mode`), so
+   in System mode Esc shows the OS mode of now, not of when the dialog
+   opened. Test `appearance_cancel_in_system_mode_shows_the_current_os_mode`.
+   `esc_restores_the_choices_from_when_it_opened` now starts in a saved
+   Dark mode (it started in System mode forced dark, a state the app
+   cannot reach).
+
+Next (asked 2026-11-21): layout presets and an icon set, mockups first.
+`docs/design/mockups/layout-presets.html` (A Rail = today, B Sidebar with
+Ctrl B collapse to the rail, C Tabs: top nav, one-line rows, reader
+replaces the list) and `docs/design/mockups/icon-options.html` (Lucide =
+today, Octicons, Phosphor, Tabler, Fluent; the same 14 icons). Generated
+by a local script (`target/tmp/icons/`, not committed); the HTML is self-contained.
+Waiting for the user's pick.
