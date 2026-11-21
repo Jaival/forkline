@@ -117,7 +117,10 @@ fn changes_apply_live(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn esc_restores_the_choices_from_when_it_opened(cx: &mut TestAppContext) {
     let (handle, ws, _dir) = start(cx);
-    let before = cx.read(|cx| cx.try_global::<Choices>().copied().unwrap_or_default());
+    // A saved Dark mode: in System mode Esc shows the test window's OS mode
+    // (light), see `appearance_cancel_in_system_mode_shows_the_current_os_mode`.
+    cx.update(|cx| cx.set_global(Choices { mode: Some(ThemeMode::Dark), ..Choices::default() }));
+    let before = cx.read(|cx| *cx.global::<Choices>());
     open_dialog(cx, handle, &ws);
     click(cx, handle, ("appearance-card", 2usize));
     click(cx, handle, ("appearance-swatch", 9usize));

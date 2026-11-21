@@ -836,6 +836,36 @@ mod tests {
         assert_eq!(os_changed(cx, None), "midnight");
     }
 
+    /// In System mode, Esc in the Appearance dialog shows the OS mode of now,
+    /// not the one from when the dialog opened.
+    #[gpui_kit::test]
+    fn appearance_cancel_in_system_mode_shows_the_current_os_mode(cx: &mut TestAppContext) {
+        use crate::theme::Choices;
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open(cx, dir.path());
+        cx.run_until_parked();
+        // The OS is dark when the dialog opens...
+        cx.update_window(handle, |_, window, cx| {
+            cx.set_global(Choices { mode: None, ..Choices::default() });
+            crate::theme::apply(Some(ThemeMode::Dark), Some(window), cx);
+            ws.update(cx, |ws, cx| ws.open_appearance(window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        // ...and light (the test window's mode) when Esc is pressed.
+        cx.update_window(handle, |_, window, cx| {
+            ws.update(cx, |ws, cx| ws.on_system_appearance(window, cx));
+            window.render_frame(cx);
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert!(ws.read(cx).appearance().is_none(), "Esc closes the dialog");
+            assert_eq!(cx.palette().name, "daylight");
+        });
+    }
+
     #[gpui_kit::test]
     fn keys_open_tabs_and_split_panes(cx: &mut TestAppContext) {
         let dir = tempfile::tempdir().unwrap();
