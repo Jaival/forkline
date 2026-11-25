@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Forkline logo options</title>
+<style>
+  :root { --bg:#0f1117; --panel:#171a22; --line:#262b36; --fg:#e6e8ee; --mute:#8a90a0; --accent:#5b8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--fg); font:14px/1.45 Inter, "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.lead { color:var(--mute); margin:0 0 24px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  .card h2 { font-size:15px; margin:0 0 2px; }
+  .card .idea { color:var(--mute); font-size:12.5px; margin:0 0 16px; min-height:36px; }
+  .row { display:flex; align-items:center; gap:18px; }
+  .tile { width:96px; height:96px; border-radius:22px; display:grid; place-items:center; flex:none; }
+  .tile.dark { background:linear-gradient(160deg,#1d2433,#0e1118); box-shadow:inset 0 0 0 1px #2c3446; }
+  .tile.light { background:#f4f6fa; box-shadow:inset 0 0 0 1px #dde2ea; }
+  .tile svg { width:60px; height:60px; }
+  .small { display:flex; gap:10px; align-items:center; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .small .s { display:grid; place-items:center; border-radius:5px; background:#0b0d12; box-shadow:inset 0 0 0 1px #2a3040; }
+  .small .s16 { width:24px; height:24px; } .small .s16 svg { width:16px; height:16px; }
+  .small .s32 { width:40px; height:40px; border-radius:8px; } .small .s32 svg { width:32px; height:32px; }
+  .small span { color:var(--mute); font-size:12px; }
+  .word { display:flex; align-items:center; gap:10px; font-weight:650; font-size:22px; letter-spacing:-.01em; }
+  .word svg { width:28px; height:28px; }
+  .word.light { color:#151922; background:#f4f6fa; padding:8px 12px; border-radius:8px; font-size:18px; }
+  .word.light svg { width:22px; height:22px; }
+  .stack { display:flex; flex-direction:column; gap:10px; }
+</style>
+</head>
+<body>
+<h1>Forkline — logo options</h1>
+<p class="lead">Six concepts. Each shows the app icon (dark / light), the wordmark, and 16 / 32 px sizes for the taskbar and title bar.</p>
+
+<!-- Symbol defs: each uses currentColor for strokes, --c2 via explicit colours -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <!-- A: Branch F — one trunk, a branch forks off to form an F -->
+    <symbol id="a" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 42V12" stroke="currentColor"/>
+        <path d="M14 12h20" stroke="currentColor"/>
+        <path d="M14 30c0-6 4-8 10-8h4" stroke="#5b8cff"/>
+      </g>
+      <circle cx="34" cy="12" r="4.5" fill="currentColor"/>
+      <circle cx="31" cy="22" r="4.5" fill="#5b8cff"/>
+    </symbol>
+    <!-- B: Fork in the line — a straight line that splits and rejoins (PR merge) -->
+    <symbol id="b" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="4.5" stroke-linecap="round">
+        <path d="M6 30h36" stroke="currentColor"/>
+        <path d="M14 30c4 0 5-12 10-12s6 12 10 12" stroke="#5b8cff"/>
+      </g>
+      <circle cx="6" cy="30" r="4" fill="currentColor"/>
+      <circle cx="42" cy="30" r="4" fill="currentColor"/>
+      <circle cx="24" cy="18" r="4" fill="#5b8cff"/>
+    </symbol>
+    <!-- C: fl monogram — the f's crossbar becomes a branch to the l -->
+    <symbol id="c" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 42V16a8 8 0 0 1 8-8h2" stroke="currentColor"/>
+        <path d="M9 22h7c6 0 10 2 13 6" stroke="#5b8cff"/>
+        <path d="M33 8v34" stroke="currentColor"/>
+      </g>
+    </symbol>
+    <!-- D: Speed fork — fork glyph with motion lines (fast client) -->
+    <symbol id="d" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M24 40V26" stroke="currentColor"/>
+        <path d="M24 26c0-6-8-6-8-14" stroke="currentColor"/>
+        <path d="M24 26c0-6 8-6 8-14" stroke="#5b8cff"/>
+        <path d="M4 18h6M2 26h8M5 34h6" stroke="#5b8cff" opacity=".55"/>
+      </g>
+      <circle cx="16" cy="10" r="4" fill="currentColor"/>
+      <circle cx="32" cy="10" r="4" fill="#5b8cff"/>
+      <circle cx="24" cy="41" r="4" fill="currentColor"/>
+    </symbol>
+    <!-- E: Inbox line — a commit graph inside a rounded inbox tray -->
+    <symbol id="e" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 28v8a6 6 0 0 0 6 6h24a6 6 0 0 0 6-6v-8h-9l-3 5h-12l-3-5z" stroke="currentColor"/>
+        <path d="M18 6v16" stroke="currentColor"/>
+        <path d="M18 18c0-5 12-3 12-10" stroke="#5b8cff"/>
+      </g>
+      <circle cx="18" cy="22" r="3.5" fill="currentColor"/>
+      <circle cx="30" cy="7" r="3.5" fill="#5b8cff"/>
+    </symbol>
+    <!-- F: Three lines — stacked list rows; the middle one forks (a list of PRs) -->
+    <symbol id="f" viewBox="0 0 48 48">
+      <g fill="none" stroke-width="5" stroke-linecap="round">
+        <path d="M8 12h32" stroke="currentColor" opacity=".45"/>
+        <path d="M8 24h14c6 0 8-6 14-6h4" stroke="#5b8cff"/>
+        <path d="M22 24h18" stroke="currentColor"/>
+        <path d="M8 36h32" stroke="currentColor" opacity=".45"/>
+      </g>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const opts = [
+  ["a","A · Branch F","A trunk with a branch growing off it reads as an F. Two commit dots: one neutral, one accent."],
+  ["b","B · Fork in the line","A straight line splits and rejoins: a PR that forks off and merges back. The name, literally."],
+  ["c","C · fl monogram","Lower-case f and l. The f's crossbar becomes a branch that runs into the l."],
+  ["d","D · Fast fork","The fork glyph plus motion lines. Says “GitHub, but fast”. Busier at 16 px."],
+  ["e","E · Inbox branch","A branch drops into an inbox tray: notifications and review queue first."],
+  ["f","F · Lines","Three list rows; the middle one forks. Reads as a fast list app; most abstract."],
+];
+const use = (id, cls="") => `<svg class="${cls}"><use href="#${id}"/></svg>`;
+document.getElementById("grid").innerHTML = opts.map(([id,name,idea]) => `
+  <div class="card">
+    <h2>${name}</h2><p class="idea">${idea}</p>
+    <div class="row">
+      <div class="tile dark" style="color:#e6e8ee">${use(id)}</div>
+      <div class="tile light" style="color:#1b2130">${use(id)}</div>
+      <div class="stack">
+        <div class="word" style="color:#e6e8ee">${use(id)}Forkline</div>
+        <div class="word light">${use(id)}Forkline</div>
+      </div>
+    </div>
+    <div class="small">
+      <div class="s s16" style="color:#e6e8ee">${use(id)}</div>
+      <div class="s s32" style="color:#e6e8ee">${use(id)}</div>
+      <span>16 px · 32 px</span>
+    </div>
+  </div>`).join("");
+</script>
+</body>
+</html>

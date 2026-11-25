@@ -1772,3 +1772,22 @@ The user picked B (Sidebar) and Tabler; Tabs is not built. See below.
   builds hit the known 30 fps / 65 ms machine state.
 - One launch in about 15 (`check.ps1`) ended minimized right after a release
   build; it did not repeat in the next 8. Cause unknown; watch for it.
+
+## Logo and app icon (2026-11-25, uncommitted on `main`)
+
+- Mockups: `docs/design/mockups/logo-options.html` (A-F). The user picked A
+  (Branch F). A-E are saved as SVGs in `docs/design/logo/` (glyphs use
+  `currentColor`, accent `#5b8cff`).
+- App icon: `docs/design/logo/forkline-icon.svg` (A on a dark rounded tile)
+  -> `crates/fl-app/resources/forkline.ico` (16-256 px). Regenerate with
+  `node docs/design/logo/make-ico.mjs <svg> <ico> <png>` (needs
+  `npm i @resvg/resvg-js` in a scratch dir).
+- `crates/fl-app/build.rs` embeds it with `winresource` as resource id 1,
+  which GPUI's `load_icon` reads for the window and taskbar icon.
+
+## Next: G3 (planned 2026-11-25)
+
+Plan: `docs/design/g3-plan.md`, from the user's first pass on a real
+account. The OAuth App is registered (device flow on); build with
+`FORKLINE_GITHUB_CLIENT_ID` set. Start with step 1: the real account has
+0 pinned repos, so every list is empty.
