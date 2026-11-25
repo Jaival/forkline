@@ -57,6 +57,22 @@ pub(super) fn set_pinned(repo_id: i64, pinned: bool, cx: &mut App) {
     .detach();
 }
 
+/// Pick a pinned repo's sync scope (`true` = only items that involve the
+/// viewer), then sync it again.
+pub(super) fn set_sync_mine(repo_id: i64, mine: bool, cx: &mut App) {
+    let store = Store::global(cx).read(cx);
+    let db = store.db().clone();
+    let sync = store.sync().clone();
+    let task = cx.background_spawn(async move { db.write(|c| repo::set_sync_mine(c, repo_id, mine)) });
+    cx.spawn(async move |cx| {
+        if task.await.is_ok() {
+            cx.update(|cx| Store::emit_changed(&["repos"], cx));
+            sync.wake();
+        }
+    })
+    .detach();
+}
+
 impl ReposView {
     pub fn build(starred: bool, window: &mut Window, cx: &mut App) -> Built {
         let view = cx.new(|cx| Self::new(starred, window, cx));

@@ -7,7 +7,7 @@ fn seeded() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
     fl_db::migrate::run(&mut conn).unwrap();
     conn.execute_batch(
-        "INSERT INTO repos(id,node_id,owner,name,updated_at) VALUES (1,'R','acme','web',0),(2,'R2','acme','api',0);
+        "INSERT INTO repos(id,node_id,owner,name,updated_at,pinned) VALUES (1,'R','acme','web',0,1),(2,'R2','acme','api',0,1);
          INSERT INTO users(id,login) VALUES (1,'octocat'),(2,'hubot');
          INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,body_md,author_id,created_at,updated_at) VALUES
           (1,'a',1,1,0,'open','Crash on startup','Stack overflow in the parser',1,0,100),

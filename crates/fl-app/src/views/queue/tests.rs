@@ -9,7 +9,7 @@ use crate::workspace::Workspace;
 
 const SEED: &str = "
     INSERT INTO users(id, login) VALUES (1, 'me'), (2, 'bob');
-    INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);
+    INSERT INTO repos(id, node_id, owner, name, updated_at, pinned) VALUES (1,'R','o','a',0,1), (2,'R','o','b',0,1);
     INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at) VALUES
       (1,'I',1,1,0,'open','an issue',1,0,10),
       (3,'I',2,1,1,'open','a pull request',2,0,30);
@@ -207,7 +207,7 @@ fn selection_shows_in_the_reading_pane(cx: &mut TestAppContext) {
 fn pulls_load_a_second_page(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let sql = "
-        INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0);
+        INSERT INTO repos(id, node_id, owner, name, updated_at, pinned) VALUES (1,'R','o','a',0,1);
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 150)
         INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,created_at,updated_at)
           SELECT i,'I',1,i,1,'open','pr',0,i FROM n;";

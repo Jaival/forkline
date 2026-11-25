@@ -42,6 +42,16 @@ pub async fn env() -> Env {
         .with_priority(u8::MAX)
         .mount(&server)
         .await;
+    // The viewer's searches run every deep tick; no hits unless a test says so.
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/graphql"))
+        .and(wiremock::matchers::body_string_contains("search(query"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": { "search": {
+            "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": []
+        }}})))
+        .with_priority(u8::MAX)
+        .mount(&server)
+        .await;
     let engine = Engine::new(db.clone(), Config::test(&server.uri()));
     engine.set_test_token(Some("test-token"));
     let emitted = Arc::new(Mutex::new(Vec::new()));

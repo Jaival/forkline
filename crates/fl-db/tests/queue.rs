@@ -13,7 +13,7 @@ fn seed(db: &Db) {
         c.execute_batch(
             "INSERT INTO settings VALUES ('viewer', '{\"id\":1,\"login\":\"me\"}');
              INSERT INTO users(id, login) VALUES (1, 'me'), (2, 'bob');
-             INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (1,'R','o','a',0), (2,'R','o','b',0);
+             INSERT INTO repos(id, node_id, owner, name, updated_at, pinned) VALUES (1,'R','o','a',0,1), (2,'R','o','b',0,1);
              INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at,last_viewed_at) VALUES
                (1,'I',1,1,0,'open','i1',1,0,10,NULL),
                (2,'I',1,2,1,'open','p2',2,0,20,NULL),
@@ -162,6 +162,25 @@ fn reviews_only_requested_from_viewer() {
     assert_eq!(keys(&r), ["6", "3"]);
     assert!(r.iter().all(|x| x.group == QueueGroup::ReviewRequested));
     assert_eq!(keys(&rows(&db, q(QueueKind::Reviews, Some(1)))), Vec::<&str>::new());
+}
+
+#[test]
+fn unpinned_repos_show_only_search_hits() {
+    let (_d, db) = fresh();
+    seed(&db);
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO repos(id, node_id, owner, name, updated_at) VALUES (3,'R','x','y',0);
+             INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,created_at,updated_at) VALUES
+               (7,'I',3,1,1,'open','p7',0,70), (8,'I',3,2,0,'open','i8',0,80), (9,'I',3,3,1,'open','p9',0,90);
+             INSERT INTO search_hits VALUES ('review_requested', 7), ('assigned', 8);",
+        )
+    })
+    .unwrap();
+    // p9 is cached but neither pinned nor a hit.
+    assert_eq!(keys(&rows(&db, q(QueueKind::Pulls, None))), ["7", "6", "3", "2"]);
+    assert_eq!(keys(&rows(&db, q(QueueKind::Issues, None))), ["8", "1"]);
+    assert_eq!(keys(&rows(&db, q(QueueKind::Reviews, None))), ["7", "6", "3"]);
 }
 
 #[test]

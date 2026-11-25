@@ -5,6 +5,9 @@
 //!   incremental by `updatedAt` cursor stored in `sync_state`).
 //! - `notifications`: inbox threads (REST, `If-Modified-Since`, `X-Poll-Interval`).
 //! - `explore`: people the user follows and their recent stars (REST, ETag).
+//! - `searches`: the viewer's PRs, review requests and assigned items across
+//!   all repos (GraphQL search), stored as `issues` rows plus `search_hits`.
+//! - `auto_pin`: on first sign-in, pin the viewer's recently pushed repos.
 //!
 //! Upserts never overwrite fields that have a row in `pending_fields`.
 //! Every page is one transaction; issues are re-indexed for search in it.
@@ -28,6 +31,13 @@ pub type Emit<'a> = &'a (dyn Fn(&[&str]) + Send + Sync);
 pub const FIRST_SYNC_PAGES: usize = 6;
 /// Upper bound for one incremental run; the rest follows next run.
 pub const MAX_PAGES: usize = 30;
+/// Hits read per search, newest first. GitHub caps a search at 1000.
+pub const SEARCH_MAX_HITS: usize = 300;
+/// Items per `nodes(ids:)` query; PR nodes are large.
+const NODES_BATCH: usize = 10;
+/// Auto-pin: at most this many repos, pushed within `AUTO_PIN_DAYS`.
+pub const AUTO_PIN_MAX: i64 = 10;
+pub const AUTO_PIN_DAYS: i64 = 45;
 
 // ---- sync_state ------------------------------------------------------------
 
@@ -140,17 +150,19 @@ fn repo(tx: &Transaction<'_>, r: &Value, full: bool) -> rusqlite::Result<Option<
         r["forks_count"].as_i64().unwrap_or(0),
         ts("pushed_at"),
         ts("updated_at").unwrap_or(0),
+        r["open_issues_count"].as_i64(),
     ];
     let insert = "INSERT INTO repos (id, node_id, owner, name, description, language, default_branch, license,
-           is_private, is_fork, stars, forks, pushed_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)";
+           is_private, is_fork, stars, forks, pushed_at, updated_at, open_issues)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)";
     if full {
         tx.prepare_cached(&format!(
             "{insert} ON CONFLICT(id) DO UPDATE SET node_id = excluded.node_id, owner = excluded.owner,
                name = excluded.name, description = excluded.description, language = excluded.language,
                default_branch = excluded.default_branch, license = excluded.license,
                is_private = excluded.is_private, is_fork = excluded.is_fork, stars = excluded.stars,
-               forks = excluded.forks, pushed_at = excluded.pushed_at, updated_at = excluded.updated_at"
+               forks = excluded.forks, pushed_at = excluded.pushed_at, updated_at = excluded.updated_at,
+               open_issues = COALESCE(excluded.open_issues, open_issues)"
         ))?
         .execute(p)?;
     } else {
@@ -216,8 +228,15 @@ pub async fn repos(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<
     write(db, move |c| {
         let tx = c.transaction()?;
         let mut seen = Vec::new();
-        for r in owned.iter().flatten() {
-            seen.extend(repo(&tx, r, true)?);
+        if let Some(owned) = &owned {
+            for r in owned {
+                seen.extend(repo(&tx, r, true)?);
+            }
+            tx.execute(
+                "UPDATE repos SET member = (id IN (SELECT value FROM json_each(?1)))
+                 WHERE member <> (id IN (SELECT value FROM json_each(?1)))",
+                [ids_json(&seen)],
+            )?;
         }
         if let Some(starred) = &starred {
             let mut ids = Vec::with_capacity(starred.len());
@@ -463,13 +482,21 @@ macro_rules! comment_sel {
         "databaseId body bodyHTML createdAt updatedAt author{...A}"
     };
 }
+// Issue timelines have no merge events: GitHub rejects MERGED_EVENT and a
+// MergedEvent fragment on an Issue.
 macro_rules! timeline_args {
-    () => {
+    (issue) => {
+        "first:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,ASSIGNED_EVENT,UNASSIGNED_EVENT,CLOSED_EVENT,REOPENED_EVENT,CROSS_REFERENCED_EVENT,RENAMED_TITLE_EVENT]"
+    };
+    (pr) => {
         "first:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT,ASSIGNED_EVENT,UNASSIGNED_EVENT,CLOSED_EVENT,REOPENED_EVENT,CROSS_REFERENCED_EVENT,RENAMED_TITLE_EVENT,MERGED_EVENT]"
     };
 }
 macro_rules! timeline_sel {
-    () => {
+    (pr) => {
+        concat!(timeline_sel!(issue), " ... on MergedEvent{createdAt actor{...A}}")
+    };
+    (issue) => {
         "__typename
          ... on LabeledEvent{createdAt actor{...A} label{name}}
          ... on UnlabeledEvent{createdAt actor{...A} label{name}}
@@ -479,8 +506,7 @@ macro_rules! timeline_sel {
          ... on ReopenedEvent{createdAt actor{...A}}
          ... on CrossReferencedEvent{createdAt actor{...A}
            source{... on Issue{number repository{nameWithOwner}} ... on PullRequest{number repository{nameWithOwner}}}}
-         ... on RenamedTitleEvent{createdAt actor{...A} previousTitle currentTitle}
-         ... on MergedEvent{createdAt actor{...A}}"
+         ... on RenamedTitleEvent{createdAt actor{...A} previousTitle currentTitle}"
     };
 }
 macro_rules! review_sel {
@@ -516,7 +542,7 @@ macro_rules! check_sel {
     };
 }
 macro_rules! common {
-    () => {
+    ($k:ident) => {
         concat!(
             "id databaseId number title body bodyHTML state createdAt updatedAt closedAt author{...A} milestone{title}
              labels(first:50){nodes{name}} assignees(first:20){nodes{databaseId login avatarUrl name}}
@@ -526,12 +552,43 @@ macro_rules! common {
             comment_sel!(),
             "}}
              timelineItems(",
-            timeline_args!(),
+            timeline_args!($k),
             "){",
             fwd!(),
             " nodes{",
-            timeline_sel!(),
+            timeline_sel!($k),
             "}}"
+        )
+    };
+}
+
+macro_rules! pr_sel {
+    () => {
+        concat!(
+        " isDraft mergeable mergeStateStatus reviewDecision baseRefName headRefName baseRefOid headRefOid
+          additions deletions changedFiles
+          reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Team{combinedSlug}}}}
+          closingIssuesReferences(first:10){nodes{databaseId}}
+          reviews(last:50){",
+        back!(),
+        " nodes{",
+        review_sel!(),
+        "}}
+          reviewThreads(first:50){totalCount ",
+        fwd!(),
+        " nodes{",
+        thread_sel!(),
+        "}}
+          commits(last:100){",
+        back!(),
+        " nodes{",
+        commit_sel!(),
+        "}}
+          head:commits(last:1){nodes{commit{id oid statusCheckRollup{state contexts(first:50){",
+        fwd!(),
+        " nodes{",
+        check_sel!(),
+        "}}}}}}",
         )
     };
 }
@@ -540,7 +597,7 @@ pub const ISSUES_QUERY: &str = concat!(
     "query($owner:String!,$name:String!,$after:String,$since:DateTime){repository(owner:$owner,name:$name){",
     "issues(first:50,after:$after,orderBy:{field:UPDATED_AT,direction:DESC},filterBy:{since:$since})",
     "{pageInfo{hasNextPage endCursor} nodes{",
-    common!(),
+    common!(issue),
     "}}}}",
     actor!()
 );
@@ -549,31 +606,8 @@ pub const PULLS_QUERY: &str = concat!(
     "query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){",
     "pullRequests(first:10,after:$after,orderBy:{field:UPDATED_AT,direction:DESC})",
     "{pageInfo{hasNextPage endCursor} nodes{",
-    common!(),
-    " isDraft mergeable mergeStateStatus reviewDecision baseRefName headRefName baseRefOid headRefOid
-      additions deletions changedFiles
-      reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Team{combinedSlug}}}}
-      closingIssuesReferences(first:10){nodes{databaseId}}
-      reviews(last:50){",
-    back!(),
-    " nodes{",
-    review_sel!(),
-    "}}
-      reviewThreads(first:50){totalCount ",
-    fwd!(),
-    " nodes{",
-    thread_sel!(),
-    "}}
-      commits(last:100){",
-    back!(),
-    " nodes{",
-    commit_sel!(),
-    "}}
-      head:commits(last:1){nodes{commit{id oid statusCheckRollup{state contexts(first:50){",
-    fwd!(),
-    " nodes{",
-    check_sel!(),
-    "}}}}}}",
+    common!(pr),
+    pr_sel!(),
     "}}}}",
     actor!()
 );
@@ -599,7 +633,8 @@ struct Conn {
 }
 
 const COMMENTS: Conn = Conn { on: &["Issue", "PullRequest"], parent: None, field: "comments", args: "last:100", select: comment_sel!(), backward: true };
-const TIMELINE: Conn = Conn { on: &["Issue", "PullRequest"], parent: None, field: "timelineItems", args: timeline_args!(), select: timeline_sel!(), backward: false };
+const ISSUE_TIMELINE: Conn = Conn { on: &["Issue"], parent: None, field: "timelineItems", args: timeline_args!(issue), select: timeline_sel!(issue), backward: false };
+const PR_TIMELINE: Conn = Conn { on: &["PullRequest"], parent: None, field: "timelineItems", args: timeline_args!(pr), select: timeline_sel!(pr), backward: false };
 const REVIEWS: Conn = Conn { on: &["PullRequest"], parent: None, field: "reviews", args: "last:50", select: review_sel!(), backward: true };
 const COMMITS: Conn = Conn { on: &["PullRequest"], parent: None, field: "commits", args: "last:100", select: commit_sel!(), backward: true };
 const THREADS: Conn = Conn { on: &["PullRequest"], parent: None, field: "reviewThreads", args: "first:50", select: thread_sel!(), backward: false };
@@ -647,7 +682,7 @@ async fn fill(gh: &Github, token: &str, id: &str, c: &Conn, conn: &mut Value) ->
 async fn complete(gh: &Github, token: &str, n: &mut Value, is_pr: bool) -> Result<()> {
     let id = n["id"].as_str().unwrap_or_default().to_owned();
     fill(gh, token, &id, &COMMENTS, &mut n["comments"]).await?;
-    fill(gh, token, &id, &TIMELINE, &mut n["timelineItems"]).await?;
+    fill(gh, token, &id, if is_pr { &PR_TIMELINE } else { &ISSUE_TIMELINE }, &mut n["timelineItems"]).await?;
     if !is_pr {
         return Ok(());
     }
@@ -669,11 +704,14 @@ pub const OVERVIEW_QUERY: &str = "query($owner:String!,$name:String!){repository
   releases(first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{databaseId tagName name publishedAt}}
   defaultBranchRef{target{... on Commit{history(first:20){nodes{oid messageHeadline authoredDate author{user{login}} statusCheckRollup{state}}}}}}}}";
 
-/// Deep sync one pinned repo: labels, overview, issues, then PRs.
+/// Deep sync one pinned repo: labels, overview, issues, then PRs. A repo
+/// with scope 'mine' syncs only the items that involve the viewer.
 pub async fn deep(gh: &Github, token: &str, db: &Arc<Db>, repo_id: i64, now: i64, emit: Emit<'_>) -> Result<()> {
-    let (owner, name): (String, String) =
-        read(db, move |c| Ok(c.query_row("SELECT owner, name FROM repos WHERE id = ?1", [repo_id], |r| Ok((r.get(0)?, r.get(1)?)))?))
-            .await?;
+    let (owner, name, mine): (String, String, bool) = read(db, move |c| {
+        let sql = format!("SELECT owner, name, {} FROM repos r WHERE id = ?1", fl_db::queries::repo::SYNC_MINE_SQL);
+        Ok(c.query_row(&sql, [repo_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?)
+    })
+    .await?;
     let key = format!("repo:{repo_id}");
 
     // Labels first: issues reference them by name.
@@ -704,7 +742,11 @@ pub async fn deep(gh: &Github, token: &str, db: &Arc<Db>, repo_id: i64, now: i64
     .await?;
     emit(&["repos"]);
 
-    for is_pr in [false, true] {
+    if mine {
+        deep_mine(gh, token, db, &key, &format!("{owner}/{name}"), now).await?;
+        emit(&["issues", "pr", "search"]);
+    }
+    for is_pr in [false, true].into_iter().filter(|_| !mine) {
         let ckey = format!("{key}:{}", if is_pr { "pulls" } else { "issues" });
         let k = ckey.clone();
         let since = read(db, move |c| Ok(state(c, &k)?.cursor)).await?;
@@ -755,6 +797,205 @@ pub async fn deep(gh: &Github, token: &str, db: &Arc<Db>, repo_id: i64, now: i64
     write(db, move |c| Ok(save_state(c, &key, &touched(now))?)).await?;
     emit(&["sync"]);
     Ok(())
+}
+
+/// Scope 'mine': items of the repo that involve the viewer, through search,
+/// incremental by the newest `updatedAt` seen.
+async fn deep_mine(gh: &Github, token: &str, db: &Arc<Db>, key: &str, full_name: &str, now: i64) -> Result<()> {
+    let ckey = format!("{key}:mine");
+    let k = ckey.clone();
+    let since = read(db, move |c| Ok(state(c, &k)?.cursor)).await?;
+    let mut q = format!("repo:{full_name} involves:@me sort:updated-desc");
+    if let Some(s) = &since {
+        q.push_str(&format!(" updated:>={s}"));
+    }
+    let hits = search_ids(gh, token, &q).await?;
+    fetch_hits(gh, token, db, &hits).await?;
+    let newest = hits.iter().map(|h| h.updated_at.clone()).max().or(since);
+    let s = State { cursor: newest, ..touched(now) };
+    write(db, move |c| Ok(save_state(c, &ckey, &s)?)).await?;
+    Ok(())
+}
+
+// ---- search ----------------------------------------------------------------
+
+/// The viewer's searches across all repos: `search_hits.query` and the
+/// GitHub search query.
+pub const SEARCHES: [(&str, &str); 3] = [
+    ("authored", "is:open is:pr author:@me"),
+    ("review_requested", "is:open is:pr review-requested:@me"),
+    ("assigned", "is:open assignee:@me"),
+];
+
+pub const SEARCH_IDS_QUERY: &str = "query($q:String!,$after:String){search(query:$q,type:ISSUE,first:100,after:$after){
+  pageInfo{hasNextPage endCursor} nodes{... on Issue{id databaseId updatedAt} ... on PullRequest{id databaseId updatedAt}}}}";
+
+macro_rules! repo_sel {
+    () => {
+        "repository{databaseId id name owner{login} description primaryLanguage{name} defaultBranchRef{name}
+          licenseInfo{spdxId} isPrivate isFork stargazerCount forkCount pushedAt updatedAt}"
+    };
+}
+
+/// Full issue / PR nodes by node id, with their repository.
+pub const NODES_QUERY: &str = concat!(
+    "query($ids:[ID!]!){nodes(ids:$ids){__typename ... on Issue{",
+    repo_sel!(),
+    " ",
+    common!(issue),
+    "} ... on PullRequest{",
+    repo_sel!(),
+    " ",
+    common!(pr),
+    pr_sel!(),
+    "}}}",
+    actor!()
+);
+
+/// One search result: GraphQL node id, database id, `updatedAt` (RFC 3339).
+#[derive(Debug, Clone)]
+struct Hit {
+    node_id: String,
+    id: i64,
+    updated_at: String,
+}
+
+/// Run one GitHub issue search; up to `SEARCH_MAX_HITS` hits in GitHub's order.
+async fn search_ids(gh: &Github, token: &str, q: &str) -> Result<Vec<Hit>> {
+    let mut hits = Vec::new();
+    let mut after: Option<String> = None;
+    while hits.len() < SEARCH_MAX_HITS {
+        let mut data = gh.graphql(token, SEARCH_IDS_QUERY, json!({ "q": q, "after": after })).await?;
+        let page = data["search"].take();
+        for n in nodes(&page) {
+            if let (Some(node_id), Some(id), Some(u)) = (n["id"].as_str(), n["databaseId"].as_i64(), n["updatedAt"].as_str()) {
+                hits.push(Hit { node_id: node_id.to_owned(), id, updated_at: u.to_owned() });
+            }
+        }
+        after = page["pageInfo"]["endCursor"].as_str().map(str::to_owned);
+        if page["pageInfo"]["hasNextPage"].as_bool() != Some(true) || after.is_none() {
+            break;
+        }
+    }
+    hits.truncate(SEARCH_MAX_HITS);
+    Ok(hits)
+}
+
+/// Fetch and write the hits whose cached copy is missing or older than
+/// GitHub's. A repo seen for the first time is added as Explore-only.
+async fn fetch_hits(gh: &Github, token: &str, db: &Arc<Db>, hits: &[Hit]) -> Result<()> {
+    let ids = ids_json(&hits.iter().map(|h| h.id).collect::<Vec<_>>());
+    let cached: std::collections::HashMap<i64, i64> = read(db, move |c| {
+        Ok(c.prepare("SELECT id, updated_at FROM issues WHERE id IN (SELECT value FROM json_each(?1))")?
+            .query_map([ids], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    })
+    .await?;
+    let stale: Vec<&str> = hits
+        .iter()
+        .filter(|h| cached.get(&h.id).is_none_or(|&t| t < parse_ts(&h.updated_at)))
+        .map(|h| h.node_id.as_str())
+        .collect();
+    for batch in stale.chunks(NODES_BATCH) {
+        let mut data = gh.graphql(token, NODES_QUERY, json!({ "ids": batch })).await?;
+        let mut items: Vec<Value> = data["nodes"].as_array_mut().map(std::mem::take).unwrap_or_default();
+        // An inaccessible node comes back as null.
+        items.retain(|n| n["databaseId"].is_i64());
+        for n in &mut items {
+            let is_pr = n["__typename"] == "PullRequest";
+            complete(gh, token, n, is_pr).await?;
+        }
+        write(db, move |c| {
+            let tx = c.transaction()?;
+            for n in &items {
+                let Some(repo_id) = graphql_repo(&tx, &n["repository"])? else { continue };
+                write_issue(&tx, repo_id, n["__typename"] == "PullRequest", n)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+/// Insert a GraphQL repository if it is new (as Explore-only); returns its id.
+fn graphql_repo(tx: &Transaction<'_>, r: &Value) -> rusqlite::Result<Option<i64>> {
+    let Some(id) = r["databaseId"].as_i64() else { return Ok(None) };
+    if !tx.prepare_cached("SELECT 1 FROM repos WHERE id = ?1")?.exists([id])? {
+        let rest = json!({
+            "id": id,
+            "node_id": r["id"],
+            "name": r["name"],
+            "owner": { "login": r["owner"]["login"] },
+            "description": r["description"],
+            "language": r["primaryLanguage"]["name"],
+            "default_branch": r["defaultBranchRef"]["name"],
+            "license": { "spdx_id": r["licenseInfo"]["spdxId"] },
+            "private": r["isPrivate"],
+            "fork": r["isFork"],
+            "stargazers_count": r["stargazerCount"],
+            "forks_count": r["forkCount"],
+            "pushed_at": r["pushedAt"],
+            "updated_at": r["updatedAt"],
+        });
+        repo(tx, &rest, false)?;
+        tx.prepare_cached("UPDATE repos SET explore_only = 1 WHERE id = ?1")?.execute([id])?;
+    }
+    Ok(Some(id))
+}
+
+/// Run `SEARCHES`, write the items and replace each query's `search_hits`.
+pub async fn searches(gh: &Github, token: &str, db: &Arc<Db>, now: i64, emit: Emit<'_>) -> Result<()> {
+    for (query, q) in SEARCHES {
+        let hits = search_ids(gh, token, &format!("{q} sort:updated-desc")).await?;
+        fetch_hits(gh, token, db, &hits).await?;
+        let ids = ids_json(&hits.iter().map(|h| h.id).collect::<Vec<_>>());
+        write(db, move |c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM search_hits WHERE query = ?1", [query])?;
+            // Only items that were written (a null node is skipped).
+            tx.execute(
+                "INSERT INTO search_hits (query, issue_id)
+                 SELECT ?1, id FROM issues WHERE id IN (SELECT value FROM json_each(?2))",
+                params![query, ids],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+        emit(&["issues", "pr", "search"]);
+    }
+    write(db, move |c| Ok(save_state(c, "search", &touched(now))?)).await?;
+    Ok(())
+}
+
+// ---- auto-pin ----------------------------------------------------------------
+
+/// Once per database: when no repo is pinned, pin up to `AUTO_PIN_MAX` of the
+/// viewer's own / member repos (not forks) pushed within `AUTO_PIN_DAYS`,
+/// newest push first. Returns how many repos were pinned. Waits until the
+/// repo list has member rows; the setting `auto_pin` marks it done.
+pub fn auto_pin(conn: &mut Connection, now: i64) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    if fl_db::queries::layout::setting(&tx, "auto_pin")?.is_some()
+        || !tx.prepare("SELECT 1 FROM repos WHERE member = 1")?.exists([])?
+    {
+        return Ok(0);
+    }
+    let pinned = if tx.prepare("SELECT 1 FROM repos WHERE pinned = 1")?.exists([])? {
+        0
+    } else {
+        tx.execute(
+            "UPDATE repos SET pinned = 1, explore_only = 0 WHERE id IN (
+               SELECT id FROM repos WHERE member = 1 AND is_fork = 0 AND pushed_at >= ?1
+               ORDER BY pushed_at DESC LIMIT ?2)",
+            params![now - AUTO_PIN_DAYS * 86_400, AUTO_PIN_MAX],
+        )?
+    };
+    fl_db::queries::layout::set_setting(&tx, "auto_pin", "1")?;
+    tx.commit()?;
+    Ok(pinned)
 }
 
 fn write_labels(tx: &Transaction<'_>, repo_id: i64, labels: &[Value]) -> rusqlite::Result<()> {

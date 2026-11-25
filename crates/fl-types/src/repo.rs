@@ -77,6 +77,8 @@ pub struct RepoOverview {
     pub starred: bool,
     pub open_prs: u32,
     pub open_issues: u32,
+    /// Deep sync reads only the items that involve the viewer (large repos).
+    pub sync_mine: bool,
     pub languages: Vec<LanguageShare>,
     pub commits: Vec<CommitRow>,
     pub releases: Vec<ReleaseRow>,
