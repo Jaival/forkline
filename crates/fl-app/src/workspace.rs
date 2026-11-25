@@ -32,7 +32,7 @@ use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
 use crate::theme::TextScale as _;
 
-actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, OpenAppearance, NextTab, PrevTab, ToggleSidebar]);
+actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, SignOut, OpenAppearance, NextTab, PrevTab, ToggleSidebar]);
 
 // A tab's view changed state the saved layout holds (e.g. a queue went flat).
 actions!(forkline, [SaveLayout]);
@@ -111,7 +111,9 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(save_layout: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         crate::bench::mark("workspace_new", cx);
-        let (dock, _skin) = DockSkin::dock_area("main", Some(LAYOUT_VERSION), window, cx);
+        let (dock, skin) = DockSkin::dock_area("main", Some(LAYOUT_VERSION), window, cx);
+        // An X on every closable tab. The kit has no hover-only mode.
+        skin.set_close_button_visible(true, cx);
         let store = Store::global(cx);
 
         // Read synchronously: one small row, and it decides the first frame.
@@ -317,7 +319,8 @@ impl Workspace {
             return;
         }
         self.palette_return = window.focused(cx);
-        let palette = cx.new(|cx| Palette::new(&self.pinned, window, cx));
+        let auth = self.footer.read(cx).auth().cloned();
+        let palette = cx.new(|cx| Palette::new(&self.pinned, auth.as_ref(), window, cx));
         self._palette_subscription = Some(cx.subscribe_in(&palette, window, Self::on_palette_event));
         self.palette = Some(palette);
         cx.notify();
@@ -522,8 +525,17 @@ impl Workspace {
         self.sidebar_open
     }
 
-    pub(crate) fn toggle_account(&mut self, cx: &mut Context<Self>) {
-        self.footer.update(cx, |footer, cx| footer.toggle_account(cx));
+    pub(crate) fn sign_out(&mut self, cx: &mut Context<Self>) {
+        self.footer.update(cx, |footer, cx| footer.sign_out(cx));
+    }
+
+    fn on_sign_out(&mut self, _: &SignOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.sign_out(cx);
+    }
+
+    /// The sign-in state, once the footer has read it.
+    pub(crate) fn auth<'a>(&self, cx: &'a App) -> Option<&'a fl_types::AuthState> {
+        self.footer.read(cx).auth()
     }
 
     /// Tab group holding the focused tab (or the first group), and its active panel.
@@ -750,6 +762,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_remove_tab))
             .on_action(cx.listener(Self::on_open_palette))
             .on_action(cx.listener(Self::on_open_sign_in))
+            .on_action(cx.listener(Self::on_sign_out))
             .on_action(cx.listener(Self::on_open_appearance))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
@@ -824,7 +837,9 @@ impl Render for Workspace {
                         .pt(px(48.))
                         .pb(px(24.))
                         .items_start()
-                        .child(div().flex().max_h_full().child(dialog)),
+                        // A column with a height limit: the dialog shrinks and
+                        // its body scrolls in a low window.
+                        .child(div().flex().flex_col().max_h_full().child(dialog)),
                 )
                 .with_priority(2)
             }))

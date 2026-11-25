@@ -10,7 +10,7 @@ use gpui_kit::component::{Sizable as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    Styled as _, Window, div, px,
 };
 
 use crate::theme::{ActivePalette as _, Choices, Palette, RAIL_BUTTON, RAIL_WIDTH};
@@ -29,7 +29,7 @@ pub fn render(
 ) -> impl IntoElement + use<> {
     let p = cx.palette();
     let button = |id: &'static str, icon: IconName, tip: &str, selected: bool| {
-        let (bg, fg) = if selected { (p.raised, p.accent_text) } else { (p.surface.opacity(0.), p.text_muted) };
+        let (bg, fg) = if selected { (p.selected, p.accent_text) } else { (p.surface.opacity(0.), p.text_muted) };
         let style = ButtonCustomVariant::new(cx).color(bg).foreground(fg).hover(p.raised).active(p.raised);
         Button::new(id)
             .custom(style)
@@ -82,29 +82,16 @@ pub fn render(
     let theme_icon = if p.dark { IconName::Moon } else { IconName::Sun };
     let theme_button = button("nav-theme", theme_icon, "Theme", false).dropdown_menu(theme_menu(ws));
 
-    let avatar = login.map(|login| {
-        let (bg, fg) = p.avatar(login);
-        let ws = ws.clone();
-        div()
-            .id("nav-account")
+    let account = login.map(|login| {
+        let style = ButtonCustomVariant::new(cx).color(p.surface.opacity(0.)).foreground(p.text).hover(p.raised).active(p.raised);
+        Button::new("nav-account")
+            .custom(style)
+            .with_size(px(RAIL_BUTTON))
+            .rounded(px(8.))
             .mt(px(4.))
-            .size(px(28.))
-            .flex_none()
-            .rounded_full()
-            .bg(bg)
-            .text_color(fg)
-            .text_size(px(11.)).line_height(px(14.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .child(initials(login))
-            .tooltip({
-                let tip = format!("Signed in as {login}");
-                move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
-            })
-            .on_click(move |_, _, cx| ws.update(cx, |ws, cx| ws.toggle_account(cx)))
+            .child(avatar(login, 28., p))
+            .tooltip(format!("Signed in as {login}"))
+            .dropdown_menu(account_menu(ws, login))
     });
 
     v_flex()
@@ -130,7 +117,26 @@ pub fn render(
         .child(div().flex_1())
         .child(expand)
         .child(theme_button)
-        .children(avatar)
+        .children(account)
+}
+
+/// The account menu (sidebar and rail): who is signed in, and Sign out. A
+/// kit menu, so it closes on an outside click and on Esc.
+pub fn account_menu(
+    ws: &Entity<Workspace>,
+    login: &str,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    let ws = ws.clone();
+    let title = format!("Signed in as {login}");
+    move |menu, _, cx| {
+        let menu = menu.label(title.clone());
+        if ws.read(cx).auth(cx).is_some_and(|a| a.env_override) {
+            return menu.label("Set by FORKLINE_GITHUB_TOKEN. Unset it to sign out.");
+        }
+        let ws = ws.clone();
+        menu.separator()
+            .item(PopupMenuItem::new("Sign out").on_click(move |_, _, cx| ws.update(cx, |ws, cx| ws.sign_out(cx))))
+    }
 }
 
 /// A round avatar of `size` px: the login's initials on its hash colour.

@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use fl_db::queries::views;
-use fl_types::{PageReq, QueueKind, RepoSummary, SavedView};
+use fl_types::{AuthState, PageReq, QueueKind, RepoSummary, SavedView};
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::dock::ClosePanel;
 use gpui_kit::component::{IndexPath, h_flex, v_flex};
@@ -24,7 +24,9 @@ use crate::view_ref::ViewRef;
 use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
-use crate::workspace::{GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SplitRight, ToggleSidebar, ToggleTheme};
+use crate::workspace::{
+    GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SignOut, SplitRight, ToggleSidebar, ToggleTheme,
+};
 use crate::theme::TextScale as _;
 
 #[cfg(test)]
@@ -91,7 +93,8 @@ pub struct Palette {
 impl Palette {
     /// `window` still has focus on the view that was active: the item actions
     /// listed here are the ones that view can run now.
-    pub fn new(pinned: &[RepoSummary], window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `auth`: the sign-in state; it picks "Sign in" or "Sign out".
+    pub fn new(pinned: &[RepoSummary], auth: Option<&AuthState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.new(|cx| CommandState::new(window, cx));
         let mut go = vec![
             go_to("Inbox", ViewRef::Inbox),
@@ -158,7 +161,7 @@ impl Palette {
         })
         .collect();
 
-        let workspace = vec![
+        let mut workspace = vec![
             action("New tab", Some("Ctrl+T"), NewTab),
             action("Close tab", Some("Ctrl+W"), ClosePanel),
             action("Split right", Some("Ctrl+\\"), SplitRight),
@@ -167,8 +170,12 @@ impl Palette {
             action("Toggle sidebar", Some("Ctrl+B"), ToggleSidebar),
             action("Toggle theme", None, ToggleTheme),
             action("Appearance…", None, OpenAppearance),
-            action("Sign in to GitHub", None, OpenSignIn),
         ];
+        match auth {
+            Some(a) if a.signed_in && !a.env_override => workspace.push(action("Sign out", None, SignOut)),
+            Some(a) if a.signed_in => {}
+            _ => workspace.push(action("Sign in to GitHub", None, OpenSignIn)),
+        }
 
         // After the availability check above: that one needs the old focus.
         state.update(cx, |state, cx| state.focus(window, cx));

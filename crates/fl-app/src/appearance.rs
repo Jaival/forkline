@@ -19,7 +19,7 @@ use gpui_kit::component::{Sizable as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Pixels, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions, div, px,
 };
 
@@ -406,10 +406,14 @@ fn segment(
 
 /// The hue slider's track: the swatch colour at every hue, left (0°) to
 /// right (359°). GPUI gradients have two stops, so it is one segment per 30°.
-fn hue_strip() -> impl IntoElement {
+/// `rem`: the window's rem size.
+fn hue_strip(rem: Pixels) -> impl IntoElement {
     use gpui_kit::{linear_color_stop, linear_gradient};
-    // The kit slider's track is 24 px high; the strip sits in its middle.
-    h_flex().absolute().left_0().right_0().top(px(8.)).h(px(8.)).rounded_full().overflow_hidden().children((0..12u16).map(|i| {
+    // The kit sizes the slider in rem (track 1.5 rem, bar 0.375 rem, thumb
+    // 1 rem) but offsets the thumb by -5 px, so the thumb's centre is at
+    // 1.0625 rem - 5 px from the top. Centre the 8 px strip there.
+    let top = rem * 1.0625 - px(9.);
+    h_flex().absolute().left_0().right_0().top(top).h(px(8.)).rounded_full().overflow_hidden().children((0..12u16).map(|i| {
         let (from, to) = (theme::swatch(i * 30), theme::swatch((i * 30 + 30).min(359)));
         div().flex_1().h_full().bg(linear_gradient(90., linear_color_stop(from, 0.), linear_color_stop(to, 1.)))
     }))
@@ -420,8 +424,9 @@ fn heading(text: impl Into<SharedString>, ui: &Palette) -> gpui_kit::Div {
 }
 
 impl Render for Appearance {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = *cx.palette();
+        let rem = window.rem_size();
         let dark = self.editing_dark;
         let accent = self.choices.accent;
         let accent_picked = self.choices.pick(dark) == Pick::Accent;
@@ -510,7 +515,7 @@ impl Render for Appearance {
                     .child(
                         div()
                             .relative()
-                            .child(hue_strip())
+                            .child(hue_strip(rem))
                             .child(
                                 Slider::new(&self.hue)
                                     .bg(gpui_kit::transparent_black())
@@ -612,6 +617,7 @@ impl Render for Appearance {
             .on_action(cx.listener(Self::cancel))
             .w(px(680.))
             .max_h_full()
+            .min_h_0()
             .p(px(20.))
             .gap(px(16.))
             .rounded(px(10.))

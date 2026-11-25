@@ -103,6 +103,23 @@ fn enter_runs_the_selected_command(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn signed_in_offers_sign_out_and_it_signs_out(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    let signed_in = |cx: &mut TestAppContext| cx.read(|cx| ws.read(cx).footer().read(cx).auth().map(|a| a.signed_in));
+    crate::test_support::wait_for(cx, "auth read", |cx| signed_in(cx).is_some());
+    press(cx, handle, "ctrl-k");
+    let l = labels(cx, &ws);
+    assert!(has(&l, "Sign out") && !has(&l, "Sign in to GitHub"), "{l:?}");
+    type_text(cx, handle, "sign out");
+    press(cx, handle, "enter");
+    crate::test_support::wait_for(cx, "signed out", |cx| signed_in(cx) == Some(false));
+    press(cx, handle, "escape");
+    press(cx, handle, "ctrl-k");
+    let l = labels(cx, &ws);
+    assert!(has(&l, "Sign in to GitHub") && !has(&l, "Sign out"), "{l:?}");
+}
+
+#[gpui_kit::test]
 fn escape_clears_then_closes_and_returns_focus(cx: &mut TestAppContext) {
     let (handle, ws, _dir) = start(cx);
     let before = focus_id(cx, handle);

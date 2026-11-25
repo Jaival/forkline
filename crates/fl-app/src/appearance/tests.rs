@@ -268,6 +268,15 @@ fn the_dialog_fits_a_short_window_and_its_body_scrolls(cx: &mut TestAppContext) 
         assert!(done.bottom() <= gpui_kit::px(500.), "{tab}: Done is below the window: {done:?}");
         assert!(body.bottom() <= done.top(), "{tab}: the body overlaps the footer");
     }
+    // The body starts at its top: the first section is shown at full height,
+    // not squashed or scrolled away.
+    click(cx, handle, "appearance-tab-colours");
+    let (system, body) = cx
+        .update_window(handle, |_, window, _| {
+            (window.find("appearance-mode-system").bounds(), window.find("appearance-body").bounds())
+        })
+        .unwrap();
+    assert!(system.top() >= body.top() && system.size.height >= gpui_kit::px(20.), "mode row {system:?} in body {body:?}");
     // The last control of the Colours tab scrolls into reach.
     click(cx, handle, "appearance-tab-colours");
     let tint = |cx: &mut TestAppContext| {
