@@ -572,7 +572,8 @@ fn copying_a_masked_line_gives_the_full_token(cx: &mut TestAppContext) {
 }
 
 /// With each bundled font (real DirectWrite metrics), queue rows, tab titles
-/// and diff lines keep their fixed heights.
+/// and diff lines keep their fixed heights; at another font size, queue rows
+/// and diff lines scale with it.
 #[test]
 fn rows_tabs_and_diff_lines_keep_their_heights_with_every_font() {
     use crate::fonts::{CODE_FONTS, Fonts, UI_FONTS};
@@ -582,13 +583,20 @@ fn rows_tabs_and_diff_lines_keep_their_heights_with_every_font() {
         let dir = tempfile::tempdir().unwrap();
         let (handle, ws) = start(cx, dir.path());
         open_files(cx, handle, &ws);
-        let mut tab_height = None;
+        let mut tab_height = std::collections::HashMap::new();
         // Every interface font, every code font, and Obel Mono unmasked.
         let mut choices: Vec<Fonts> = UI_FONTS.iter().map(|ui| Fonts { ui, ..Fonts::default() }).collect();
         choices.extend(CODE_FONTS.iter().map(|mono| Fonts { mono, ..Fonts::default() }));
         choices.push(Fonts { mask_secrets: false, ..Fonts::default() });
+        for size in [crate::fonts::SIZES[0], 140] {
+            choices.push(Fonts { size, ..Fonts::default() });
+        }
         for fonts in choices {
-            let label = format!("{} + {}", fonts.ui.title, fonts.code().title);
+            let label = format!("{} + {} at {}%", fonts.ui.title, fonts.code().title, fonts.size);
+            let scale = f32::from(fonts.size) / 100.;
+            // Layout snaps to whole pixels, so a scaled height may be off by
+            // a fraction.
+            let slack = gpui_kit::px(if fonts.size == 100 { 0.01 } else { 1. });
             cx.update(|cx| {
                 cx.set_global(fonts);
                 crate::fonts::apply(cx);
@@ -599,19 +607,20 @@ fn rows_tabs_and_diff_lines_keep_their_heights_with_every_font() {
                 let rows = window.find_all(("queue-row", 0usize));
                 assert!(!rows.is_empty(), "{label}: a queue row");
                 for row in rows {
-                    assert_eq!(row.bounds().size.height, gpui_kit::px(ROW_HEIGHT), "{label}: queue row");
+                    let h = row.bounds().size.height;
+                    assert!((h - gpui_kit::px(ROW_HEIGHT * scale)).abs() < slack, "{label}: queue row {h:?}");
                 }
                 let tabs = window.find_all("tab-title");
                 assert!(!tabs.is_empty(), "{label}: a tab");
                 for t in tabs {
                     let h = t.bounds().size.height;
-                    assert_eq!(*tab_height.get_or_insert(h), h, "{label}: tab title");
+                    assert_eq!(*tab_height.entry(fonts.size).or_insert(h), h, "{label}: tab title");
                 }
                 let lines = window.find_all(("line", 0usize));
                 assert!(!lines.is_empty(), "{label}: a diff line");
                 for line in lines {
                     let h = line.bounds().size.height;
-                    assert!((h - LINE_CODE).abs() < gpui_kit::px(0.01), "{label}: diff line {h:?}");
+                    assert!((h - LINE_CODE * scale).abs() < slack, "{label}: diff line {h:?}");
                 }
             })
             .unwrap();

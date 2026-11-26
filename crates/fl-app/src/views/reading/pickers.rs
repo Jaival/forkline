@@ -18,7 +18,7 @@ use gpui_kit::{
 use super::{Detail, ReadingPane};
 use crate::theme::ActivePalette as _;
 use crate::store::Store;
-use crate::theme::TextScale as _;
+use crate::theme::{TextScale as _, scaled};
 
 actions!(reading, [EditLabels, EditAssignees, ClosePicker]);
 
@@ -181,7 +181,7 @@ impl ReadingPane {
                         .test_support()
                         .gap(px(6.))
                         .px(px(6.))
-                        .h(px(24.))
+                        .h(scaled(24.))
                         .items_center()
                         .rounded(px(4.))
                         .cursor_pointer()

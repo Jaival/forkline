@@ -144,17 +144,17 @@ fn main() {
         }
         bench::mark("store_ready", cx);
 
-        let [mode, dark, light, accent, ui_font, mono_font, mask] = Store::global(cx)
+        let [mode, dark, light, accent, ui_font, mono_font, mask, font_size] = Store::global(cx)
             .read(cx)
             .db()
             .read(|c| {
-                Ok(["theme", "colors_dark", "colors_light", "accent", "ui_font", "mono_font", "mask_secrets"]
+                Ok(["theme", "colors_dark", "colors_light", "accent", "ui_font", "mono_font", "mask_secrets", "font_size"]
                     .map(|key| layout::setting(c, key).ok().flatten()))
             })
             .unwrap_or_default();
         let mode = theme::mode_from_setting(mode.as_deref());
         cx.set_global(theme::Choices { mode, ..theme::Choices::from_settings(dark.as_deref(), light.as_deref(), accent.as_deref()) });
-        cx.set_global(fonts::Fonts::from_settings(ui_font.as_deref(), mono_font.as_deref(), mask.as_deref()));
+        cx.set_global(fonts::Fonts::from_settings(ui_font.as_deref(), mono_font.as_deref(), mask.as_deref(), font_size.as_deref()));
         let picked = Store::global(cx).read(cx).db().read(fl_db::queries::repo::colors).unwrap_or_default();
         cx.set_global(theme::RepoColors::new(picked));
         theme::apply(mode, None, cx);

@@ -23,7 +23,7 @@ use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::workspace::OpenView;
-use crate::theme::TextScale as _;
+use crate::theme::{TextScale as _, scaled};
 
 enum Load {
     Loading,
@@ -173,7 +173,7 @@ fn card(id: &'static str, count: u32, label: &'static str, view: ViewRef, cx: &A
         .cursor_pointer()
         .hover(|s| s.bg(theme.hover))
         .on_click(move |_, window, cx| window.dispatch_action(Box::new(OpenView(view.clone())), cx))
-        .child(div().text_size(px(24.)).line_height(px(30.)).font_weight(FontWeight::SEMIBOLD).child(count.to_string()))
+        .child(div().text_size(scaled(24.)).line_height(scaled(30.)).font_weight(FontWeight::SEMIBOLD).child(count.to_string()))
         .child(div().text_body().text_color(theme.text_muted).child(label))
         .into_any_element()
 }
@@ -221,7 +221,7 @@ fn sparkline(values: Vec<u32>, color: Hsla) -> AnyElement {
             }
         },
     )
-    .h(px(40.))
+    .h(scaled(40.))
     .w_full()
     .into_any_element()
 }

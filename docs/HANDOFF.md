@@ -1866,3 +1866,40 @@ Open:
   3.7 ms, open cached item 8.9 ms, search p95 14.3 ms.
 
 Next: step 3 (font size), then steps 4 and 5 in parallel.
+
+### G3 step 3 state: font size (2026-11-26, branch `g3-font-size` on `g3-real-use`)
+
+- Setting `font_size`: a percent, one of `fonts::SIZES` (80-140 in
+  steps of 10; default 100). Bad values load 100. It lives in the
+  `Fonts` global, so the Appearance dialog's Cancel / Done cover it.
+- How it scales: `fonts::write_kit` sets the kit's `font_size` (the rem)
+  to `TEXT_BODY * size`. Kit widgets and the kit diff follow the rem.
+  App text goes through `theme::scaled(px)` (= px / `TEXT_BODY` rem):
+  `TextScale`, the heights of rows that hold text (queue, list rows,
+  sidebar, footer, tabs, headers, pickers, dialog segments) and the
+  sidebar width. Paddings, other widths and icons stay px. The queue's
+  virtual list re-measures its row sizes when the rem changes.
+- Keys: Ctrl+= (and Ctrl++), Ctrl+-, Ctrl+0 (`IncreaseFontSize`,
+  `DecreaseFontSize`, `ResetFontSize` in `workspace.rs`); they save at
+  once. With the Appearance dialog open they change the dialog's choice
+  instead. Palette: "Bigger text", "Smaller text", "Default text size".
+- Appearance, Fonts tab: "Text size" row with one button per size.
+- Tests: `appearance::tests::font_size_keys_*`, the dialog fit test at
+  100 % and 140 % (800x500), `fonts::tests::size_steps_stop_at_the_ends`,
+  and the real-font row / diff-line height test at 80 % and 140 %
+  (layout snaps to whole pixels, so scaled heights get 1 px slack).
+- Captures at 140 %: the dialog fits the minimum window and its body
+  scrolls. The queue pane keeps its px width, so its filter field gets
+  narrow ("Fil"); drag the split wider. Not fixed.
+- Bench on AC power (5 runs): diff scroll 240 fps, launch 231-257 ms,
+  switch tab 4.0-4.2 ms, open cached item 5.7-8.0 ms, search p95 11 ms.
+  One run of five was slow everywhere (all opens about 60 ms, scroll
+  30 fps) and missed search p95; the machine, not the code.
+- On battery the base commit and this branch both miss: diff scroll
+  102.6 fps, switch tab 9.6-9.8 ms. The 102.6 fps cap shows with the
+  native title bar too, so step 4 must bench on AC before it blames the
+  title bar.
+- Disk: D: was full; this branch built with `CARGO_TARGET_DIR` on C:.
+
+Next: steps 4 (custom title bar + fps) and 5 (workflow review), in
+parallel.

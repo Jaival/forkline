@@ -20,7 +20,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
-use crate::theme::TextScale as _;
+use crate::theme::{TextScale as _, scaled};
 
 const ROW_HEIGHT: f32 = 46.;
 
@@ -142,7 +142,7 @@ impl Render for HomeView {
         let theme = *cx.palette();
         let header = h_flex()
             .flex_none()
-            .h(px(36.))
+            .h(scaled(36.))
             .px(px(12.))
             .gap(px(8.))
             .items_center()

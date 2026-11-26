@@ -47,7 +47,7 @@ use crate::theme::ActivePalette as _;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
-use crate::theme::TextScale as _;
+use crate::theme::{TextScale as _, scaled};
 
 /// Review threads read per PR; the rail says when there are more.
 const THREAD_LIMIT: u32 = 100;
@@ -490,7 +490,7 @@ impl FilesTab {
             let name = file.path().rsplit('/').next().unwrap_or(file.path()).to_owned();
             h_flex()
                 .id(("files-row", ix))
-                .h(px(26.))
+                .h(scaled(26.))
                 .px(px(8.))
                 .gap(px(6.))
                 .items_center()
@@ -541,7 +541,7 @@ impl FilesTab {
         let split = self.diff.as_ref().is_some_and(|d| d.read(cx).mode() == DiffMode::Split);
         h_flex()
             .flex_none()
-            .h(px(32.))
+            .h(scaled(32.))
             .px(px(10.))
             .gap(px(8.))
             .items_center()

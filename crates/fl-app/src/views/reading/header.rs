@@ -10,7 +10,7 @@ use gpui_kit::{
 };
 
 use super::Detail;
-use crate::theme::{ActivePalette as _, Palette, StateColor, TextScale as _};
+use crate::theme::{ActivePalette as _, Palette, StateColor, TextScale as _, scaled};
 
 /// What the header shows beside the detail: assignees and pending markers.
 pub(super) struct Extra<'a> {
@@ -139,7 +139,7 @@ pub(super) fn render(row: Option<&QueueRow>, detail: Option<&Detail>, extra: Ext
 /// The state with its icon, on the state's fill.
 fn state_pill(text: &'static str, icon: IconName, color: StateColor) -> Div {
     h_flex()
-        .h(px(22.))
+        .h(scaled(22.))
         .pl(px(7.))
         .pr(px(9.))
         .gap(px(5.))

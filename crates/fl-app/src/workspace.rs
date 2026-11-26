@@ -34,6 +34,9 @@ use crate::theme::TextScale as _;
 
 actions!(forkline, [NewTab, SplitRight, ToggleTheme, OpenPalette, OpenSignIn, SignOut, OpenAppearance, NextTab, PrevTab, ToggleSidebar]);
 
+// The font size (`fonts::SIZES`): Ctrl+= / Ctrl+- / Ctrl+0.
+actions!(forkline, [IncreaseFontSize, DecreaseFontSize, ResetFontSize]);
+
 // A tab's view changed state the saved layout holds (e.g. a queue went flat).
 actions!(forkline, [SaveLayout]);
 
@@ -78,6 +81,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PrevTab, None),
         KeyBinding::new("ctrl-b", ToggleSidebar, None),
+        KeyBinding::new("ctrl-=", IncreaseFontSize, None),
+        KeyBinding::new("ctrl-+", IncreaseFontSize, None),
+        KeyBinding::new("ctrl--", DecreaseFontSize, None),
+        KeyBinding::new("ctrl-0", ResetFontSize, None),
     ]);
 }
 
@@ -398,6 +405,31 @@ impl Workspace {
             }));
         self.appearance = Some(dialog);
         cx.notify();
+    }
+
+    /// Step the font size (`None`: back to the default) and save it as
+    /// `font_size`. While the Appearance dialog is open its choice changes
+    /// instead: Done saves it, Cancel puts it back.
+    pub(crate) fn step_font_size(&mut self, bigger: Option<bool>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.appearance.clone() {
+            dialog.update(cx, |dialog, cx| dialog.step_size(bigger, window, cx));
+            return;
+        }
+        let mut fonts = cx.try_global::<crate::fonts::Fonts>().copied().unwrap_or_default();
+        let size = bigger.map_or(crate::fonts::DEFAULT_SIZE, |bigger| fonts.step_size(bigger));
+        if size == fonts.size {
+            return;
+        }
+        fonts.size = size;
+        cx.set_global(fonts);
+        gpui_kit::component::Theme::update(cx, |t| crate::fonts::write_kit(&fonts, t));
+        window.refresh();
+        let db = Store::global(cx).read(cx).db().clone();
+        let value = size.to_string();
+        cx.background_spawn(async move {
+            let _ = db.write(|c| layout::set_setting(c, "font_size", &value));
+        })
+        .detach();
     }
 
     /// The open "Appearance…" dialog, if any.
@@ -767,6 +799,9 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(|this, _: &IncreaseFontSize, w, cx| this.step_font_size(Some(true), w, cx)))
+            .on_action(cx.listener(|this, _: &DecreaseFontSize, w, cx| this.step_font_size(Some(false), w, cx)))
+            .on_action(cx.listener(|this, _: &ResetFontSize, w, cx| this.step_font_size(None, w, cx)))
             .size_full()
             .bg(cx.palette().bg)
             .text_color(cx.palette().text)

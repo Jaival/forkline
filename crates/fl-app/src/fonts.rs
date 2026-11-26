@@ -5,9 +5,14 @@
 //!
 //! Only the chosen fonts are registered at startup ([`apply`]); the others
 //! are registered when the Appearance dialog previews them ([`load_all`]).
-//! Settings: `ui_font` and `mono_font` (a font id as JSON, e.g. `"inter"`) and
-//! `mask_secrets` (`true` / `false`). Unknown names and bad JSON load the
+//! Settings: `ui_font` and `mono_font` (a font id as JSON, e.g. `"inter"`),
+//! `mask_secrets` (`true` / `false`) and `font_size` (a percent of the
+//! default size, one of [`SIZES`]). Unknown names and bad JSON load the
 //! defaults.
+//!
+//! The font size scales the kit's rem (the body text size), so kit widgets,
+//! the diff's code, and the app's text and text rows
+//! ([`crate::theme::scaled`]) grow with it. Paddings, widths and icons stay.
 //!
 //! "Hide secrets in code" draws tokens and secrets as mask dots. It is Obel
 //! Mono's `ss01` feature, which DirectWrite applies, but GPUI passes font
@@ -95,19 +100,26 @@ pub const CODE_FONTS: [FontInfo; 10] = [
 pub const OBEL_MONO_MASKED: FontInfo =
     font!("obel-mono", "Obel Mono Masked", "Obel Mono Masked", ["ObelMonoMasked[wght].ttf"]);
 
+/// The font sizes offered (percent of the default); Ctrl+= / Ctrl+- step
+/// through them.
+pub const SIZES: [u16; 7] = [80, 90, 100, 110, 120, 130, 140];
+pub const DEFAULT_SIZE: u16 = 100;
+
 /// The font choices (a GPUI global).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fonts {
     pub ui: &'static FontInfo,
     pub mono: &'static FontInfo,
     pub mask_secrets: bool,
+    /// Percent of the default text size, one of [`SIZES`].
+    pub size: u16,
 }
 
 impl Global for Fonts {}
 
 impl Default for Fonts {
     fn default() -> Self {
-        Self { ui: &UI_FONTS[0], mono: &CODE_FONTS[0], mask_secrets: true }
+        Self { ui: &UI_FONTS[0], mono: &CODE_FONTS[0], mask_secrets: true, size: DEFAULT_SIZE }
     }
 }
 
@@ -120,21 +132,34 @@ fn find(list: &'static [FontInfo], value: Option<&str>) -> &'static FontInfo {
 }
 
 impl Fonts {
-    pub fn from_settings(ui: Option<&str>, mono: Option<&str>, mask: Option<&str>) -> Self {
+    pub fn from_settings(ui: Option<&str>, mono: Option<&str>, mask: Option<&str>, size: Option<&str>) -> Self {
         Self {
             ui: find(&UI_FONTS, ui),
             mono: find(&CODE_FONTS, mono),
             mask_secrets: mask.and_then(|v| serde_json::from_str::<bool>(v).ok()).unwrap_or(true),
+            size: size
+                .and_then(|v| serde_json::from_str::<u16>(v).ok())
+                .filter(|s| SIZES.contains(s))
+                .unwrap_or(DEFAULT_SIZE),
         }
     }
 
-    /// The rows to save: `ui_font`, `mono_font`, `mask_secrets`.
-    pub fn settings(&self) -> [(&'static str, String); 3] {
+    /// The rows to save: `ui_font`, `mono_font`, `mask_secrets`, `font_size`.
+    pub fn settings(&self) -> [(&'static str, String); 4] {
         [
             ("ui_font", serde_json::to_string(self.ui.id).expect("a string")),
             ("mono_font", serde_json::to_string(self.mono.id).expect("a string")),
             ("mask_secrets", self.mask_secrets.to_string()),
+            ("font_size", self.size.to_string()),
         ]
+    }
+
+    /// The next size in [`SIZES`] (`bigger`) or the one before; the same
+    /// size at either end.
+    pub fn step_size(&self, bigger: bool) -> u16 {
+        let ix = SIZES.iter().position(|s| *s == self.size).unwrap_or(2);
+        let ix = if bigger { (ix + 1).min(SIZES.len() - 1) } else { ix.saturating_sub(1) };
+        SIZES[ix]
     }
 
     /// Whether the code font can hide secrets (only Obel Mono can).
@@ -210,10 +235,12 @@ pub fn prewarm(fonts: &Fonts, cx: &App) {
         .detach();
 }
 
-/// Make `fonts` the kit theme's interface and code fonts.
+/// Make `fonts` the kit theme's interface and code fonts, and scale its base
+/// size (the rem) by the font size.
 pub fn write_kit(fonts: &Fonts, t: &mut Theme) {
     t.font_family = fonts.ui.family.into();
     t.mono_font_family = fonts.code().family.into();
+    t.font_size = crate::theme::TEXT_BODY * (f32::from(fonts.size) / 100.);
 }
 
 /// Register the chosen fonts and show them (the colours stay).
