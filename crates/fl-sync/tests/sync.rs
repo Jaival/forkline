@@ -70,6 +70,174 @@ async fn repo_metadata_pages_starred_and_etag() {
     assert_eq!(env.q::<i64>("SELECT sum(starred) FROM repos"), 1);
     assert_eq!(env.q::<String>("SELECT etag FROM sync_state WHERE key = 'repos'"), "\"e1\"");
     assert!(env.emitted.lock().unwrap().contains(&"repos".to_owned()));
+    // Own / member repos come from /user/repos only.
+    assert_eq!(env.q::<String>("SELECT group_concat(id) FROM (SELECT id FROM repos WHERE member = 1 ORDER BY id)"), "1,3000");
+    // Pushed in 2024: too old to auto-pin, and auto-pin does not run again.
+    assert_eq!(env.q::<i64>("SELECT sum(pinned) FROM repos"), 0);
+    assert_eq!(env.q::<String>("SELECT value_json FROM settings WHERE key = 'auto_pin'"), "1");
+}
+
+#[test]
+fn auto_pin_takes_recent_member_repos_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = fl_db::Db::open(&dir.path().join("t.db")).unwrap();
+    let now = 100 * 86_400;
+    let day = 86_400;
+    // 12 recent member repos (ids 1..=12, newer id = newer push), one old,
+    // one fork, one starred-only.
+    let mut sql = String::new();
+    for id in 1..=12 {
+        sql.push_str(&format!(
+            "INSERT INTO repos (id, node_id, owner, name, updated_at, member, pushed_at) VALUES ({id}, 'R', 'o', 'r{id}', 0, 1, {});",
+            now - (20 - id) * day
+        ));
+    }
+    sql.push_str(&format!(
+        "INSERT INTO repos (id, node_id, owner, name, updated_at, member, pushed_at) VALUES (20, 'R', 'o', 'old', 0, 1, {});
+         INSERT INTO repos (id, node_id, owner, name, updated_at, member, is_fork, pushed_at) VALUES (21, 'R', 'o', 'fork', 0, 1, 1, {now});
+         INSERT INTO repos (id, node_id, owner, name, updated_at, starred, pushed_at) VALUES (22, 'R', 'x', 'star', 0, 1, {now});",
+        now - 50 * day
+    ));
+    db.write(|c| c.execute_batch(&sql)).unwrap();
+    assert_eq!(db.write(|c| fl_sync::sync::auto_pin(c, now)).unwrap(), 10);
+    let pinned: String =
+        db.read(|c| c.query_row("SELECT group_concat(id) FROM (SELECT id FROM repos WHERE pinned = 1 ORDER BY id)", [], |r| r.get(0))).unwrap();
+    assert_eq!(pinned, "3,4,5,6,7,8,9,10,11,12");
+    // The user unpins everything: auto-pin does not come back.
+    db.write(|c| c.execute_batch("UPDATE repos SET pinned = 0")).unwrap();
+    assert_eq!(db.write(|c| fl_sync::sync::auto_pin(c, now)).unwrap(), 0);
+}
+
+#[test]
+fn auto_pin_skips_a_user_who_already_pinned() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = fl_db::Db::open(&dir.path().join("t.db")).unwrap();
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO repos (id, node_id, owner, name, updated_at, member, pushed_at, pinned) VALUES (1, 'R', 'o', 'a', 0, 1, 100, 1);
+             INSERT INTO repos (id, node_id, owner, name, updated_at, member, pushed_at) VALUES (2, 'R', 'o', 'b', 0, 1, 100);",
+        )
+    })
+    .unwrap();
+    assert_eq!(db.write(|c| fl_sync::sync::auto_pin(c, 100)).unwrap(), 0);
+    assert_eq!(db.read(|c| c.query_row("SELECT sum(pinned) FROM repos", [], |r| r.get::<_, i64>(0))).unwrap(), 1);
+}
+
+/// Search hits for one query; each item is `(node id, database id, updatedAt)`.
+fn search_page(hits: &[(&str, i64, &str)]) -> Value {
+    let nodes: Vec<Value> = hits.iter().map(|(n, id, u)| json!({ "id": n, "databaseId": id, "updatedAt": u })).collect();
+    json!({ "data": { "search": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": nodes } } })
+}
+
+/// An issue node as `nodes(ids:)` returns it, in repo 500 (`up/stream`).
+fn hit_node(id: i64, number: i64, updated: &str) -> Value {
+    let mut n = issue_node(id, number, updated);
+    n["__typename"] = json!("Issue");
+    n["repository"] = json!({ "databaseId": 500, "id": "R_500", "name": "stream", "owner": { "login": "up" },
+        "description": null, "primaryLanguage": null, "defaultBranchRef": { "name": "main" }, "licenseInfo": null,
+        "isPrivate": false, "isFork": false, "stargazerCount": 3, "forkCount": 0,
+        "pushedAt": "2024-01-01T00:00:00Z", "updatedAt": "2024-01-01T00:00:00Z" });
+    n
+}
+
+/// Viewer, repos and notifications fresh; no repo pinned: only searches run.
+async fn search_env() -> common::Env {
+    let env = common::env().await;
+    env.db
+        .write(|c| {
+            c.execute_batch(
+                "INSERT INTO sync_state (key, last_synced_at) VALUES ('repos', 4102444800);
+                 INSERT INTO sync_state (key, last_synced_at, poll_interval) VALUES ('notifications', 4102444800, 60);",
+            )
+        })
+        .unwrap();
+    env
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn searches_store_items_and_replace_hits() {
+    let env = search_env().await;
+    // Issue 1 is cached and current: it is not fetched again.
+    env.db.write(|c| c.execute_batch("UPDATE issues SET updated_at = 1704067200 WHERE id = 1")).unwrap();
+    // First run only; the next run falls through to the empty default.
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("assignee:@me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_page(&[
+            ("I_700", 700, "2024-02-01T00:00:00Z"),
+            ("I1", 1, "2024-01-01T00:00:00Z"),
+        ])))
+        .up_to_n_times(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("nodes(ids:$ids)"))
+        .and(body_string_contains("\"ids\":[\"I_700\"]"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "nodes": [hit_node(700, 7, "2024-02-01T00:00:00Z")] } })))
+        .expect(1)
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    // The new repo is added Explore-only; the item is a normal issue row.
+    assert_eq!(env.q::<i64>("SELECT explore_only FROM repos WHERE id = 500"), 1);
+    assert_eq!(env.q::<String>("SELECT title FROM issues WHERE id = 700"), "Title 7");
+    assert_eq!(env.q::<String>("SELECT group_concat(issue_id) FROM (SELECT issue_id FROM search_hits WHERE query = 'assigned' ORDER BY 1)"), "1,700");
+    let issues = env
+        .db
+        .read(|c| {
+            fl_db::queries::queue::page(
+                c,
+                &fl_types::QueueQuery { kind: fl_types::QueueKind::Issues, repo_id: None, flat: true },
+                None,
+                fl_types::PageReq { offset: 0, limit: 10 },
+            )
+        })
+        .unwrap();
+    assert_eq!(issues.items.iter().map(|r| r.issue_id).collect::<Vec<_>>(), [Some(700), Some(1)]);
+
+    // Next run: the item left the search, so it leaves the list.
+    env.db.write(|c| c.execute_batch("DELETE FROM sync_state WHERE key = 'search'")).unwrap();
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM search_hits"), 0);
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM issues WHERE id = 700"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_repo_syncs_only_items_that_involve_the_viewer() {
+    let env = deep_env(ResponseTemplate::new(204)).await;
+    env.db.write(|c| c.execute_batch("UPDATE repos SET open_issues = 5000 WHERE id = 1")).unwrap();
+    // The full issue list must not be read.
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("issues(first"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("repo:o/r involves:@me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(search_page(&[("I_9", 9, "2024-03-01T00:00:00Z")])))
+        .mount(&env.server)
+        .await;
+    let mut node = issue_node(9, 9, "2024-03-01T00:00:00Z");
+    node["__typename"] = json!("Issue");
+    node["repository"] = json!({ "databaseId": 1 });
+    Mock::given(method("POST"))
+        .and(path("/graphql"))
+        .and(body_string_contains("nodes(ids:$ids)"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": { "nodes": [node] } })))
+        .mount(&env.server)
+        .await;
+
+    env.engine.sync_once().await;
+    assert_eq!(env.engine.status().await.unwrap().error, None);
+    assert_eq!(env.q::<i64>("SELECT repo_id FROM issues WHERE id = 9"), 1);
+    assert_eq!(env.q::<String>("SELECT cursor FROM sync_state WHERE key = 'repo:1:mine'"), "2024-03-01T00:00:00Z");
 }
 
 #[tokio::test(flavor = "multi_thread")]

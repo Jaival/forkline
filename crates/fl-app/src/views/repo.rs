@@ -6,7 +6,7 @@ use fl_db::queries::repo;
 use fl_types::{DataChanged, LanguageShare, RepoOverview};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::DropdownMenu as _;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -16,7 +16,7 @@ use gpui_kit::{
     Subscription, TestSupportExt as _, Window, canvas, div, point, px, rgb,
 };
 
-use super::repos::set_pinned;
+use super::repos::{set_pinned, set_sync_mine};
 use super::{Built, TogglePin};
 use crate::theme::ActivePalette as _;
 use crate::bench;
@@ -339,6 +339,28 @@ impl RepoView {
                                     .child("Colour"),
                             )
                             .dropdown_menu(move |menu, _, cx| crate::repo_color::menu_items(menu, id, &full_name, cx))
+                    })
+                    .when(pinned, |h| {
+                        let mine = o.sync_mine;
+                        h.child(
+                            Button::new("repo-sync-scope")
+                                .small()
+                                .outline()
+                                .dropdown_caret(true)
+                                .label(if mine { "Sync: items that involve me" } else { "Sync: all items" })
+                                .dropdown_menu(move |menu, _, _| {
+                                    menu.item(
+                                        PopupMenuItem::new("All issues and pull requests")
+                                            .checked(!mine)
+                                            .on_click(move |_, _, cx| set_sync_mine(id, false, cx)),
+                                    )
+                                    .item(
+                                        PopupMenuItem::new("Only items that involve me")
+                                            .checked(mine)
+                                            .on_click(move |_, _, cx| set_sync_mine(id, true, cx)),
+                                    )
+                                }),
+                        )
                     })
                     .child(
                         Button::new("repo-pin")

@@ -286,9 +286,10 @@ impl Engine {
         self.check_budget()?;
         let now = now();
         let emit = |s: &[&str]| self.emit(s);
-        let (has_viewer, repos, notes, due) = read(&self.db, move |c| {
+        let (has_viewer, repos, searches, notes, due) = read(&self.db, move |c| {
             let has_viewer = fl_db::queries::layout::setting(c, "viewer")?.is_some();
             let repos = sync::state(c, "repos")?.last_synced_at.unwrap_or(0);
+            let searches = sync::state(c, "search")?.last_synced_at.unwrap_or(0);
             let n = sync::state(c, "notifications")?;
             let notes = n.last_synced_at.unwrap_or(0) + n.poll_interval.unwrap_or(0).max(NOTIFICATIONS_MIN);
             let due: Vec<(i64, String)> = c
@@ -299,7 +300,7 @@ impl Engine {
                 )?
                 .query_map([DEEP_EVERY, now], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
-            Ok((has_viewer, repos, notes, due))
+            Ok((has_viewer, repos, searches, notes, due))
         })
         .await?;
 
@@ -309,6 +310,11 @@ impl Engine {
         let repos_due = repos + REPOS_EVERY <= now;
         if repos_due {
             sync::repos(&self.gh, &token, &self.db, now, &emit).await?;
+            if write(&self.db, move |c| Ok(sync::auto_pin(c, now)?)).await? > 0 {
+                emit(&["repos"]);
+                // The new pins are due on the next pass.
+                self.wake();
+            }
         }
         if notes <= now {
             sync::notifications(&self.gh, &token, &self.db, now, &emit).await?;
@@ -325,6 +331,20 @@ impl Engine {
                     let key = format!("repo:{repo_id}");
                     write(&self.db, move |c| {
                         Ok(sync::save_state(c, &key, &sync::State { last_synced_at: Some(now), ..Default::default() })?)
+                    })
+                    .await?;
+                }
+            }
+        }
+        if searches + DEEP_EVERY <= now {
+            self.check_budget()?;
+            match sync::searches(&self.gh, &token, &self.db, now, &emit).await {
+                Ok(()) => {}
+                Err(e @ (Error::RateLimited { .. } | Error::Unauthorized | Error::Network(_) | Error::Db(_))) => return Err(e),
+                Err(e) => {
+                    repo_error = repo_error.or(Some(format!("Search: {e}")));
+                    write(&self.db, move |c| {
+                        Ok(sync::save_state(c, "search", &sync::State { last_synced_at: Some(now), ..Default::default() })?)
                     })
                     .await?;
                 }

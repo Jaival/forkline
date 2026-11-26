@@ -660,12 +660,27 @@ impl Queue {
                     .key_context("QueryBar")
                     .on_action(cx.listener(Self::escape_filter))
                     .h(px(30.))
-                    .pl(px(20.))
+                    .pl(px(12.))
                     .pr(px(12.))
                     .gap(px(6.))
                     .items_center()
-                    .child(div().text_color(p.text_faint).child("/"))
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false)))
+                    // A field, not text: its own fill and border set it apart
+                    // from the ghost buttons beside it.
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(24.))
+                            .px(px(8.))
+                            .gap(px(6.))
+                            .items_center()
+                            .rounded(RADIUS)
+                            .bg(p.control)
+                            .border_1()
+                            .border_color(p.border_strong)
+                            .child(div().text_color(p.text_faint).child("/"))
+                            .child(div().flex_1().min_w_0().child(Input::new(&self.input).appearance(false).bordered(false))),
+                    )
                     .child(
                         Button::new("queue-grouped")
                             .ghost()

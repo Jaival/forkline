@@ -10,9 +10,19 @@ const INBOX_RANK: &str = "CASE n.reason WHEN 'review_requested' THEN 0 \
      WHEN 'mention' THEN 1 WHEN 'team_mention' THEN 1 WHEN 'assign' THEN 2 \
      WHEN 'author' THEN 3 ELSE 4 END";
 
-const VIEWER_REVIEW: &str = "i.is_pr = 1 AND i.state = 'open' AND i.id IN (SELECT pr_id FROM \
+/// Review requests: the viewer's search hits, plus local requests in
+/// synced repos (deep sync and fake data).
+const VIEWER_REVIEW: &str = "i.is_pr = 1 AND i.state = 'open' AND (i.id IN (SELECT issue_id FROM \
+     search_hits WHERE query = 'review_requested') OR i.id IN (SELECT pr_id FROM \
      pr_review_requests WHERE reviewer_login = \
-     (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer'))";
+     (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer')))";
+
+/// Pull requests and Issues: items of pinned repos and the viewer's search
+/// hits. Other cached items (a repo that was unpinned) can be stale.
+const PULLS: &str = "i.is_pr = 1 AND i.state = 'open' AND (i.repo_id IN (SELECT id FROM repos WHERE \
+     pinned = 1) OR i.id IN (SELECT issue_id FROM search_hits))";
+const ISSUES: &str = "i.is_pr = 0 AND i.state = 'open' AND (i.repo_id IN (SELECT id FROM repos WHERE \
+     pinned = 1) OR i.id IN (SELECT issue_id FROM search_hits))";
 
 /// An extra SQL condition on a queue (the `/` filter), built by
 /// `fl_search::queue_filter`. It may read the aliases `i` (issues), `r`
@@ -52,8 +62,8 @@ fn from_where(q: &QueueQuery, cond: Option<&Cond>, joins: bool) -> (String, Vec<
                 "issues i"
             },
             vec![match kind {
-                QueueKind::Pulls => "i.is_pr = 1 AND i.state = 'open'",
-                QueueKind::Issues => "i.is_pr = 0 AND i.state = 'open'",
+                QueueKind::Pulls => PULLS,
+                QueueKind::Issues => ISSUES,
                 _ => VIEWER_REVIEW,
             }],
             "i",

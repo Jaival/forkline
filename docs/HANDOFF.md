@@ -1791,3 +1791,78 @@ Plan: `docs/design/g3-plan.md`, from the user's first pass on a real
 account. The OAuth App is registered (device flow on); build with
 `FORKLINE_GITHUB_CLIENT_ID` set. Start with step 1: the real account has
 0 pinned repos, so every list is empty.
+
+### G3 step 1 state: repos on first sign-in (2026-11-25)
+
+Storage decision (user, option A): search results are normal `issues`
+rows plus a membership table, so open, search, unread and actions work on
+them.
+
+- Migration 0013: `search_hits(query, issue_id)`; `repos.member` (from
+  `/user/repos`), `repos.open_issues` (REST `open_issues_count`),
+  `repos.sync_scope` ('all' / 'mine' / NULL = automatic). It drops the
+  `repos` / `starred` ETags so the next sync fills the new columns.
+- `sync::searches` (every `DEEP_EVERY`): `is:open is:pr author:@me`,
+  `is:open is:pr review-requested:@me`, `is:open assignee:@me`. A light
+  search query reads ids + `updatedAt` (max 300 hits); only missing or
+  newer items are fetched with `nodes(ids:)` (10 per call) and written by
+  `write_issue`. Each run replaces that query's `search_hits` rows. A repo
+  seen first in a hit is added Explore-only.
+- Lists (`fl_db::queries::queue`): Pull requests / Issues = pinned repos
+  OR any search hit; Review requests = `review_requested` hits OR local
+  `pr_review_requests`. Cached items of unpinned repos that are no hit are
+  hidden (they can be stale). Nothing is pruned yet.
+- Auto-pin (`sync::auto_pin`, after the repo sync): once per DB (setting
+  `auto_pin`), only when nothing is pinned: up to 10 member repos, not
+  forks, pushed in the last 45 days, newest first.
+- Sync scope (user request): a large repo (>= 200 open issues + PRs, see
+  `fl_db::queries::repo::SYNC_MINE_SQL`) deep-syncs only `involves:@me`
+  items through search (cursor `repo:<id>:mine`). The repo page has a
+  "Sync:" dropdown to pick the scope; picking makes the repo due at once.
+- Sidebar: with nothing pinned, a "Pin repositories" button opens
+  Repositories.
+- Fixed: the issues query failed on real GitHub (`MERGED_EVENT` and
+  `MergedEvent` are not valid on Issue timelines). `timeline_args!` /
+  `timeline_sel!` / `common!` now take `issue` or `pr`.
+- Dry run on a copy of the real DB (3 passes, `gh` token): 10 repos
+  pinned, 76 member repos, 346 issues, `authored` 11, `assigned` 2,
+  `review_requested` 0. First pass 39 s, deep pass 142 s, then 3 s. The
+  'mine' path was checked on one repo (13 items).
+
+Open:
+- Labels of unpinned repos are not synced, so their search hits show no
+  labels.
+- A notification written before its issue was cached keeps
+  `issue_id = NULL` until the notification changes.
+- The issues page (50 per query) got one 502 on rust-lang/rust; a retry
+  passed. Lower it if it repeats.
+- Explore fails with 403 for orgs with OAuth App access restrictions
+  (`buttercup` with the `gh` token); the error shows in the footer.
+
+### G3 step 2 state: quick fixes (2026-11-25)
+
+- Item 3: the account box is now a kit dropdown menu (`rail::account_menu`,
+  used by the sidebar and the rail), so it closes on an outside click and
+  Esc. The footer's own account popover is gone; `Footer::sign_out` and a
+  `SignOut` action remain.
+- Item 6: the palette shows "Sign out" when signed in (not with
+  `FORKLINE_GITHUB_TOKEN`), else "Sign in to GitHub". Test:
+  `palette::tests::signed_in_offers_sign_out_and_it_signs_out`.
+- Item 8: tabs draw the kit's close button (`set_close_button_visible`).
+  It shows on every closable tab; the kit has no hover-only mode.
+- Item 9: sidebar and rail selected rows use `p.selected` (accent tint);
+  hover stays `p.raised`. The queue filter field has its own fill
+  (`p.control`) and border (`p.border_strong`).
+- Item 5: switch knobs use `on_accent` (the kit fell back to the dark
+  background). The hue strip is centred on the thumb from the window's
+  rem size (the kit sizes the slider in rem but offsets the thumb by
+  -5 px). The dialog's wrapper is a column with a height limit. "Done"
+  was readable in dark and light captures (themes are tested at 4.5:1).
+- Captures: PowerShell is DPI-unaware by default; call
+  `SetProcessDPIAware` before `GetWindowRect` / `PrintWindow`, or the
+  image is only the top-left part of the window (it looked like a missing
+  footer).
+- Bench after step 2: launch 270 ms, diff scroll 240 fps, switch tab
+  3.7 ms, open cached item 8.9 ms, search p95 14.3 ms.
+
+Next: step 3 (font size), then steps 4 and 5 in parallel.

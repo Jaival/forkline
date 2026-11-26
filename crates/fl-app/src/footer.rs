@@ -1,5 +1,6 @@
 //! Footer: sync status ("Synced 12 s ago", pending / failed actions, errors),
-//! the failed-actions list with Retry / Discard, and the account.
+//! the failed-actions list with Retry / Discard, and Sign out (the account
+//! menu in the sidebar and rail, and the palette, call [`Footer::sign_out`]).
 //!
 //! The footer also watches the sign-in state: it emits
 //! [`FooterEvent::SignIn`] when it first reads "signed out" and whenever the
@@ -37,7 +38,6 @@ impl EventEmitter<FooterEvent> for Footer {}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Popover {
     Failed,
-    Account,
 }
 
 pub struct Footer {
@@ -130,15 +130,12 @@ impl Footer {
         if !auth.signed_in && was_signed_in != Some(false) {
             cx.emit(FooterEvent::SignIn);
         }
-        if !auth.signed_in && self.popover == Some(Popover::Account) {
-            self.popover = None;
-        }
         self.auth = Some(auth);
     }
 
-    /// The account box (Sign out), opened from the rail's avatar.
-    pub(crate) fn toggle_account(&mut self, cx: &mut Context<Self>) {
-        self.toggle(Popover::Account, cx);
+    /// Forget the token. A failure shows in the footer.
+    pub(crate) fn sign_out(&mut self, cx: &mut Context<Self>) {
+        self.run(Op::SignOut, cx);
     }
 
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
@@ -154,9 +151,6 @@ impl Footer {
     /// failure shows in the footer.
     fn run(&mut self, op: Op, cx: &mut Context<Self>) {
         self.notice = None;
-        if op == Op::SignOut {
-            self.popover = None;
-        }
         let store = Store::global(cx).read(cx);
         let engine = store.sync().clone();
         let task = store.run(cx, async move {
@@ -223,23 +217,6 @@ impl Footer {
             .child(div().pb_1().text_color(p.text_muted).child("These changes did not reach GitHub and were undone."))
             .child(div().id("footer-failed-rows").max_h(px(260.)).overflow_y_scroll().children(rows))
             .into_any_element()
-    }
-
-    fn account(&self, auth: &AuthState, cx: &mut Context<Self>) -> AnyElement {
-        let body = if auth.env_override {
-            div()
-                .text_color(cx.palette().text_muted)
-                .child("Signed in with FORKLINE_GITHUB_TOKEN. Unset it to sign out.")
-                .into_any_element()
-        } else {
-            Button::new("footer-sign-out")
-                .xsmall()
-                .ghost()
-                .label("Sign out")
-                .on_click(cx.listener(|this, _, _, cx| this.run(Op::SignOut, cx)))
-                .into_any_element()
-        };
-        popover_box("footer-account-box", cx).left(px(8.)).w(px(260.)).child(body).into_any_element()
     }
 }
 
@@ -338,12 +315,8 @@ impl Render for Footer {
             }
             right = right.child(hint);
         }
-        let popover = match (self.popover, &self.auth) {
-            (Some(Popover::Failed), _) if !self.failed.is_empty() => Some(self.failed_list(cx)),
-            (Some(Popover::Account), Some(auth)) => {
-                let auth = auth.clone();
-                Some(self.account(&auth, cx))
-            }
+        let popover = match self.popover {
+            Some(Popover::Failed) if !self.failed.is_empty() => Some(self.failed_list(cx)),
             _ => None,
         };
         div()

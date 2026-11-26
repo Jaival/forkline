@@ -34,7 +34,8 @@ pub fn render(
         let ws = ws.clone();
         // A filtered Pulls tab or a Search tab with a query still lights its row.
         let selected = active.is_some_and(|a| a.same_kind(&view_ref));
-        let (bg, fg, icon_fg) = if selected { (p.raised, p.text_strong, p.accent_text) } else { (p.surface, p.text_muted, p.text_muted) };
+        // Selected: the accent-tinted row colour; hover: the neutral raised one.
+        let (bg, fg, icon_fg) = if selected { (p.selected, p.text_strong, p.accent_text) } else { (p.surface, p.text_muted, p.text_muted) };
         let count = (count > 0).then(|| {
             let text = if count > 99 { "99+".to_owned() } else { count.to_string() };
             div().text_small().text_color(if selected { p.accent_text } else { p.text_muted }).child(text)
@@ -122,18 +123,21 @@ pub fn render(
     });
 
     let account = login.map(|login| {
-        let ws = ws.clone();
-        h_flex()
-            .id("nav-account")
-            .test_support()
+        let style = ButtonCustomVariant::new(cx).color(p.surface).foreground(p.text).hover(p.raised).active(p.raised);
+        Button::new("nav-account")
+            .custom(style)
             .flex_1()
             .min_w_0()
-            .gap(px(8.))
-            .items_center()
-            .cursor_pointer()
-            .child(rail::avatar(login, 26., p))
-            .child(div().min_w_0().truncate().text_color(p.text).child(login.to_owned()))
-            .on_click(move |_, _, cx| ws.update(cx, |ws, cx| ws.toggle_account(cx)))
+            .justify_start()
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(rail::avatar(login, 26., p))
+                    .child(div().min_w_0().truncate().child(login.to_owned())),
+            )
+            .dropdown_menu(rail::account_menu(ws, login))
     });
     let theme_icon = if p.dark { IconName::Moon } else { IconName::Sun };
     let collapse = {
@@ -169,7 +173,24 @@ pub fn render(
                 .overflow_y_scroll()
                 .children(pinned_rows)
                 .when(pinned.is_empty(), |list| {
-                    list.child(div().px(px(10.)).text_small().text_color(p.text_faint).child("Pin a repository from its page"))
+                    // Pinned repos get every issue and PR synced; without
+                    // any, the lists show only the viewer's own items.
+                    let ws = ws.clone();
+                    list.child(
+                        v_flex()
+                            .px(px(10.))
+                            .gap(px(6.))
+                            .items_start()
+                            .child(div().text_small().text_color(p.text_faint).child("Pin repositories to sync all their issues and pull requests."))
+                            .child(
+                                Button::new("nav-pin-repos")
+                                    .small()
+                                    .outline()
+                                    .icon(Icon::new(IconName::Pin).with_size(px(14.)))
+                                    .label("Pin repositories")
+                                    .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(ViewRef::Repos, window, cx))),
+                            ),
+                    )
                 }),
         )
         .child(

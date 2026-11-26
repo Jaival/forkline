@@ -992,6 +992,8 @@ impl Palette {
         c.drag_border = self.accent;
         c.drop_target = self.accent.opacity(0.15);
         c.switch = self.border_strong;
+        // The kit falls back to the background: a dark knob on the accent.
+        c.switch_thumb = self.on_accent;
         c.slider_bar = self.accent;
         c.slider_thumb = self.bg;
         c.progress_bar = self.accent;

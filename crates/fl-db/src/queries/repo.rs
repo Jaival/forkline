@@ -137,6 +137,20 @@ pub fn set_pinned(conn: &Connection, id: RepoId, pinned: bool) -> rusqlite::Resu
         > 0)
 }
 
+/// SQL: 1 when repo `r` syncs only the viewer's items (migration 0013).
+/// Unless the user picked a scope, a repo with 200 or more open issues +
+/// PRs is large and syncs only the viewer's items.
+pub const SYNC_MINE_SQL: &str = "COALESCE(r.sync_scope, CASE WHEN r.open_issues >= 200 THEN 'mine' ELSE 'all' END) = 'mine'";
+
+/// Pick the deep sync scope (`true` = only items that involve the viewer)
+/// and make the repo due for sync now. Local write.
+pub fn set_sync_mine(conn: &Connection, id: RepoId, mine: bool) -> rusqlite::Result<()> {
+    conn.prepare_cached("UPDATE repos SET sync_scope = ?2 WHERE id = ?1")?
+        .execute((id, if mine { "mine" } else { "all" }))?;
+    conn.prepare_cached("UPDATE sync_state SET last_synced_at = 0 WHERE key = 'repo:' || ?1")?.execute([id])?;
+    Ok(())
+}
+
 const OVERVIEW_COMMITS: u32 = 10;
 const OVERVIEW_RELEASES: u32 = 5;
 const OVERVIEW_CONTRIBUTORS: u32 = 8;
@@ -144,13 +158,14 @@ const OVERVIEW_STAR_DAYS: u32 = 90;
 
 pub fn overview(conn: &Connection, id: RepoId) -> rusqlite::Result<Option<RepoOverview>> {
     let head = conn
-        .prepare_cached(
+        .prepare_cached(&format!(
             "SELECT r.owner, r.name, r.description, r.default_branch, r.license, r.stars, r.forks,
                r.pinned, r.starred, r.languages_json,
                (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.is_pr = 1 AND i.state = 'open'),
-               (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.is_pr = 0 AND i.state = 'open')
-             FROM repos r WHERE r.id = ?1",
-        )?
+               (SELECT count(*) FROM issues i WHERE i.repo_id = r.id AND i.is_pr = 0 AND i.state = 'open'),
+               {SYNC_MINE_SQL}
+             FROM repos r WHERE r.id = ?1"
+        ))?
         .query_row([id], |r| {
             Ok((
                 RepoOverview {
@@ -166,6 +181,7 @@ pub fn overview(conn: &Connection, id: RepoId) -> rusqlite::Result<Option<RepoOv
                     starred: r.get(8)?,
                     open_prs: r.get(10)?,
                     open_issues: r.get(11)?,
+                    sync_mine: r.get(12)?,
                     languages: vec![],
                     commits: vec![],
                     releases: vec![],
