@@ -133,6 +133,16 @@ pub struct SyncStatus {
     pub failed_actions: u32,
     pub paused: bool,
     pub error: Option<String>,
+    /// Pinned repos that finished a deep sync, and all pinned repos. While
+    /// `repos_synced < repos_pinned` the footer shows the progress.
+    #[serde(default)]
+    pub repos_synced: u32,
+    #[serde(default)]
+    pub repos_pinned: u32,
+    /// A minor problem, shown once and muted (e.g. Explore has no access to
+    /// one org).
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Emitted when sync or an action changed rows. The UI invalidates queries

@@ -25,7 +25,7 @@ use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
 use crate::workspace::{
-    DecreaseFontSize, GoTo, IncreaseFontSize, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, ResetFontSize, SignOut, SplitRight, ToggleSidebar, ToggleTheme,
+    DecreaseFontSize, GoTo, IncreaseFontSize, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, ResetFontSize, SignOut, SplitRight, ToggleOpenHome, ToggleSidebar, ToggleTheme,
 };
 use crate::theme::TextScale as _;
 
@@ -97,6 +97,7 @@ impl Palette {
     pub fn new(pinned: &[RepoSummary], auth: Option<&AuthState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.new(|cx| CommandState::new(window, cx));
         let mut go = vec![
+            go_to("Home", ViewRef::Home),
             go_to("Inbox", ViewRef::Inbox),
             go_to("Pull requests", ViewRef::Pulls { repo_id: None }),
             go_to("Issues", ViewRef::Issues { repo_id: None }),
@@ -123,6 +124,7 @@ impl Palette {
                 QueueKind::Pulls => "Pull requests",
                 QueueKind::Issues => "Issues",
                 QueueKind::Reviews => "Review requests",
+                QueueKind::Home => "Home",
             };
             saved_cmds.push(Cmd {
                 label: format!("View: {}", view.name),
@@ -173,6 +175,15 @@ impl Palette {
             action("Bigger text", Some("Ctrl+="), IncreaseFontSize),
             action("Smaller text", Some("Ctrl+-"), DecreaseFontSize),
             action("Default text size", Some("Ctrl+0"), ResetFontSize),
+            action(
+                if crate::views::settings::open_home(cx) {
+                    "Open Home on launch: turn off"
+                } else {
+                    "Open Home on launch: turn on"
+                },
+                None,
+                ToggleOpenHome,
+            ),
         ];
         match auth {
             Some(a) if a.signed_in && !a.env_override => workspace.push(action("Sign out", None, SignOut)),

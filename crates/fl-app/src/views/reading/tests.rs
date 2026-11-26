@@ -154,8 +154,12 @@ fn selecting_an_unread_inbox_row_marks_the_notification_read(cx: &mut TestAppCon
     let dir = tempfile::tempdir().unwrap();
     let (handle, ws) = start(cx, dir.path());
     let (queue, reading) = panes(cx, handle, &ws);
-    // `101` is the first row; nothing before it is selected.
+    // `101` is the first row; nothing before it is selected. It counts as
+    // read once it stays selected for `READ_AFTER`.
     select(cx, handle, &queue, "101");
+    cx.run_until_parked();
+    assert!(actions(cx).is_empty());
+    cx.executor().advance_clock(crate::views::list_view::READ_AFTER);
     let unread = |cx: &mut TestAppContext| {
         read_db(cx, |c| c.query_row("SELECT unread FROM notifications WHERE id = '101'", [], |r| r.get::<_, i64>(0)))
     };
@@ -174,12 +178,12 @@ fn selecting_a_read_inbox_row_enqueues_nothing(cx: &mut TestAppContext) {
     let (handle, ws) = start(cx, dir.path());
     let (queue, _) = panes(cx, handle, &ws);
     select(cx, handle, &queue, "103");
-    // `101` and `102` were unread on the way: two actions, none for `103`.
-    wait_for(cx, "actions", |cx| actions(cx).len() >= 2);
+    // `101` and `102` were unread on the way, but j / k skimming marks
+    // nothing; `103` is read already.
+    cx.executor().advance_clock(crate::views::list_view::READ_AFTER);
     cx.run_until_parked();
     let queued = actions(cx);
-    assert_eq!(queued.len(), 2, "{queued:?}");
-    assert!(queued.iter().all(|(_, payload)| !payload.contains("103")), "{queued:?}");
+    assert!(queued.is_empty(), "{queued:?}");
 }
 
 #[gpui_kit::test]

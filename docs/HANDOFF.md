@@ -2013,3 +2013,66 @@ Next: step 5 (workflow review), then step 6 (animations).
   closes the other. Test: `footer::tests::the_alert_opens_an_error_toast`.
 
 Next: agree on step 5's workflow changes.
+
+### G3 step 5 state: workflow review (2026-11-26, branch `g3-workflow`, rebased on `main` after steps 4 and 6 on 2026-11-27)
+
+Review, decisions (D1-D15) and what was built:
+`docs/design/g3-workflow-review.md`. The walk used a `.backup` copy of the
+real DB (schema 12, so the first launch was a true first run); captures are
+in `C:/Users/saija/cargo-target/shots/g3w/`.
+
+- Home is now `QueueKind::Home` in the queue + reading pane (`list_view`),
+  not the old flat `HomeView` (removed; `home.rs` keeps the Search helpers
+  and the auto-pin note). Groups are `QueueGroup::NeedsAction` ..
+  `QueueGroup::Recent` (ranks 6-11); the SQL is `queue::home_rank`. Queues
+  can fold groups (`Queue::collapsed`; Home starts with the last two folded).
+- Launch goes to Home unless setting `open_home` = `false` (Settings view,
+  palette). UI tests start with `open_home = false` (`test_support`), so
+  their tab lists did not change; `home::tests` turns it back on.
+- `SyncStatus` has `repos_synced` / `repos_pinned` (first deep sync
+  progress) and `note` (muted, once per launch; only Explore uses it).
+- Auto-pin writes `auto_pin_note`; Home shows it until closed.
+- `fl-search`: `@me` / `me` in `author:` / `assignee:`, new
+  `review-requested:`.
+- Inbox: "Done: merged / closed", "Done all" per group, 6 s Undo bar
+  (`queue::UNDO_DONE`); read after 1.5 s selected (`list_view::READ_AFTER`).
+  Notification ids must be numeric for the action queue (tests too).
+- `QueueRow` has `reason: Option<RowReason>` and `bot`.
+- The settings placeholder view is gone (`views/settings.rs`).
+
+Not built (agreed for later): batch merge of green bot PRs (D12), a "new
+since last view" line inside the item view (D13).
+
+- Home's list is 520 px wide (other lists 380 px); its note appears when
+  auto-pin runs after launch (Home listens for `repos`).
+- Bench on AC, base (`g3-font-size`) and this branch alternated, runs with
+  no other bench process: diff scroll 206-239 fps (base 210-236), search
+  p95 14.1-14.2 ms (base 14.3-14.4), launch 256-295 ms, switch tab 4.1 ms,
+  open cached item 8.9-9.3 ms. Every budget passes. `open_home_ms` (no
+  budget) is 11-15 ms, base 5-6 ms: Home now ranks its groups in SQL.
+- Rebased on `main` (steps 4 and 6) on 2026-11-27. Conflicts: the footer
+  keeps step 6's error toast (sync error and failed-action notice go there,
+  not inline); step 5's muted `footer-note` stays inline after the sync
+  text. The sidebar drops the command box (now in the title bar), keeps
+  step 5's Home entry and pinned-row tooltip, and keeps step 6's hover
+  fade on pinned rows.
+- Bench after the rebase, on AC, alternated with the `g3-animations`
+  release build (step 6), no other bench process; 5 branch runs, 3 base
+  runs. Every budget passes. Branch / base: `animation_fps` 163-221 / 205-236 (lowest
+  is palette or dialog), diff scroll 210-240 / 236-240 fps, search p95
+  13.6-14.5 / 14.1-14.6 ms, launch 261-285 / 302-366 ms, switch tab
+  3.9-4.2 / 4.0-4.3 ms, open cached item 6.4-9.3 / 8.7-9.5 ms,
+  `open_home_ms` 12-14 / 5-6 ms. The first run after the build missed
+  launch (672 ms, 458 ms before `main`: a cold, new exe); reruns pass.
+- Bench noise: any run that overlapped another thread's bench
+  (`g3-animations`) dropped to 30 fps diff scroll and 64 ms search, base
+  and branch alike. Check `Get-Process forkline*, fl-bench` before a run.
+- Captures of the new UI: `shots/g3w/new2-first-30s.png` (note + "Syncing
+  repos: 1 of 10"), `n01-inbox`, `n05-home`, `n04-settings`.
+
+Open:
+- "Done all" sends one action per notification; a failure stops the rest
+  and shows nothing (rows come back on the next reload).
+- No engine test for the once-per-launch Explore note.
+- Frame rates sit 10-40 fps below the step 6 build (palette, dialog,
+  diff scroll); still far over budget. Not looked into.

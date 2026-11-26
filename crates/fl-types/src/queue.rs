@@ -16,10 +16,12 @@ pub enum QueueKind {
     Issues,
     /// Open pull requests with a review request for the signed-in user.
     Reviews,
+    /// Home: open items grouped by what the signed-in user has to do.
+    Home,
 }
 
 impl QueueKind {
-    pub const ALL: [Self; 4] = [Self::Inbox, Self::Pulls, Self::Issues, Self::Reviews];
+    pub const ALL: [Self; 5] = [Self::Inbox, Self::Pulls, Self::Issues, Self::Reviews, Self::Home];
 
     /// Stable text form, stored in `saved_views.kind`.
     pub fn as_str(self) -> &'static str {
@@ -28,6 +30,7 @@ impl QueueKind {
             Self::Pulls => "pulls",
             Self::Issues => "issues",
             Self::Reviews => "reviews",
+            Self::Home => "home",
         }
     }
 
@@ -73,11 +76,40 @@ pub enum QueueGroup {
     Other,
     /// The only group of `Pulls` and `Issues`.
     Open,
+    /// Home: my PRs with failed checks, requested changes or conflicts.
+    NeedsAction,
+    /// Home: review requests, and other people's PRs on my repos.
+    WaitingOnMe,
+    /// Home: assigned to me, or an unread mention / assign notification.
+    AssignedMentions,
+    /// Home: my PRs with green checks, no blocking review, no conflicts.
+    ReadyToMerge,
+    /// Home: my other open PRs (checks pending, waiting, drafts).
+    InProgress,
+    /// Home: every other open item, newest first.
+    Recent,
 }
 
 impl QueueGroup {
-    pub const ALL: [Self; 6] =
-        [Self::ReviewRequested, Self::Mentioned, Self::Assigned, Self::YourPrs, Self::Other, Self::Open];
+    pub const ALL: [Self; 12] = [
+        Self::ReviewRequested,
+        Self::Mentioned,
+        Self::Assigned,
+        Self::YourPrs,
+        Self::Other,
+        Self::Open,
+        Self::NeedsAction,
+        Self::WaitingOnMe,
+        Self::AssignedMentions,
+        Self::ReadyToMerge,
+        Self::InProgress,
+        Self::Recent,
+    ];
+
+    /// Groups shown folded until the user opens them.
+    pub fn starts_collapsed(self) -> bool {
+        matches!(self, Self::InProgress | Self::Recent)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -87,6 +119,12 @@ impl QueueGroup {
             Self::YourPrs => "Your PRs",
             Self::Other => "Other",
             Self::Open => "Open",
+            Self::NeedsAction => "Needs action",
+            Self::WaitingOnMe => "Waiting on me",
+            Self::AssignedMentions => "Assigned and mentions",
+            Self::ReadyToMerge => "Ready to merge",
+            Self::InProgress => "My PRs in progress",
+            Self::Recent => "Recently updated",
         }
     }
 }
@@ -112,6 +150,76 @@ impl CheckState {
     }
 }
 
+/// What changed on an unread item, from cached data: one short reason
+/// shown in place of the bare unread dot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RowReason {
+    ChecksFailed,
+    ChangesRequested,
+    Approved,
+    /// Comments created since the item was last opened.
+    NewComments(u32),
+    /// Commits authored since the PR was last opened.
+    NewCommits,
+}
+
+impl RowReason {
+    /// The first reason that applies, most urgent first. Only an unread item
+    /// that was opened before has one.
+    pub fn pick(
+        unread: bool,
+        checks: Option<CheckState>,
+        review_decision: Option<&str>,
+        new_comments: u32,
+        new_commits: bool,
+    ) -> Option<Self> {
+        if !unread {
+            return None;
+        }
+        if checks == Some(CheckState::Failure) {
+            return Some(Self::ChecksFailed);
+        }
+        match review_decision {
+            Some("CHANGES_REQUESTED") => return Some(Self::ChangesRequested),
+            Some("APPROVED") => return Some(Self::Approved),
+            _ => {}
+        }
+        if new_comments > 0 {
+            return Some(Self::NewComments(new_comments));
+        }
+        new_commits.then_some(Self::NewCommits)
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::ChecksFailed => "checks failed".into(),
+            Self::ChangesRequested => "changes requested".into(),
+            Self::Approved => "approved".into(),
+            Self::NewComments(1) => "1 new comment".into(),
+            Self::NewComments(n) => format!("{n} new comments"),
+            Self::NewCommits => "new commits".into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod reason_tests {
+    use super::*;
+
+    #[test]
+    fn the_most_urgent_reason_wins_and_read_rows_have_none() {
+        let pick = RowReason::pick;
+        assert_eq!(pick(false, Some(CheckState::Failure), None, 3, true), None);
+        assert_eq!(pick(true, Some(CheckState::Failure), Some("APPROVED"), 3, true), Some(RowReason::ChecksFailed));
+        assert_eq!(pick(true, None, Some("CHANGES_REQUESTED"), 3, true), Some(RowReason::ChangesRequested));
+        assert_eq!(pick(true, Some(CheckState::Success), Some("APPROVED"), 0, false), Some(RowReason::Approved));
+        assert_eq!(pick(true, None, Some("REVIEW_REQUIRED"), 2, true), Some(RowReason::NewComments(2)));
+        assert_eq!(pick(true, None, None, 0, true), Some(RowReason::NewCommits));
+        assert_eq!(pick(true, None, None, 0, false), None);
+        assert_eq!(RowReason::NewComments(1).label(), "1 new comment");
+    }
+}
+
 /// One row of a queue. An inbox row without a cached issue or PR (a release,
 /// a discussion) has `issue_id`, `number`, `state` and `author` unset.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,4 +241,10 @@ pub struct QueueRow {
     pub checks: Option<CheckState>,
     pub updated_at: Timestamp,
     pub unread: bool,
+    /// What changed since the item was last opened (unread rows only).
+    #[serde(default)]
+    pub reason: Option<RowReason>,
+    /// The author is a GitHub App (dependabot, renovate, ...).
+    #[serde(default)]
+    pub bot: bool,
 }

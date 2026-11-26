@@ -288,21 +288,29 @@ impl Render for Footer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *cx.palette();
         let errors = self.errors();
-        let (synced, pending, failed) = match &self.status {
-            None => ("Loading…".to_owned(), 0, 0),
+        let (synced, pending, failed, note) = match &self.status {
+            None => ("Loading…".to_owned(), 0, 0, None),
             Some(s) => (
-                s.last_synced_at.map_or("Not synced yet".to_owned(), |t| {
-                    format!("Synced {} ago", ago(fl_sync::now() - t))
-                }),
+                // Until every pinned repo had its first deep sync, say how
+                // far it got: lists fill in over minutes on a first run.
+                if s.repos_synced < s.repos_pinned {
+                    format!("Syncing repos: {} of {}", s.repos_synced, s.repos_pinned)
+                } else {
+                    s.last_synced_at.map_or("Not synced yet".to_owned(), |t| {
+                        format!("Synced {} ago", ago(fl_sync::now() - t))
+                    })
+                },
                 s.pending_actions,
                 s.failed_actions,
+                s.note.clone(),
             ),
         };
+        let syncing = self.status.as_ref().is_some_and(|s| s.repos_synced < s.repos_pinned);
         let signed_out = self.auth.as_ref().is_some_and(|a| !a.signed_in);
         let (icon, icon_color) = match (!errors.is_empty(), signed_out, &self.status) {
             (true, _, _) => (IconName::TriangleAlert, p.closed.fg),
             (_, true, _) => (IconName::CircleUser, p.text_muted),
-            (_, _, Some(s)) if s.last_synced_at.is_some() => (IconName::CircleCheck, p.open.fg),
+            (_, _, Some(s)) if s.last_synced_at.is_some() && !syncing => (IconName::CircleCheck, p.open.fg),
             _ => (IconName::Loader, p.text_muted),
         };
         let left = h_flex()
@@ -358,6 +366,9 @@ impl Render for Footer {
                         .child(format!("{n} failed"))
                         .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Failed, cx))),
                 )
+            })
+            .when_some(note, |el, n| {
+                el.child(div().id("footer-note").test_support().min_w_0().truncate().text_color(p.text_faint).child(n))
             });
         let hints = ["Ctrl K commands", "j / k move", "Enter open"];
         let mut right = h_flex().gap(px(8.)).items_center().text_color(p.text_faint);

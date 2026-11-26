@@ -47,6 +47,7 @@ pub fn render(
         btn.on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(view_ref.clone(), window, cx)))
     };
 
+    let home = nav("nav-home", ViewRef::Home);
     let inbox = div().relative().child(nav("nav-inbox", ViewRef::Inbox)).when(inbox_unread > 0, |d| {
         let count = if inbox_unread > 99 { "99+".to_owned() } else { inbox_unread.to_string() };
         d.child(
@@ -105,6 +106,7 @@ pub fn render(
         .pt(px(6.))
         .pb(px(10.))
         .bg(p.surface)
+        .child(home)
         .child(inbox)
         .child(nav("nav-pulls", ViewRef::Pulls { repo_id: None }))
         .child(nav("nav-issues", ViewRef::Issues { repo_id: None }))

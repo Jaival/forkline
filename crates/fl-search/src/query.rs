@@ -1,6 +1,7 @@
 //! Search query parser: free text plus `is:`, `author:`, `label:`, `repo:`,
-//! `assignee:` operators with `-` negation. Never fails: anything that is not
-//! a valid operator is free text.
+//! `assignee:`, `review-requested:` operators with `-` negation. Never fails:
+//! anything that is not a valid operator is free text. A login of `@me` (or
+//! `me`) means the signed-in user.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Filter {
@@ -12,6 +13,8 @@ pub enum Filter {
     /// `owner`, `name`
     Repo(String, String),
     Assignee(String),
+    /// `review-requested:`: an open review request for this login.
+    ReviewRequested(String),
     /// `is:unread`: updated since last opened (Inbox: the notification's
     /// unread flag).
     Unread,
@@ -72,6 +75,7 @@ fn filter(key: &str, value: &str) -> Option<Filter> {
         },
         "author" => Filter::Author(value.to_owned()),
         "assignee" => Filter::Assignee(value.to_owned()),
+        "review-requested" => Filter::ReviewRequested(value.to_owned()),
         "label" => Filter::Label(value.to_owned()),
         "repo" => {
             let (o, n) = value.split_once('/')?;

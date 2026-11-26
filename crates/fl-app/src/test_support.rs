@@ -51,7 +51,7 @@ pub fn open_with(
         Store::init(dir, fl_sync::Config::test(api), true, false, cx).unwrap();
         let store = Store::global(cx);
         store.read(cx).sync().set_test_token(token);
-        store.read(cx).db().write(|c| c.execute_batch(sql)).unwrap();
+        store.read(cx).db().write(|c| c.execute_batch(&format!("INSERT INTO settings(key, value_json) VALUES ('open_home', 'false'); {sql}"))).unwrap();
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(Default::default(), size(px(1200.), px(800.))))),
             ..Default::default()

@@ -193,6 +193,28 @@ mod queue_filter {
     }
 
     #[test]
+    fn at_me_is_the_viewer() {
+        let c = seeded();
+        c.execute_batch(
+            r#"INSERT INTO settings(key, value_json) VALUES ('viewer', '{"login":"hubot"}');
+               INSERT INTO issues(id,node_id,repo_id,number,is_pr,state,title,author_id,created_at,updated_at)
+                 VALUES (5,'e',1,5,1,'open','Review this',1,0,500), (6,'f',1,6,1,'open','And this',1,0,600);
+               INSERT INTO pr_review_requests(pr_id, reviewer_login) VALUES (5, 'hubot'), (6, 'octocat');
+               INSERT INTO search_hits(query, issue_id) VALUES ('review_requested', 6);"#,
+        )
+        .unwrap();
+        assert_eq!(keys(&c, ISSUES, "author:@me"), ["4"]);
+        // `me` is the hint the old placeholder taught.
+        assert_eq!(keys(&c, ISSUES, "author:me"), ["4"]);
+        assert_eq!(keys(&c, ISSUES, "assignee:@me"), ["1"]);
+        assert_eq!(keys(&c, ISSUES, "-author:@me"), ["1"]);
+        let pulls = QueueQuery { kind: QueueKind::Pulls, repo_id: None, flat: false };
+        // The viewer's own request, and a request found by search.
+        assert_eq!(keys(&c, pulls, "review-requested:@me"), ["6", "5"]);
+        assert_eq!(keys(&c, pulls, "review-requested:octocat"), ["6"]);
+    }
+
+    #[test]
     fn unread_reads_the_issue_or_the_notification() {
         let c = seeded();
         // Issue 1 was opened after its last update; issue 4 was not.
