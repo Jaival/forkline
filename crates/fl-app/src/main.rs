@@ -18,6 +18,7 @@ mod signin;
 mod smooth_scroll;
 mod store;
 mod theme;
+mod titlebar;
 #[cfg(test)]
 mod test_support;
 mod view_ref;
@@ -71,9 +72,11 @@ impl Args {
     }
 }
 
-/// The main window keeps the native title bar. A client-drawn frame (the
-/// kit's `TitleBar::window_options`, a transparent title bar) slowed every
-/// present on Windows: `diff_scroll_fps` 240 -> 103, `switch_tab_ms` 4 -> 10.
+/// The main window draws its own title bar (`titlebar.rs`), so it takes the
+/// kit's `TitleBar::window_options` (a transparent title bar: on Windows the
+/// client area covers the caption). G2 measured it at `diff_scroll_fps` 103;
+/// G3 step 4 found that was battery power, not the title bar: on AC both
+/// frames run at 240 fps (`docs/HANDOFF.md`, G3 step 4).
 ///
 /// On Windows the window opens hidden; `main` shows it cloaked and uncloaks
 /// it after its first frame (GPUI draws no frames for a hidden window), so
@@ -83,7 +86,7 @@ fn window_options(bounds: Bounds<gpui_kit::Pixels>) -> WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(800.), px(500.))),
         show: !cfg!(windows),
-        ..WindowOptions::default()
+        ..gpui_kit::component::TitleBar::window_options()
     }
 }
 
@@ -228,8 +231,9 @@ mod tests {
     use gpui_kit::{Bounds, point, px, size};
 
     #[test]
-    fn the_main_window_keeps_the_native_title_bar() {
+    fn the_main_window_draws_its_own_title_bar() {
         let options = super::window_options(Bounds::new(point(px(0.), px(0.)), size(px(800.), px(600.))));
-        assert!(options.titlebar.is_none_or(|t| !t.appears_transparent), "a client-drawn frame halves the frame rate");
+        assert!(options.titlebar.is_some_and(|t| t.appears_transparent), "titlebar.rs draws the caption");
+        assert!(options.app_owns_titlebar_drag);
     }
 }

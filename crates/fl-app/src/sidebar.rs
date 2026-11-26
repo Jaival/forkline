@@ -1,6 +1,5 @@
-//! The labelled sidebar on the left edge (the default): the command box,
-//! navigation with names and the inbox count, pinned repositories, then the
-//! account, the theme menu and the collapse button. Ctrl+B swaps it for the
+//! The labelled sidebar on the left edge (the default): navigation with
+//! names and the inbox count, pinned repositories, then the account, the theme menu and the collapse button. Ctrl+B swaps it for the
 //! icon rail (`rail.rs`); both use the same `nav-*` element ids.
 
 use fl_types::RepoSummary;
@@ -17,7 +16,7 @@ use gpui_kit::{
 use crate::rail;
 use crate::theme::{ActivePalette as _, SIDEBAR_WIDTH, TextScale as _, scaled};
 use crate::view_ref::ViewRef;
-use crate::workspace::{OpenPalette, Workspace};
+use crate::workspace::Workspace;
 
 /// `active`: the focused tab's view; its row is highlighted. `login`: the
 /// signed-in account, shown at the bottom.
@@ -72,26 +71,6 @@ pub fn render(
         let style = ButtonCustomVariant::new(cx).color(p.surface).foreground(p.text_muted).hover(p.raised).active(p.raised);
         Button::new(id).custom(style).small().icon(Icon::new(icon).with_size(px(16.))).tooltip(tip.to_string())
     };
-
-    let command_box = h_flex()
-        .id("sidebar-command")
-        .test_support()
-        .h(scaled(30.))
-        .px(px(10.))
-        .mb(px(6.))
-        .gap(px(8.))
-        .items_center()
-        .rounded(px(6.))
-        .border_1()
-        .border_color(p.border)
-        .text_small()
-        .text_color(p.text_muted)
-        .cursor_pointer()
-        .hover(move |s| s.bg(p.raised))
-        .child(Icon::new(IconName::Search).with_size(px(14.)))
-        .child(div().flex_1().child("Commands"))
-        .child(div().text_color(p.text_faint).child("Ctrl K"))
-        .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenPalette), cx));
 
     let pinned_rows = pinned.iter().map(|r| {
         let name = format!("{}/{}", r.owner, r.name);
@@ -154,7 +133,6 @@ pub fn render(
         .p(px(8.))
         .bg(p.surface)
         .text_body()
-        .child(command_box)
         .child(nav("nav-inbox", ViewRef::Inbox, inbox_unread))
         .child(nav("nav-pulls", ViewRef::Pulls { repo_id: None }, 0))
         .child(nav("nav-issues", ViewRef::Issues { repo_id: None }, 0))
