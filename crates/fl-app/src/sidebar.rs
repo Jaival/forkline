@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 
 use crate::rail;
-use crate::theme::{ActivePalette as _, SIDEBAR_WIDTH, TextScale as _};
+use crate::theme::{ActivePalette as _, SIDEBAR_WIDTH, TextScale as _, scaled};
 use crate::view_ref::ViewRef;
 use crate::workspace::{OpenPalette, Workspace};
 
@@ -43,7 +43,7 @@ pub fn render(
         h_flex()
             .id(id)
             .test_support()
-            .h(px(30.))
+            .h(scaled(30.))
             .px(px(10.))
             .gap(px(10.))
             .items_center()
@@ -59,7 +59,7 @@ pub fn render(
     };
     let heading = |text: &'static str| {
         h_flex()
-            .h(px(28.))
+            .h(scaled(28.))
             .mt(px(10.))
             .px(px(10.))
             .items_center()
@@ -76,7 +76,7 @@ pub fn render(
     let command_box = h_flex()
         .id("sidebar-command")
         .test_support()
-        .h(px(30.))
+        .h(scaled(30.))
         .px(px(10.))
         .mb(px(6.))
         .gap(px(8.))
@@ -101,7 +101,7 @@ pub fn render(
         h_flex()
             .id(SharedString::from(format!("nav-pinned-{repo_id}")))
             .test_support()
-            .h(px(28.))
+            .h(scaled(28.))
             .px(px(10.))
             .gap(px(10.))
             .items_center()
@@ -148,7 +148,7 @@ pub fn render(
 
     v_flex()
         .id("sidebar")
-        .w(px(SIDEBAR_WIDTH))
+        .w(scaled(SIDEBAR_WIDTH))
         .h_full()
         .flex_none()
         .p(px(8.))

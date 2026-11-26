@@ -48,6 +48,18 @@ fn setting(cx: &mut TestAppContext, key: &str) -> Option<String> {
     })
 }
 
+fn font_size(cx: &mut TestAppContext) -> u16 {
+    cx.read(|cx| cx.try_global::<crate::fonts::Fonts>().copied().unwrap_or_default().size)
+}
+
+fn rem(cx: &mut TestAppContext, handle: AnyWindowHandle) -> gpui_kit::Pixels {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.rem_size()
+    })
+    .unwrap()
+}
+
 /// Wait for the background settings write.
 fn wait_for_setting(cx: &mut TestAppContext, key: &str, want: Option<&str>) {
     crate::test_support::wait_for(cx, key, |cx| setting(cx, key).as_deref() == want);
@@ -248,26 +260,51 @@ fn done_saves_the_fonts(cx: &mut TestAppContext) {
         setting(cx, "ui_font").as_deref(),
         setting(cx, "mono_font").as_deref(),
         setting(cx, "mask_secrets").as_deref(),
+        setting(cx, "font_size").as_deref(),
     );
     assert_eq!(loaded, fonts(cx));
 }
 
 #[gpui_kit::test]
 fn the_dialog_fits_a_short_window_and_its_body_scrolls(cx: &mut TestAppContext) {
+    dialog_fits_a_short_window(cx, crate::fonts::DEFAULT_SIZE);
+}
+
+#[gpui_kit::test]
+fn the_dialog_fits_a_short_window_at_the_largest_font_size(cx: &mut TestAppContext) {
+    dialog_fits_a_short_window(cx, *crate::fonts::SIZES.last().unwrap());
+}
+
+fn dialog_fits_a_short_window(cx: &mut TestAppContext, size: u16) {
     let (handle, ws, _dir) = start(cx);
+    while font_size(cx) < size {
+        press(cx, handle, "ctrl-=");
+    }
+    assert_eq!(font_size(cx), size);
     // The window's minimum size.
     cx.simulate_window_resize(handle, gpui_kit::size(gpui_kit::px(800.), gpui_kit::px(500.)));
     open_dialog(cx, handle, &ws);
     for tab in ["appearance-tab-colours", "appearance-tab-fonts"] {
         click(cx, handle, tab);
-        let (done, body) = cx
+        let (dialog, done, body) = cx
             .update_window(handle, |_, window, _| {
-                (window.find("appearance-done").bounds(), window.find("appearance-body").bounds())
+                (window.find("appearance").bounds(), window.find("appearance-done").bounds(), window.find("appearance-body").bounds())
             })
             .unwrap();
         assert!(done.bottom() <= gpui_kit::px(500.), "{tab}: Done is below the window: {done:?}");
+        assert!(done.right() <= dialog.right(), "{tab}: Done is outside the dialog: {done:?} {dialog:?}");
+        assert!(dialog.top() >= gpui_kit::px(0.) && dialog.right() <= gpui_kit::px(800.), "{tab}: {dialog:?}");
         assert!(body.bottom() <= done.top(), "{tab}: the body overlaps the footer");
     }
+    // The size buttons sit in one row inside the dialog.
+    click(cx, handle, "appearance-tab-fonts");
+    let (first, last, dialog) = cx
+        .update_window(handle, |_, window, _| {
+            (window.find("appearance-size-80").bounds(), window.find("appearance-size-140").bounds(), window.find("appearance").bounds())
+        })
+        .unwrap();
+    assert_eq!(first.top(), last.top(), "the size buttons wrap");
+    assert!(last.right() <= dialog.right(), "{last:?} {dialog:?}");
     // The body starts at its top: the first section is shown at full height,
     // not squashed or scrolled away.
     click(cx, handle, "appearance-tab-colours");
@@ -289,4 +326,66 @@ fn the_dialog_fits_a_short_window_and_its_body_scrolls(cx: &mut TestAppContext) 
     })
     .unwrap();
     assert!(tint(cx) < before, "the body did not scroll");
+}
+
+#[gpui_kit::test]
+fn font_size_keys_scale_the_text_and_save_the_size(cx: &mut TestAppContext) {
+    let (handle, _ws, _dir) = start(cx);
+    let base = crate::theme::TEXT_BODY;
+    assert_eq!(rem(cx, handle), base);
+    let body = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| window.find("nav-inbox").bounds().size.height).unwrap()
+    };
+    let row = body(cx);
+    press(cx, handle, "ctrl-=");
+    press(cx, handle, "ctrl-=");
+    assert_eq!(font_size(cx), 120);
+    assert_eq!(rem(cx, handle), base * 1.2);
+    assert!(body(cx) > row, "a sidebar row did not grow: {row:?} -> {:?}", body(cx));
+    wait_for_setting(cx, "font_size", Some("120"));
+    press(cx, handle, "ctrl--");
+    assert_eq!(font_size(cx), 110);
+    wait_for_setting(cx, "font_size", Some("110"));
+    press(cx, handle, "ctrl-0");
+    assert_eq!(font_size(cx), 100);
+    assert_eq!(rem(cx, handle), base);
+    wait_for_setting(cx, "font_size", Some("100"));
+    // The smallest size is the floor.
+    for _ in 0..crate::fonts::SIZES.len() {
+        press(cx, handle, "ctrl--");
+    }
+    assert_eq!(font_size(cx), crate::fonts::SIZES[0]);
+}
+
+#[gpui_kit::test]
+fn font_size_keys_in_the_dialog_change_its_choice_until_done(cx: &mut TestAppContext) {
+    let (handle, ws, _dir) = start(cx);
+    open_dialog(cx, handle, &ws);
+    press(cx, handle, "ctrl-=");
+    assert_eq!(font_size(cx), 110, "the dialog previews the size");
+    assert!(is_open(cx, &ws));
+    // Cancel puts it back; nothing is saved.
+    press(cx, handle, "escape");
+    assert!(!is_open(cx, &ws));
+    assert_eq!(font_size(cx), 100);
+    assert_eq!(rem(cx, handle), crate::theme::TEXT_BODY);
+    // The size buttons pick a size; Done saves it.
+    open_dialog(cx, handle, &ws);
+    click(cx, handle, "appearance-tab-fonts");
+    click(cx, handle, "appearance-size-130");
+    press(cx, handle, "ctrl-=");
+    assert_eq!(font_size(cx), 140);
+    click(cx, handle, "appearance-done");
+    assert!(!is_open(cx, &ws));
+    assert_eq!(rem(cx, handle), crate::theme::TEXT_BODY * 1.4);
+    wait_for_setting(cx, "font_size", Some("140"));
+    assert_eq!(setting(cx, "font_size").as_deref(), Some("140"));
+}
+
+#[test]
+fn every_size_has_a_button() {
+    for (size, (id, label)) in crate::fonts::SIZES.into_iter().zip(super::SIZE_BUTTONS) {
+        assert_eq!(id, format!("appearance-size-{size}"));
+        assert_eq!(label, format!("{size}%"));
+    }
 }

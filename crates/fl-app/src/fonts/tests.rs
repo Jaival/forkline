@@ -21,28 +21,42 @@ fn all() -> Vec<&'static FontInfo> {
 
 #[test]
 fn unknown_names_and_bad_values_load_the_defaults() {
-    assert_eq!(Fonts::from_settings(None, None, None), Fonts::default());
+    assert_eq!(Fonts::from_settings(None, None, None, None), Fonts::default());
     assert_eq!(Fonts::default().ui.id, "inter");
     assert_eq!(Fonts::default().mono.id, "obel-mono");
     assert!(Fonts::default().mask_secrets);
-    for bad in ["\"comic-sans\"", "inter", "{\"id\":\"inter\"}", "42", "", "\"JetBrains Mono\""] {
-        assert_eq!(Fonts::from_settings(Some(bad), Some(bad), Some(bad)), Fonts::default(), "{bad}");
+    assert_eq!(Fonts::default().size, 100);
+    for bad in ["\"comic-sans\"", "inter", "{\"id\":\"inter\"}", "42", "", "\"JetBrains Mono\"", "105", "-10", "\"110\""] {
+        assert_eq!(Fonts::from_settings(Some(bad), Some(bad), Some(bad), Some(bad)), Fonts::default(), "{bad}");
     }
     // A code font is not an interface font, and the other way round.
-    let swapped = Fonts::from_settings(Some("\"jetbrains-mono\""), Some("\"inter\""), None);
+    let swapped = Fonts::from_settings(Some("\"jetbrains-mono\""), Some("\"inter\""), None, None);
     assert_eq!(swapped, Fonts::default());
 }
 
 #[test]
 fn settings_round_trip() {
     for (ui, mono) in UI_FONTS.iter().zip(CODE_FONTS.iter().cycle()) {
-        for mask_secrets in [true, false] {
-            let fonts = Fonts { ui, mono, mask_secrets };
-            let [(k1, ui), (k2, mono), (k3, mask)] = fonts.settings();
-            assert_eq!((k1, k2, k3), ("ui_font", "mono_font", "mask_secrets"));
-            assert_eq!(Fonts::from_settings(Some(&ui), Some(&mono), Some(&mask)), fonts);
+        for (mask_secrets, size) in [true, false].into_iter().zip(SIZES.iter().cycle()) {
+            let fonts = Fonts { ui, mono, mask_secrets, size: *size };
+            let [(k1, ui), (k2, mono), (k3, mask), (k4, size)] = fonts.settings();
+            assert_eq!((k1, k2, k3, k4), ("ui_font", "mono_font", "mask_secrets", "font_size"));
+            assert_eq!(Fonts::from_settings(Some(&ui), Some(&mono), Some(&mask), Some(&size)), fonts);
         }
     }
+    for size in SIZES {
+        let fonts = Fonts { size, ..Fonts::default() };
+        assert_eq!(Fonts::from_settings(None, None, None, Some(&fonts.settings()[3].1)), fonts);
+    }
+}
+
+#[test]
+fn size_steps_stop_at_the_ends() {
+    let at = |size| Fonts { size, ..Fonts::default() };
+    assert_eq!(at(100).step_size(true), 110);
+    assert_eq!(at(100).step_size(false), 90);
+    assert_eq!(at(SIZES[0]).step_size(false), SIZES[0]);
+    assert_eq!(at(SIZES[6]).step_size(true), SIZES[6]);
 }
 
 #[test]

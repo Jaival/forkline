@@ -25,7 +25,7 @@ use crate::views::{
     Approve, Done, EditAssignees, EditLabels, FocusFilter, NextFile, PrevFile, Reply, SaveView, ShowFiles, Snooze, ToggleGrouped, ToggleState, ToggleViewed,
 };
 use crate::workspace::{
-    GoTo, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, SignOut, SplitRight, ToggleSidebar, ToggleTheme,
+    DecreaseFontSize, GoTo, IncreaseFontSize, NewTab, NextTab, OpenAppearance, OpenSignIn, OpenView, PrevTab, ResetFontSize, SignOut, SplitRight, ToggleSidebar, ToggleTheme,
 };
 use crate::theme::TextScale as _;
 
@@ -170,6 +170,9 @@ impl Palette {
             action("Toggle sidebar", Some("Ctrl+B"), ToggleSidebar),
             action("Toggle theme", None, ToggleTheme),
             action("Appearance…", None, OpenAppearance),
+            action("Bigger text", Some("Ctrl+="), IncreaseFontSize),
+            action("Smaller text", Some("Ctrl+-"), DecreaseFontSize),
+            action("Default text size", Some("Ctrl+0"), ResetFontSize),
         ];
         match auth {
             Some(a) if a.signed_in && !a.env_override => workspace.push(action("Sign out", None, SignOut)),

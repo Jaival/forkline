@@ -4,7 +4,7 @@ use fl_types::{PrCheck, PrDetail};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 
-use crate::theme::{ActivePalette as _, TextScale as _};
+use crate::theme::{ActivePalette as _, TextScale as _, scaled};
 use gpui_kit::{
     AnyElement, App, Div, InteractiveElement as _, IntoElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, div, px,
@@ -18,7 +18,7 @@ fn row(cx: &App) -> Div {
     h_flex()
         .flex_none()
         .w_full()
-        .h(px(ROW_HEIGHT))
+        .h(scaled(ROW_HEIGHT))
         .px(px(24.))
         .gap(px(10.))
         .items_center()

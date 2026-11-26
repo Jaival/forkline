@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use crate::bench;
 use crate::drafts::Drafts;
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, GROUP_HEADER, PANE_HEADER, Palette, RADIUS, ROW_HEIGHT, TextScale as _};
+use crate::theme::{ActivePalette as _, GROUP_HEADER, PANE_HEADER, Palette, RADIUS, ROW_HEIGHT, TextScale as _, scaled};
 use crate::view_ref::ViewRef;
 use crate::workspace::{OpenView, SaveLayout, SetViewRef};
 
@@ -117,6 +117,8 @@ pub struct Queue {
     selected: Option<usize>,
     items: Vec<Item>,
     sizes: Rc<Vec<Size<Pixels>>>,
+    /// The rem size `sizes` were measured at; the font size changes it.
+    sizes_rem: Pixels,
     scroll: VirtualListScrollHandle,
     pub focus: FocusHandle,
     /// `(owner/name, id)` of the pinned repositories, for the filter.
@@ -178,6 +180,7 @@ impl Queue {
             selected: None,
             items: Vec::new(),
             sizes: Rc::default(),
+            sizes_rem: crate::theme::TEXT_BODY,
             scroll: VirtualListScrollHandle::new(),
             focus: cx.focus_handle(),
             repos: Rc::new(repos),
@@ -202,9 +205,15 @@ impl Queue {
 
     fn rebuild(&mut self) {
         self.items = flatten(&self.rows, self.query.flat);
+        self.measure();
+    }
+
+    /// The rows' heights at `sizes_rem` (they hold text: see `theme::scaled`).
+    fn measure(&mut self) {
+        let scale = self.sizes_rem / crate::theme::TEXT_BODY;
         let sizes = self.items.iter().map(|item| {
             let height = if matches!(item, Item::Header(_)) { GROUP_HEADER } else { ROW_HEIGHT };
-            size(px(0.), px(height))
+            size(px(0.), px(height * scale))
         });
         self.sizes = Rc::new(sizes.collect());
     }
@@ -487,7 +496,7 @@ impl Queue {
         let count = self.counts.iter().find(|(g, _)| *g == group).map_or(0, |(_, n)| *n);
         h_flex()
             .w_full()
-            .h(px(GROUP_HEADER))
+            .h(scaled(GROUP_HEADER))
             .px(px(20.))
             .pt(px(10.))
             .pb(px(4.))
@@ -529,7 +538,7 @@ impl Queue {
 
         div()
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(scaled(ROW_HEIGHT))
             .px(px(8.))
             .child(
                 h_flex()
@@ -659,7 +668,7 @@ impl Queue {
                 h_flex()
                     .key_context("QueryBar")
                     .on_action(cx.listener(Self::escape_filter))
-                    .h(px(30.))
+                    .h(scaled(30.))
                     .pl(px(12.))
                     .pr(px(12.))
                     .gap(px(6.))
@@ -670,7 +679,7 @@ impl Queue {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .h(px(24.))
+                            .h(scaled(24.))
                             .px(px(8.))
                             .gap(px(6.))
                             .items_center()
@@ -718,7 +727,7 @@ impl Queue {
             .when(!self.filter.is_empty(), |d| {
                 d.child(
                     h_flex()
-                        .h(px(26.))
+                        .h(scaled(26.))
                         .px(px(12.))
                         .gap(px(8.))
                         .items_center()
@@ -788,6 +797,10 @@ fn state_icon(row: &QueueRow, p: &Palette) -> (IconName, Hsla) {
 
 impl Render for Queue {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if window.rem_size() != self.sizes_rem {
+            self.sizes_rem = window.rem_size();
+            self.measure();
+        }
         if std::mem::take(&mut self.filter_applied) {
             bench::ready("filter", window, cx);
         }
@@ -808,7 +821,7 @@ impl Render for Queue {
         let counts_ready = self.counts_ready;
         let header = h_flex()
             .flex_none()
-            .h(px(PANE_HEADER))
+            .h(scaled(PANE_HEADER))
             .pl(px(20.))
             .pr(px(12.))
             .gap(px(8.))

@@ -23,7 +23,7 @@ use crate::bench;
 use crate::store::Store;
 use crate::view_ref::ViewRef;
 use crate::workspace::SetViewRef;
-use crate::theme::TextScale as _;
+use crate::theme::{TextScale as _, scaled};
 
 const ROW_HEIGHT: f32 = 52.;
 const PAGE: u32 = 50;
@@ -232,7 +232,7 @@ impl Render for SearchView {
             .key_context("SearchBar")
             .on_action(cx.listener(Self::leave_bar))
             .flex_none()
-            .h(px(40.))
+            .h(scaled(40.))
             .px(px(12.))
             .gap(px(8.))
             .items_center()
@@ -257,7 +257,7 @@ impl Render for SearchView {
         } else {
             let status = h_flex()
                 .flex_none()
-                .h(px(26.))
+                .h(scaled(26.))
                 .px(px(12.))
                 .items_center()
                 .text_small()

@@ -12,12 +12,13 @@ use std::sync::Arc;
 
 use gpui_kit::component::highlighter::{HighlightTheme, ThemeStyle};
 use gpui_kit::component::{Theme, ThemeMode};
-use gpui_kit::{App, Global, Hsla, Pixels, Rgba, Styled, Window, hsla, px};
+use gpui_kit::{App, Global, Hsla, Pixels, Rems, Rgba, Styled, Window, hsla, px, rems};
 
 pub use derive::{Accent, derive, swatch};
 
-// Type scale (px). Every text style also sets its line height, so a font with
-// taller metrics cannot change a fixed row height.
+// Type scale (px at the default font size). Every text style also sets its
+// line height, so a font with taller metrics cannot change a fixed row height.
+// Views draw these through [`scaled`], so they follow the font size setting.
 pub const TEXT_BODY: Pixels = px(13.5);
 pub const TEXT_SECONDARY: Pixels = px(12.5);
 pub const TEXT_SMALL: Pixels = px(12.);
@@ -47,26 +48,34 @@ pub const TEXT_STYLES: [(Pixels, Pixels); 7] = [
     (TEXT_CODE, LINE_CODE),
 ];
 
+/// `v` px at the default font size, as a length that follows the font size
+/// setting ([`crate::fonts::Fonts::size`]). The kit's rem is the body text
+/// size ([`TEXT_BODY`] at 100 %), so this is `v / TEXT_BODY` rem. Use it for
+/// text and for the fixed heights of rows that hold text.
+pub fn scaled(v: f32) -> Rems {
+    rems(v / f32::from(TEXT_BODY))
+}
+
 /// The type scale as styles: each sets a size and its line height, so a font
 /// with taller metrics cannot change a row's height.
 pub trait TextScale: Styled + Sized {
     fn text_body(self) -> Self {
-        self.text_size(TEXT_BODY).line_height(LINE_BODY)
+        self.text_size(scaled(TEXT_BODY.into())).line_height(scaled(LINE_BODY.into()))
     }
     fn text_secondary(self) -> Self {
-        self.text_size(TEXT_SECONDARY).line_height(LINE_SECONDARY)
+        self.text_size(scaled(TEXT_SECONDARY.into())).line_height(scaled(LINE_SECONDARY.into()))
     }
     fn text_small(self) -> Self {
-        self.text_size(TEXT_SMALL).line_height(LINE_SMALL)
+        self.text_size(scaled(TEXT_SMALL.into())).line_height(scaled(LINE_SMALL.into()))
     }
     fn text_label(self) -> Self {
-        self.text_size(TEXT_LABEL).line_height(LINE_LABEL)
+        self.text_size(scaled(TEXT_LABEL.into())).line_height(scaled(LINE_LABEL.into()))
     }
     fn text_pane_title(self) -> Self {
-        self.text_size(TEXT_PANE_TITLE).line_height(LINE_PANE_TITLE)
+        self.text_size(scaled(TEXT_PANE_TITLE.into())).line_height(scaled(LINE_PANE_TITLE.into()))
     }
     fn text_reading_title(self) -> Self {
-        self.text_size(TEXT_READING_TITLE).line_height(LINE_READING_TITLE)
+        self.text_size(scaled(TEXT_READING_TITLE.into())).line_height(scaled(LINE_READING_TITLE.into()))
     }
 }
 
@@ -75,6 +84,7 @@ impl<T: Styled> TextScale for T {}
 // Layout.
 pub const RAIL_WIDTH: f32 = 52.;
 pub const RAIL_BUTTON: f32 = 34.;
+/// At the default font size; the sidebar grows with the text ([`scaled`]).
 pub const SIDEBAR_WIDTH: f32 = 228.;
 pub const PANE_HEADER: f32 = 48.;
 pub const GROUP_HEADER: f32 = 30.;
@@ -902,6 +912,7 @@ impl Palette {
 
     /// Write this palette over gpui-component's theme.
     fn write_kit(&self, t: &mut Theme) {
+        // The base size; `fonts::write_kit` scales it by the font size setting.
         t.font_size = TEXT_BODY;
         // The kit's diff draws code at `rem * mono_font_size / 16` (rem = the
         // body size) in rows 1.6 times that: this gives TEXT_CODE / LINE_CODE.

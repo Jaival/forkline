@@ -21,7 +21,7 @@ use gpui_kit::{
 };
 
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, TextScale as _};
+use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, TextScale as _, scaled};
 
 /// The relative time ticks once a second; the status itself is refetched on
 /// a `sync` change and every `REFETCH_EVERY` ticks.
@@ -325,7 +325,7 @@ impl Render for Footer {
             .child(
                 h_flex()
                     .id("footer")
-                    .h(px(FOOTER_HEIGHT))
+                    .h(scaled(FOOTER_HEIGHT))
                     .px(px(14.))
                     .gap(px(8.))
                     .items_center()

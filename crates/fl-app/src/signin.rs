@@ -230,7 +230,7 @@ impl Render for SignIn {
                                 .rounded(px(4.))
                                 .bg(theme.raised)
                                 .font_family(cx.theme().mono_font_family.clone())
-                                .text_size(px(18.)).line_height(px(26.))
+                                .text_size(crate::theme::scaled(18.)).line_height(crate::theme::scaled(26.))
                                 .child(code.user_code.clone()),
                         )
                         .child(
@@ -331,7 +331,7 @@ impl Render for SignIn {
             .text_color(theme.text)
             .text_body()
             .shadow_lg()
-            .child(div().text_size(px(16.)).line_height(px(22.)).font_weight(FontWeight::SEMIBOLD).child("Sign in to GitHub"))
+            .child(div().text_size(crate::theme::scaled(16.)).line_height(crate::theme::scaled(22.)).font_weight(FontWeight::SEMIBOLD).child("Sign in to GitHub"))
             .child(body)
             .when_some(self.message.clone(), |d, m| d.child(div().id("signin-message").text_color(theme.closed.fg).child(m)))
             .child(

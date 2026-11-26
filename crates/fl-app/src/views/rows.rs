@@ -22,7 +22,7 @@ use rusqlite::Connection;
 
 use super::queue::{OpenSelected, SelectNext, SelectPrev};
 use crate::store::Store;
-use crate::theme::{ActivePalette as _, RADIUS, TextScale as _};
+use crate::theme::{ActivePalette as _, RADIUS, TextScale as _, scaled};
 use crate::view_ref::ViewRef;
 use crate::workspace::OpenView;
 
@@ -243,7 +243,7 @@ pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx
         .relative()
         .flex()
         .w_full()
-        .h(px(height))
+        .h(scaled(height))
         .px(px(12.))
         .gap(px(12.))
         .items_center()

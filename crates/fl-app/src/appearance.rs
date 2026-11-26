@@ -1,14 +1,15 @@
 //! The "Appearance…" dialog: the mode (System / Light / Dark), one colour
 //! choice per mode (a built-in theme or the custom accent), and the accent
 //! itself (12 presets, a hue slider, muted colours, tinted backgrounds); on
-//! the Fonts tab the interface font, the code font, "Hide secrets in code"
-//! and a live sample.
+//! the Fonts tab the text size, the interface font, the code font, "Hide
+//! secrets in code" and a live sample.
 //!
 //! Every change applies at once: the dialog writes the edited [`Choices`] and
 //! [`Fonts`] globals and shows the mode being edited. `Esc` or "Cancel" puts
 //! back the choices from when it opened; "Done" keeps them and saves
-//! `colors_dark`, `colors_light`, `accent`, `theme`, `ui_font`, `mono_font`
-//! and `mask_secrets`. Like the sign-in dialog it never closes itself: it
+//! `colors_dark`, `colors_light`, `accent`, `theme`, `ui_font`, `mono_font`,
+//! `mask_secrets` and `font_size`. Ctrl+= / Ctrl+- / Ctrl+0 change the size
+//! here while the dialog is open ([`Appearance::step_size`]). Like the sign-in dialog it never closes itself: it
 //! emits [`AppearanceEvent`] and the workspace closes it.
 
 use fl_db::queries::layout;
@@ -23,7 +24,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, actions, div, px,
 };
 
-use crate::fonts::{self, CODE_FONTS, FontInfo, Fonts, UI_FONTS};
+use crate::fonts::{self, CODE_FONTS, DEFAULT_SIZE, FontInfo, Fonts, SIZES, UI_FONTS};
 use crate::store::Store;
 use crate::theme::{self, Accent, ActivePalette as _, Choices, Palette, Pick, RADIUS, THEMES, contrast, TextScale as _};
 
@@ -46,6 +47,17 @@ pub const PRESETS: [(&str, u16); 12] = [
     ("Red", 25),
     ("Pink", 355),
     ("Violet", 300),
+];
+
+/// The text size control's buttons, one per [`SIZES`] entry: id and label.
+const SIZE_BUTTONS: [(&str, &str); SIZES.len()] = [
+    ("appearance-size-80", "80%"),
+    ("appearance-size-90", "90%"),
+    ("appearance-size-100", "100%"),
+    ("appearance-size-110", "110%"),
+    ("appearance-size-120", "120%"),
+    ("appearance-size-130", "130%"),
+    ("appearance-size-140", "140%"),
 ];
 
 pub fn init(cx: &mut App) {
@@ -143,6 +155,14 @@ impl Appearance {
         self.preview(window, cx);
     }
 
+    /// Ctrl+= / Ctrl+- (`Some(bigger)`) or Ctrl+0 (`None`) while open.
+    pub fn step_size(&mut self, bigger: Option<bool>, window: &mut Window, cx: &mut Context<Self>) {
+        let size = bigger.map_or(DEFAULT_SIZE, |bigger| self.fonts.step_size(bigger));
+        if size != self.fonts.size {
+            self.edit_fonts(|fonts| fonts.size = size, window, cx);
+        }
+    }
+
     fn edit_mode(&mut self, dark: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.editing_dark = dark;
         self.preview(window, cx);
@@ -170,7 +190,7 @@ impl Appearance {
         cx.emit(AppearanceEvent::Close);
     }
 
-    /// Keep the choices: show the saved mode and save all seven settings.
+    /// Keep the choices: show the saved mode and save all eight settings.
     fn done(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(self.choices);
         cx.set_global(self.fonts);
@@ -281,7 +301,7 @@ fn font_grid(
             .id((id, ix))
             .test_support()
             .flex_grow(1.)
-            .h(px(30.))
+            .h(theme::scaled(30.))
             .px(px(10.))
             .flex()
             .items_center()
@@ -306,7 +326,7 @@ fn font_grid(
 fn sample(fonts: &Fonts, p: &Palette) -> impl IntoElement {
     let code = fonts.code().family;
     let row = h_flex()
-        .h(px(crate::theme::ROW_HEIGHT))
+        .h(theme::scaled(theme::ROW_HEIGHT))
         .px(px(12.))
         .gap(px(10.))
         .items_center()
@@ -345,7 +365,7 @@ fn sample(fonts: &Fonts, p: &Palette) -> impl IntoElement {
         );
     let line = |sign: &'static str, text: &'static str, bg: Hsla, fg: Hsla| {
         h_flex()
-            .h(crate::theme::LINE_CODE)
+            .h(theme::scaled(theme::LINE_CODE.into()))
             .px(px(8.))
             .bg(bg)
             .text_color(fg)
@@ -358,8 +378,8 @@ fn sample(fonts: &Fonts, p: &Palette) -> impl IntoElement {
         .border_1()
         .border_color(p.border)
         .font_family(code)
-        .text_size(crate::theme::TEXT_CODE)
-        .line_height(crate::theme::LINE_CODE)
+        .text_size(theme::scaled(theme::TEXT_CODE.into()))
+        .line_height(theme::scaled(theme::LINE_CODE.into()))
         .child(line("", "@@ -12,3 +12,4 @@ fn client()", p.diff_hunk_bg, p.text_muted))
         .child(line(" ", "let base = config.api_url();", p.bg, p.text))
         .child(line("-", "let token = env::var(\"TOKEN\")?;", p.diff_del_bg, p.diff_del_fg))
@@ -391,7 +411,7 @@ fn segment(
         .id(id)
         .test_support()
         .flex_1()
-        .h(px(28.))
+        .h(theme::scaled(28.))
         .flex()
         .items_center()
         .justify_center()
@@ -555,8 +575,14 @@ impl Render for Appearance {
             .child(segment("appearance-tab-fonts", "Fonts", tab == Tab::Fonts, &ui, cx.listener(|this, _, _, cx| this.set_tab(Tab::Fonts, cx))));
 
         let f = self.fonts;
+        let size_row = h_flex().p(px(3.)).gap(px(2.)).rounded(RADIUS).bg(ui.surface).children(SIZES.into_iter().zip(SIZE_BUTTONS).map(
+            |(size, (id, label))| {
+                segment(id, label, f.size == size, &ui, cx.listener(move |this, _, w, cx| this.edit_fonts(|fonts| fonts.size = size, w, cx)))
+            },
+        ));
         let fonts_tab = v_flex()
             .gap(px(16.))
+            .child(v_flex().gap(px(6.)).child(heading("Text size (Ctrl+= / Ctrl+-)", &ui)).child(size_row))
             .child(
                 v_flex()
                     .gap(px(6.))
@@ -612,6 +638,7 @@ impl Render for Appearance {
 
         v_flex()
             .id("appearance")
+            .test_support()
             .key_context("Appearance")
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::cancel))
