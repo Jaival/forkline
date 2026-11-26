@@ -2076,3 +2076,52 @@ Open:
 - No engine test for the once-per-launch Explore note.
 - Frame rates sit 10-40 fps below the step 6 build (palette, dialog,
   diff scroll); still far over budget. Not looked into.
+
+## G3 wrap-up (2026-11-27)
+
+G3 plan: `docs/design/g3-plan.md`. All six steps are built.
+
+| Step | What | PR |
+|---|---|---|
+| 1 | Repos on first sign-in: auto-pin, lists across all repos | #14 |
+| 2 | Account menu, sign out in the palette, UI fixes | #14 |
+| 3 | Font size (Ctrl+= / Ctrl+- / Ctrl+0, Appearance) | #15 |
+| 4 | Custom title bar (fps drop was power state, not the bar) | #16 |
+| 5 | Workflow review: Home "needs me now", Inbox clean-up | #17 |
+| 6 | Animations; footer errors in a toast | #18 |
+
+- #17 is rebased on `main` (steps 4 and 6). See its section above for the
+  conflict resolution and the bench numbers after the rebase.
+- The OAuth App logo is uploaded (done by the user, 2026-11-27).
+- Bench rule for every phase: AC power, no other `forkline*` / `fl-bench`
+  process (`Get-Process forkline*, fl-bench`), alternate with a base build.
+  The first run after a fresh build can miss launch (cold exe); rerun.
+- Disk: D: is nearly full. Build with `CARGO_TARGET_DIR` on C:
+  (`C:/Users/saija/cargo-target/<branch>`). Do not delete other targets.
+
+### Next: G4 (not planned in detail yet)
+
+Candidates, from G3 open items (order to agree with the user):
+
+1. Batch merge of green bot PRs (D12 in `docs/design/g3-workflow-review.md`).
+2. "New since last view" line inside the item view (D13, second half).
+3. "Done all" failure feedback: today it sends one action per notification,
+   the first failure stops the rest and shows nothing.
+4. Engine test for the once-per-launch Explore note (`SyncStatus::note`).
+5. Optional: why frame rates after the step 5 rebase sit 10-40 fps below
+   the step 6 build (palette, dialog, diff scroll). Every budget passes.
+
+Open decisions:
+
+- G4 order.
+- Multi-account ("Add account" in the account menu and the palette) is
+  its own phase, not G4 or G5 (decided 2026-11-27). It changes the schema
+  (storage, token per account, which DB): plan it before code. Its order
+  relative to G5 is not decided.
+
+### After G4: code reuse (G5)
+
+Plan: `docs/design/g5-reuse-plan.md` (agreed 2026-11-27: steps 1-6 incl.
+the `fl-ui` crate, "2 min" time text, scope enum in fl-types, one PR per
+step). Start only after
+G4 ships, so the refactor does not fight open feature branches.
