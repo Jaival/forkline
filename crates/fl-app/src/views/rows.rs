@@ -12,7 +12,6 @@ use std::time::Instant;
 use fl_types::{Page, PageReq};
 
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     ScrollStrategy, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, UniformListScrollHandle,
@@ -237,7 +236,7 @@ pub fn list_keys<V: HasRows>(root: Div, cx: &mut Context<V>) -> Div {
 pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx: &Context<V>) -> impl gpui_kit::ParentElement + IntoElement + use<V> {
     let p = cx.palette();
     let selected = v.rows().selected == Some(ix);
-    div()
+    let row = div()
         .id(ElementId::NamedInteger(id.into(), ix as u64))
         .test_support()
         .relative()
@@ -249,15 +248,15 @@ pub fn row_shell<V: HasRows>(id: &'static str, ix: usize, height: f32, v: &V, cx
         .items_center()
         .rounded(RADIUS)
         .text_body()
-        .when(selected, |d| d.bg(p.selected))
-        .when(!selected, |d| d.hover(|s| s.bg(p.hover)))
         .on_click(cx.listener(move |v: &mut V, ev: &ClickEvent, window, cx| {
             v.rows_mut().selected = Some(ix);
             cx.notify();
             if ev.click_count() >= 2 {
                 open(v, window, cx);
             }
-        }))
+        }));
+    let (rest, hover) = if selected { (p.selected, None) } else { (p.hover.opacity(0.), Some(p.hover)) };
+    crate::motion::hover_bg(row, rest, hover)
 }
 
 /// The virtualized list with a scrollbar. `row` renders one row by index.

@@ -9,6 +9,7 @@ mod drafts;
 mod fonts;
 mod footer;
 mod menu_preview;
+mod motion;
 mod palette;
 mod panel;
 mod rail;
@@ -19,6 +20,7 @@ mod smooth_scroll;
 mod store;
 mod theme;
 mod titlebar;
+mod toast;
 #[cfg(test)]
 mod test_support;
 mod view_ref;
@@ -130,6 +132,10 @@ fn main() {
     app.run(move |cx| {
         let run_ms = bench::epoch_ms();
         gpui_kit::init(cx);
+        // A/B bench runs: the same build with every transition off.
+        if std::env::var_os("FORKLINE_REDUCE_MOTION").is_some_and(|v| v == "1") {
+            cx.set_reduce_motion(true);
+        }
         let kit_ms = bench::epoch_ms();
         panel::init(cx);
         workspace::init(cx);

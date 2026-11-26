@@ -5,5 +5,6 @@
   "switch_tab_ms": 8,
   "search_p95_ms": 30,
   "diff_scroll_fps": 120,
+  "animation_fps": 120,
   "optimistic_action_network_wait_ms": 0
 }

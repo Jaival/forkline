@@ -16,11 +16,15 @@
 //! a Conversation tab (`conversation_scroll_fps`: the fake PR with the most
 //! comments, 40 px a frame down and back up for two seconds), open each
 //! step 7 view once (`open_<key>_ms`: open -> `<key>_painted`; no budget
-//! yet).
+//! yet), run each transition of `motion.rs` (`anim_<name>_fps`: frames per
+//! second while it plays in and, for dialogs, the palette and menus, out;
+//! 6 runs each; `animation_fps`, the budget, is the
+//! lowest). `FORKLINE_REDUCE_MOTION=1` runs the same steps with every
+//! transition off, for A/B runs.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::diff::DiffState;
 use fl_types::QueueKind;
@@ -57,6 +61,11 @@ const SCROLLS_PER_FRAME: usize = 2;
 const CONVERSATION_LOAD_MAX_FRAMES: usize = 120;
 const CONVERSATION_SCROLL_MS: f64 = 2_000.;
 const CONVERSATION_SCROLL_PX: f32 = 40.;
+/// Runs of each transition in the animation step.
+const ANIM_RUNS: usize = 6;
+/// The hover sweep: mouse moves over the Inbox rows, one per frame.
+const HOVER_SWEEP_MS: f64 = 1_000.;
+const HOVER_STEP_PX: f32 = 7.;
 
 #[derive(Default, Serialize)]
 struct Report {
@@ -220,6 +229,8 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
 
     let search = search_p95(&ws, &mut cx).await;
 
+    let anims = animations(&ws, &mut cx).await;
+
     let conversation_fps = scroll_conversation(&ws, &mut cx).await;
 
     let fps = scroll_big_diff(&ws, &mut cx).await;
@@ -242,6 +253,13 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         if !opens.is_empty() {
             bench.report.durations.insert("open_cached_item_ms".into(), vec![median(opens)]);
         }
+        let lowest = anims.iter().map(|(_, fps)| *fps).fold(f64::INFINITY, f64::min);
+        if lowest.is_finite() {
+            bench.report.durations.insert("animation_fps".into(), vec![lowest]);
+        }
+        for (key, fps) in anims {
+            bench.report.durations.insert(format!("anim_{key}_fps"), vec![fps]);
+        }
         for (key, ms) in views {
             bench.report.durations.insert(format!("open_{key}_ms"), vec![ms]);
         }
@@ -251,6 +269,103 @@ pub async fn run(ws: Entity<Workspace>, mut cx: AsyncWindowContext) {
         }
         cx.quit();
     });
+}
+
+/// Count frames for `ms` after a transition starts; (frames, elapsed ms).
+async fn frames_for(ms: f64, cx: &mut AsyncWindowContext) -> (u32, f64) {
+    let start = epoch_ms();
+    let mut frames = 0;
+    while epoch_ms() - start < ms {
+        painted(cx).await;
+        frames += 1;
+    }
+    (frames, epoch_ms() - start)
+}
+
+/// Frames per second while each transition plays: start it, count frames
+/// for its duration, settle, [`ANIM_RUNS`] times.
+async fn animations(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> Vec<(&'static str, f64)> {
+    use crate::motion;
+    type Start = fn(&Entity<Workspace>, usize, &mut Window, &mut App);
+    let steps: [(&str, Duration, Start); 5] = [
+        ("tab", motion::TAB, |ws, i, window, cx| {
+            let target = if i % 2 == 0 { ViewRef::Pulls { repo_id: None } } else { ViewRef::Inbox };
+            ws.update(cx, |ws, cx| ws.open(target, window, cx));
+        }),
+        ("sidebar", motion::SIDEBAR, |ws, _, window, cx| ws.update(cx, |ws, cx| ws.toggle_sidebar(window, cx))),
+        ("dialog", motion::DIALOG, |ws, _, window, cx| ws.update(cx, |ws, cx| ws.open_appearance(window, cx))),
+        ("palette", motion::MENU, |_, _, window, cx| window.dispatch_action(Box::new(crate::workspace::OpenPalette), cx)),
+        ("menu", motion::MENU, |ws, _, window, cx| {
+            let menus = crate::menu_preview::build("theme", ws, window, cx);
+            ws.update(cx, |ws, cx| ws.preview_menus(menus, cx));
+        }),
+    ];
+    let mut out = Vec::new();
+    for (key, duration, start) in steps {
+        let (mut frames, mut ms) = (0, 0.);
+        for i in 0..ANIM_RUNS {
+            let _ = cx.update(|window, cx| start(ws, i, window, cx));
+            let (f, t) = frames_for(duration.as_secs_f64() * 1000., cx).await;
+            frames += f;
+            ms += t;
+            // Close what opened (an even number of sidebar toggles and tab
+            // switches leaves the layout as it was).
+            let _ = cx.update(|window, cx| match key {
+                "dialog" => window.dispatch_action(Box::new(crate::appearance::CancelAppearance), cx),
+                "palette" => window.dispatch_action(Box::new(crate::workspace::OpenPalette), cx),
+                "menu" => {
+                    // The preview has no trigger: start the same exit copy a
+                    // closed dropdown gets, where the preview drew it.
+                    let menus = ws.update(cx, |ws, cx| ws.take_preview_menus(cx));
+                    if let Some(menu) = menus.into_iter().next() {
+                        let bounds = gpui_kit::Bounds::new(gpui_kit::point(px(64.), px(48.)), gpui_kit::size(px(160.), px(140.)));
+                        crate::motion::start_menu_exit(menu, bounds, window, cx);
+                    }
+                }
+                _ => {}
+            });
+            // The exit (dialogs, palette, menu), counted with the enter.
+            if matches!(key, "dialog" | "palette" | "menu") {
+                let (f, t) = frames_for(duration.as_secs_f64() * 1000., cx).await;
+                frames += f;
+                ms += t;
+            }
+            for _ in 0..3 {
+                painted(cx).await;
+            }
+        }
+        out.push((key, f64::from(frames) * 1000. / ms));
+    }
+    out.push(("hover", hover_sweep(ws, cx).await));
+    out
+}
+
+/// Move the mouse (in-process events, no OS input) down the Inbox rows and
+/// back, one step a frame; frames per second.
+async fn hover_sweep(ws: &Entity<Workspace>, cx: &mut AsyncWindowContext) -> f64 {
+    use gpui_kit::{Modifiers, MouseMoveEvent, PlatformInput, point};
+    let _ = cx.update(|window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Inbox, window, cx)));
+    for _ in 0..3 {
+        painted(cx).await;
+    }
+    let (top, bottom) = (px(120.), px(720.));
+    let mut y = top;
+    let mut step = px(HOVER_STEP_PX);
+    let mut frames = 0u32;
+    let start = epoch_ms();
+    while epoch_ms() - start < HOVER_SWEEP_MS {
+        let _ = cx.update(|window, cx| {
+            let event = MouseMoveEvent { position: point(px(360.), y), pressed_button: None, modifiers: Modifiers::default() };
+            window.dispatch_event(PlatformInput::MouseMove(event), cx);
+        });
+        painted(cx).await;
+        frames += 1;
+        y += step;
+        if y > bottom || y < top {
+            step = -step;
+        }
+    }
+    f64::from(frames) * 1000. / (epoch_ms() - start)
 }
 
 /// Open each step 7 view in a new tab; time open -> its rows painted.

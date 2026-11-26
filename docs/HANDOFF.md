@@ -1940,3 +1940,76 @@ parallel.
   the frame's dark mode.
 
 Next: step 5 (workflow review), then step 6 (animations).
+
+### G3 step 6 state: animations (2026-11-26, branch `g3-animations` on `g3-title-bar`)
+
+- Research: `docs/research/gpui-animation.md` (GPUI `with_animation`, the
+  kit's `base::motion::transition`, what the kit already animates, limits:
+  no subtree transforms, opacity per primitive, `.hover()` cannot animate).
+- `motion.rs` holds the durations and helpers. All of them use GPUI's
+  animation element or the kit's `transition`:
+  - Hover (90 ms): `hover_bg` fades a background between rest and hover.
+    It is used on the sidebar nav and pinned rows, the list rows
+    (`rows::row_shell`) and the title bar command field. It keeps a
+    keyed `hovered` state and re-renders the view on hover enter and
+    leave. Kit buttons keep their instant hover.
+  - Menus (120 ms): `motion::DropdownMenu` replaces the kit trait at
+    every call site, with the same `button.dropdown_menu(builder)` call. It
+    is the kit's `DropdownMenu` rebuilt on the public `Popover`. The menu
+    fades in and slides 6 px. It has no `TriggerFocus`, so menu items
+    cannot show shortcut hints (no Forkline menu has any). The
+    `--open-menu` preview uses the same motion.
+  - Dialogs (160 ms): Appearance and sign-in fade in and slide 12 px. The
+    sign-in backdrop fades in. The palette uses the menu motion.
+  - Tab switch (120 ms): `ViewPanel` content fades in. The dock draws only
+    the shown tab, so the fade plays on each switch (and on a split).
+  - Sidebar collapse (160 ms): the nav box (`#nav`) width eases between
+    rail and sidebar. The new nav shows at once, clipped while the box grows.
+  - Exit motions (same durations, run backwards): the palette and the
+    dialogs stay drawn while a `Presence` runs to 0 (`motion::Exiting`).
+    The workspace keeps the closed entity for that time. A closing copy
+    takes no clicks: the backdrop stops occluding, and `motion::shield`
+    covers the box. Focus goes back at once, on close.
+  - Menus close at once (the kit `Popover` drops its content, and keeping
+    it open would take focus back). On every close, `on_open_change(false)`
+    hands the menu to the global `ClosingMenu`. The workspace draws a copy
+    there, at the menu's last bounds, and fades it out. The copy's shield
+    blocks clicks in that area for 120 ms. The kit shifts a menu that does
+    not fit below its trigger up over the trigger (the sidebar theme and
+    account menus). So a click on that trigger within 120 ms of a close
+    does nothing. A reopen clears the copy.
+- Reduced motion: free. `gpui_kit::init` reads Windows "Animation
+  effects" (`SPI_GETCLIENTAREAANIMATION`). Every helper then shows the end
+  state. The setting is read at start only. `FORKLINE_REDUCE_MOTION=1`
+  forces it on (for A/B bench runs). Tests run with reduced motion on
+  (`test_support`). `motion::tests` turn it off: sidebar width eases,
+  dialog slides in, a menu slides in on every open, a closing dialog
+  fades out and takes no clicks, a closed menu fades out where it was.
+- Bench: a new step runs each transition 6 times and reports
+  `anim_{tab,sidebar,dialog,palette,menu,hover}_fps`. The hover sweep
+  moves the mouse over the Inbox rows with in-process `MouseMove` events,
+  not OS input. New budget `animation_fps` (the lowest) >= 120.
+  On AC, 6 rounds of base / still (`FORKLINE_REDUCE_MOTION=1`) / motion,
+  interleaved (`%TEMP%\g3\ab-anim.sh`). Clean runs: every `anim_*` 186-241
+  fps in both still and motion; dialog / palette ~190-235 in both (the cost
+  of drawing the open dialog, not of the motion). switch tab 4.0 ms,
+  open cached item 5.8-9.5 ms, diff scroll 218-240 fps, the same as base.
+- With exits (the bench counts exit frames for the dialog, palette and
+  menu), 4 more rounds: clean motion runs gave every `anim_*` 227-240 fps,
+  switch tab 4.1-4.2 ms and diff scroll 202-240 fps. Still and base were
+  the same.
+- Slow mode (30 fps everywhere, search p95 ~65 ms) hit base, still and
+  motion runs alike. It can start in the middle of a run. Still not the
+  code; not looked into.
+- Not checked by hand (needs real mouse input): how the hover and menu
+  motion feel. PrintWindow captures show the end states only.
+- Footer errors (asked for during step 6): the sync error and a failed
+  Retry / Discard / Sign out no longer show as text in the footer line.
+  The alert icon reads "N errors" and opens a toast (`toast.rs`, a
+  reusable `Toast` with a danger stripe, Copy and Close) above the footer.
+  A failed action opens it by itself; a sync error waits behind the icon.
+  Close clears a failed action's error; the sync error stays until a sync
+  succeeds. The toast and the failed-actions list share the spot, so one
+  closes the other. Test: `footer::tests::the_alert_opens_an_error_toast`.
+
+Next: agree on step 5's workflow changes.

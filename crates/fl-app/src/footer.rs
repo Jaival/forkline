@@ -49,6 +49,10 @@ pub struct Footer {
     popover: Option<Popover>,
     /// A Retry, Discard or Sign out that failed.
     notice: Option<SharedString>,
+    /// The error toast is open (the alert icon toggles it).
+    toast: bool,
+    /// The errors last shown in the toast, kept while it fades out.
+    toast_shown: Vec<SharedString>,
     _tick: Task<()>,
     _subscription: Subscription,
 }
@@ -83,6 +87,8 @@ impl Footer {
             failed: Vec::new(),
             popover: None,
             notice: None,
+            toast: false,
+            toast_shown: Vec::new(),
             _tick: tick,
             _subscription: subscription,
         };
@@ -141,6 +147,7 @@ impl Footer {
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
         self.popover = (self.popover != Some(popover)).then_some(popover);
         self.notice = None;
+        self.toast = false;
         if self.popover == Some(Popover::Failed) {
             self.refetch(cx);
         }
@@ -167,11 +174,34 @@ impl Footer {
                 Err(e) => e.to_string(),
             };
             let _ = this.update(cx, |this, cx| {
+                // An action the user ran: show its error at once.
                 this.notice = Some(error.into());
+                this.toast = true;
+                this.popover = None;
                 cx.notify();
             });
         })
         .detach();
+        cx.notify();
+    }
+
+    /// The sync error and the last failed action, if any.
+    fn errors(&self) -> Vec<SharedString> {
+        let sync = self.status.as_ref().and_then(|s| s.error.clone()).map(SharedString::from);
+        sync.into_iter().chain(self.notice.clone()).collect()
+    }
+
+    fn toggle_toast(&mut self, cx: &mut Context<Self>) {
+        self.toast = !self.toast;
+        self.popover = None;
+        cx.notify();
+    }
+
+    /// Close the toast. A failed action's error is gone after that; the sync
+    /// error stays behind the icon until the next sync clears it.
+    fn close_toast(&mut self, cx: &mut Context<Self>) {
+        self.toast = false;
+        self.notice = None;
         cx.notify();
     }
 
@@ -255,22 +285,22 @@ fn ago(secs: i64) -> String {
 }
 
 impl Render for Footer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *cx.palette();
-        let (synced, pending, failed, error) = match &self.status {
-            None => ("Loading…".to_owned(), 0, 0, None),
+        let errors = self.errors();
+        let (synced, pending, failed) = match &self.status {
+            None => ("Loading…".to_owned(), 0, 0),
             Some(s) => (
                 s.last_synced_at.map_or("Not synced yet".to_owned(), |t| {
                     format!("Synced {} ago", ago(fl_sync::now() - t))
                 }),
                 s.pending_actions,
                 s.failed_actions,
-                s.error.clone(),
             ),
         };
         let signed_out = self.auth.as_ref().is_some_and(|a| !a.signed_in);
-        let (icon, icon_color) = match (&error, signed_out, &self.status) {
-            (Some(_), _, _) => (IconName::TriangleAlert, p.closed.fg),
+        let (icon, icon_color) = match (!errors.is_empty(), signed_out, &self.status) {
+            (true, _, _) => (IconName::TriangleAlert, p.closed.fg),
             (_, true, _) => (IconName::CircleUser, p.text_muted),
             (_, _, Some(s)) if s.last_synced_at.is_some() => (IconName::CircleCheck, p.open.fg),
             _ => (IconName::Loader, p.text_muted),
@@ -278,7 +308,31 @@ impl Render for Footer {
         let left = h_flex()
             .gap(px(8.))
             .items_center()
-            .child(Icon::new(icon).with_size(px(12.)).text_color(icon_color))
+            .map(|d| {
+                let icon = Icon::new(icon).with_size(px(12.)).text_color(icon_color);
+                if errors.is_empty() {
+                    return d.child(icon);
+                }
+                // The alert opens the error toast.
+                let n = errors.len();
+                d.child(
+                    div()
+                        .id("footer-error")
+                        .test_support()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_1()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_color(p.closed.fg)
+                        .hover(|s| s.bg(p.hover))
+                        .when(self.toast, |d| d.bg(p.hover))
+                        .child(icon)
+                        .child(if n == 1 { "1 error".to_owned() } else { format!("{n} errors") })
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_toast(cx))),
+                )
+            })
             .map(|d| {
                 if signed_out {
                     d.child(
@@ -304,9 +358,7 @@ impl Render for Footer {
                         .child(format!("{n} failed"))
                         .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Failed, cx))),
                 )
-            })
-            .when_some(error, |el, e| el.child(div().text_color(p.closed.fg).child(e)))
-            .when_some(self.notice.clone(), |el, e| el.child(div().text_color(p.closed.fg).child(e)));
+            });
         let hints = ["Ctrl K commands", "j / k move", "Enter open"];
         let mut right = h_flex().gap(px(8.)).items_center().text_color(p.text_faint);
         for (ix, hint) in hints.into_iter().enumerate() {
@@ -319,6 +371,28 @@ impl Render for Footer {
             Some(Popover::Failed) if !self.failed.is_empty() => Some(self.failed_list(cx)),
             _ => None,
         };
+        // The toast fades in and, once closed (or its errors clear), out.
+        let live = self.toast && !errors.is_empty();
+        if live {
+            self.toast_shown = errors;
+        }
+        let t = crate::motion::presence("footer-toast", live, crate::motion::MENU, window, cx);
+        if t.is_none() {
+            self.toast_shown.clear();
+        }
+        let toast = t.filter(|_| !self.toast_shown.is_empty()).map(|t| {
+            let title = if self.toast_shown.len() == 1 { "Error" } else { "Errors" };
+            let toast = crate::toast::Toast::error("footer-toast", title, self.toast_shown.clone())
+                .on_close({
+                    let this = cx.entity().downgrade();
+                    move |_, cx| _ = this.update(cx, |this, cx| this.close_toast(cx))
+                });
+            div().absolute().left(px(8.)).bottom(px(30.)).child(crate::motion::surface(
+                div().relative().child(toast).when(!live, |d| d.child(crate::motion::shield())),
+                t,
+                -6.,
+            ))
+        });
         div()
             .relative()
             .flex_none()
@@ -339,6 +413,7 @@ impl Render for Footer {
                     .child(right),
             )
             .children(popover.map(|p| deferred(p).with_priority(1)))
+            .children(toast.map(|t| deferred(t).with_priority(1)))
     }
 }
 
@@ -388,6 +463,41 @@ mod tests {
         wait_for(cx, "8 discarded", |cx| cx.read(|cx| footer.read(cx).popover.is_none()));
         assert_eq!(query_i64(cx, "SELECT COUNT(*) FROM action_queue WHERE id = 8"), 0);
         assert!(cx.read(|cx| footer.read(cx).notice.is_none()));
+    }
+
+    /// An error is not in the footer line: the alert opens a toast with it,
+    /// and Close dismisses it.
+    #[gpui_kit::test]
+    fn the_alert_opens_an_error_toast(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open_seeded(cx, dir.path(), SEED);
+        let footer = cx.read(|cx| ws.read(cx).footer().clone());
+        cx.update(|cx| {
+            footer.update(cx, |f, cx| {
+                f.notice = Some("GitHub 502: bad gateway".into());
+                cx.notify();
+            })
+        });
+        let frame = |cx: &mut TestAppContext, click: Option<&'static str>| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                if let Some(id) = click {
+                    window.click(id, cx);
+                    window.render_frame(cx);
+                }
+                window.try_find("footer-toast").is_some()
+            })
+            .unwrap()
+        };
+        assert!(!frame(cx, None), "closed until clicked");
+        assert!(frame(cx, Some("footer-error")));
+        assert!(!frame(cx, Some("footer-toast-close")));
+        assert!(cx.read(|cx| footer.read(cx).notice.is_none()));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("footer-error").is_none(), "no errors left");
+        })
+        .unwrap();
     }
 
     #[test]
