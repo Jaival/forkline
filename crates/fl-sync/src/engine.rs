@@ -50,6 +50,10 @@ impl Config {
 struct Runtime {
     paused_until: Option<i64>,
     error: Option<String>,
+    /// Shown muted in the footer until the next Explore pass.
+    note: Option<String>,
+    /// Notes already shown this launch: each shows once.
+    noted: std::collections::HashSet<String>,
     /// GitHub answered 401 for the current token.
     token_rejected: bool,
     device: Option<Device>,
@@ -136,6 +140,7 @@ impl Engine {
         } else {
             s.error.clone_from(&rt.error);
         }
+        s.note.clone_from(&rt.note);
         Ok(s)
     }
 
@@ -354,9 +359,15 @@ impl Engine {
         // when the budget is low.
         if repos_due && !self.gh.rate().is_some_and(|(remaining, _)| remaining < LOW_REMAINING) {
             match sync::explore(&self.gh, &token, &self.db, now, &emit).await {
-                Ok(()) => {}
+                Ok(()) => self.rt().note = None,
                 Err(e @ (Error::RateLimited { .. } | Error::Unauthorized | Error::Network(_) | Error::Db(_))) => return Err(e),
-                Err(e) => repo_error = repo_error.or(Some(format!("Explore: {e}"))),
+                // Explore is optional (an org may block OAuth Apps): a
+                // muted note, once per launch, not a sync error.
+                Err(e) => {
+                    let note = format!("Explore: {e}");
+                    let mut rt = self.rt();
+                    rt.note = rt.noted.insert(note.clone()).then_some(note);
+                }
             }
         }
         match repo_error {

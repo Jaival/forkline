@@ -1,24 +1,46 @@
 //! A queue beside a reading pane, in one dock panel.
 
-use fl_types::{Action, QueueKind, QueueQuery};
+use std::time::Duration;
+
+use fl_types::{Action, QueueKind, QueueQuery, QueueRow};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Window, div, px,
+    SharedString, Styled as _, Subscription, Task, TestSupportExt as _, Window, div, px,
 };
 
 use super::Built;
+use super::home;
 use super::queue::{FocusFilter, Queue, QueueEvent, SaveView, ToggleGrouped};
 use super::reading::{
     Approve, Done, EditAssignees, EditLabels, NextFile, PrevFile, ReadingPane, Reply, ShowFiles, Snooze, ToggleState,
     ToggleViewed,
 };
 use crate::store::Store;
+use crate::theme::{ActivePalette as _, TextScale as _};
+use crate::view_ref::ViewRef;
+use crate::workspace::OpenView;
+
+/// An Inbox row counts as read once it stays selected this long, so j / k
+/// skimming does not mark rows read on GitHub.
+pub(crate) const READ_AFTER: Duration = Duration::from_millis(1500);
 
 pub struct ListView {
     pub(super) queue: Entity<Queue>,
     pub(super) reading: Entity<ReadingPane>,
+    /// Home: how many repos the first sync pinned, until the note is closed.
+    pub(super) pin_note: Option<u32>,
+    /// Inbox: marks the selected row read after `READ_AFTER`; a new
+    /// selection drops it.
+    _read_timer: Option<Task<()>>,
     _subscription: Subscription,
+    /// Home: auto-pin runs during the first sync, after Home opened.
+    _store: Option<Subscription>,
+    /// Width of the list beside the reading pane.
+    list_width: f32,
 }
 
 impl ListView {
@@ -28,31 +50,100 @@ impl ListView {
         let queue = cx.new(|cx| Queue::new(query, title, window, cx));
         let focus = queue.read(cx).focus.clone();
         let reading = cx.new(|cx| ReadingPane::new(inbox, cx));
+        let pin_note = if kind == QueueKind::Home {
+            Store::global(cx).read(cx).db().read(home::read_auto_pin_note).ok().flatten()
+        } else {
+            None
+        };
         let view = cx.new(|cx| {
             let _subscription = cx.subscribe(&queue, move |this: &mut Self, _, ev: &QueueEvent, cx| {
                 let QueueEvent::Selected(row) = ev;
-                // Reading a notification marks it read, on GitHub too (through
-                // the action queue). A bench run leaves its database alone.
-                let store = Store::global(cx).read(cx);
+                this._read_timer = None;
                 if let Some(row) = row
                     && inbox
                     && row.unread
-                    && !store.read_only()
                 {
-                    let engine = store.sync().clone();
-                    let id = row.key.clone();
-                    store.run(cx, async move { engine.enqueue(Action::NotificationRead { id }).await }).detach();
+                    let row = row.clone();
+                    this._read_timer = Some(cx.spawn(async move |_, cx| {
+                        cx.background_executor().timer(READ_AFTER).await;
+                        cx.update(|cx| mark_read(&row, cx));
+                    }));
                 }
                 this.reading.update(cx, |reading, cx| reading.set_item(row.clone(), cx));
             });
-            Self { queue, reading, _subscription }
+            let _store = (kind == QueueKind::Home).then(|| {
+                cx.subscribe(&Store::global(cx), |this: &mut Self, _, ev: &fl_types::DataChanged, cx| {
+                    if ev.scopes.iter().any(|s| s == "repos") {
+                        this.pin_note = Store::global(cx).read(cx).db().read(home::read_auto_pin_note).ok().flatten();
+                        cx.notify();
+                    }
+                })
+            });
+            // Home is the main view: its rows carry reasons, so give the
+            // list more room.
+            let list_width = if kind == QueueKind::Home { 520. } else { 380. };
+            Self { queue, reading, pin_note, _read_timer: None, _subscription, _store, list_width }
         });
         crate::bench::list_built(kind, view.clone().into(), cx);
         Built { view: view.into(), focus }
     }
 }
 
+/// Reading a notification marks it read, on GitHub too (through the action
+/// queue). A bench run leaves its database alone.
+fn mark_read(row: &QueueRow, cx: &mut App) {
+    let store = Store::global(cx).read(cx);
+    if store.read_only() {
+        return;
+    }
+    let engine = store.sync().clone();
+    let id = row.key.clone();
+    store.run(cx, async move { engine.enqueue(Action::NotificationRead { id }).await }).detach();
+}
+
 impl ListView {
+    /// Close the auto-pin note for good.
+    fn close_pin_note(&mut self, cx: &mut Context<Self>) {
+        self.pin_note = None;
+        let db = Store::global(cx).read(cx).db().clone();
+        cx.background_spawn(async move { db.write(|c| fl_db::queries::layout::delete_setting(c, home::AUTO_PIN_NOTE)) })
+            .detach();
+        cx.notify();
+    }
+
+    fn pin_note_element(&self, count: u32, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let p = cx.palette();
+        h_flex()
+            .id("home-pin-note")
+            .test_support()
+            .flex_none()
+            .w_full()
+            .px(px(20.))
+            .py(px(8.))
+            .gap(px(8.))
+            .items_center()
+            .bg(p.raised)
+            .border_b_1()
+            .border_color(p.border)
+            .text_secondary()
+            .child(div().flex_1().min_w_0().child(home::auto_pin_text(count)))
+            .child(
+                Button::new("home-pin-change")
+                    .ghost()
+                    .small()
+                    .label("Change\u{2026}")
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenView(ViewRef::Repos)), cx)),
+            )
+            .child(
+                Button::new("home-pin-close")
+                    .ghost()
+                    .small()
+                    .label("\u{d7}")
+                    .tooltip("Close")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_pin_note(cx))),
+            )
+    }
+
     // The queue holds the focus; the action keys act on the item on show.
     fn approve(&mut self, a: &Approve, window: &mut Window, cx: &mut Context<Self>) {
         self.reading.update(cx, |pane, cx| pane.approve(a, window, cx));
@@ -131,14 +222,21 @@ impl Render for ListView {
             .on_action(cx.listener(Self::save_view))
             .on_action(cx.listener(Self::toggle_grouped))
             .child(
-                h_resizable("list-view")
+                v_flex()
+                    .size_full()
+                    .when_some(self.pin_note, |d, count| d.child(self.pin_note_element(count, cx)))
                     .child(
-                        resizable_panel()
-                            .size(px(380.))
-                            .size_range(px(280.)..px(640.))
-                            .child(self.queue.clone()),
-                    )
-                    .child(resizable_panel().child(self.reading.clone())),
+                        div().flex_1().min_h_0().child(
+                            h_resizable("list-view")
+                                .child(
+                                    resizable_panel()
+                                        .size(px(self.list_width))
+                                        .size_range(px(280.)..px(640.))
+                                        .child(self.queue.clone()),
+                                )
+                                .child(resizable_panel().child(self.reading.clone())),
+                        ),
+                    ),
             )
     }
 }

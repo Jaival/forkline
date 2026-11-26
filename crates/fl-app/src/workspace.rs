@@ -41,6 +41,9 @@ actions!(forkline, [IncreaseFontSize, DecreaseFontSize, ResetFontSize]);
 // A tab's view changed state the saved layout holds (e.g. a queue went flat).
 actions!(forkline, [SaveLayout]);
 
+// Palette: flip the "Open Home on launch" setting.
+actions!(forkline, [ToggleOpenHome]);
+
 /// Ask the workspace to show a view, so child views need no workspace handle.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
 #[action(namespace = forkline, no_json)]
@@ -206,13 +209,23 @@ impl Workspace {
         this.load_inbox_unread(cx);
         warn_on_quit(window, cx);
         crate::bench::mark("workspace_built", cx);
+        // Launch on Home ("what needs me now"), unless the user turned it
+        // off. A bench run keeps its default layout.
+        let open_home = save_layout && crate::views::settings::open_home(cx);
         // Keys need a focused element; start on the active tab.
-        cx.defer_in(window, |this, window, cx| {
-            if let Some((_, id)) = this.focused_group(window, cx) {
+        cx.defer_in(window, move |this, window, cx| {
+            if open_home {
+                this.go_to(ViewRef::Home, window, cx);
+            } else if let Some((_, id)) = this.focused_group(window, cx) {
                 this.focus_panel(id, window, cx);
             }
         });
         this
+    }
+
+    fn on_toggle_open_home(&mut self, _: &ToggleOpenHome, _: &mut Window, cx: &mut Context<Self>) {
+        let on = !crate::views::settings::open_home(cx);
+        crate::views::settings::set_open_home(on, cx);
     }
 
     /// Show `view_ref`: select its tab if one is open, else open it in the
@@ -492,6 +505,7 @@ impl Workspace {
                     QueueKind::Pulls => ViewRef::Pulls { repo_id: None },
                     QueueKind::Issues => ViewRef::Issues { repo_id: None },
                     QueueKind::Reviews => ViewRef::Reviews,
+                    QueueKind::Home => ViewRef::Home,
                 };
                 self.open(view_ref.clone(), window, cx);
                 // By view, not by focus: a new tab has not rendered yet, so
@@ -828,6 +842,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_palette))
             .on_action(cx.listener(Self::on_open_sign_in))
             .on_action(cx.listener(Self::on_sign_out))
+            .on_action(cx.listener(Self::on_toggle_open_home))
             .on_action(cx.listener(Self::on_open_appearance))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))

@@ -1,13 +1,14 @@
 //! The work queue: one grouped (or flat), virtualized list behind Inbox, Pull requests,
 //! Issues and Review requests.
 
+use std::collections::HashSet;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use fl_db::queries::{queue, repo, views};
+use fl_db::queries::{queue, repo, sync, views};
 use fl_types::{
-    CheckState, DataChanged, IssueState, PAGE_MAX, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow,
-    SavedView,
+    Action, CheckState, DataChanged, IssueState, PAGE_MAX, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow,
+    RowReason, SavedView,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::VirtualListScrollHandle;
@@ -21,8 +22,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollStrategy, SharedString,
-    Size, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window, actions,
-    div, px, size,
+    Size, StatefulInteractiveElement as _, Styled as _, Subscription, Task, TestSupportExt as _, WeakEntity, Window,
+    actions, div, px, size,
 };
 use rusqlite::Connection;
 
@@ -50,8 +51,9 @@ enum Item {
 }
 
 /// One header before the first row of each group. Rows arrive ordered by
-/// group. `flat`: rows only, no headers.
-fn flatten(rows: &[QueueRow], flat: bool) -> Vec<Item> {
+/// group. `flat`: rows only, no headers. A `collapsed` group keeps its header
+/// and hides its rows.
+fn flatten(rows: &[QueueRow], flat: bool, collapsed: &HashSet<QueueGroup>) -> Vec<Item> {
     if flat {
         return (0..rows.len()).map(Item::Row).collect();
     }
@@ -62,10 +64,16 @@ fn flatten(rows: &[QueueRow], flat: bool) -> Vec<Item> {
             group = Some(row.group);
             items.push(Item::Header(row.group));
         }
-        items.push(Item::Row(ix));
+        if !collapsed.contains(&row.group) {
+            items.push(Item::Row(ix));
+        }
     }
     items
 }
+
+/// How long "Done all" waits before it sends, so Undo can take it back:
+/// GitHub has no way to restore a done notification.
+const UNDO_DONE: Duration = Duration::from_secs(6);
 
 /// `now`, `5m`, `2h`, `3d`, `4w`, `2y`.
 pub(super) fn age(now: i64, then: i64) -> String {
@@ -83,6 +91,8 @@ struct Snapshot {
     rows: Vec<QueueRow>,
     next: Option<u32>,
     counts: Vec<(QueueGroup, u32)>,
+    /// A pinned repo has not finished its first deep sync.
+    syncing: bool,
 }
 
 /// The first `pages` pages and the group counts, under the `/` filter text.
@@ -100,7 +110,8 @@ fn snapshot(conn: &Connection, query: &QueueQuery, filter: &str, pages: usize) -
             None => break,
         }
     }
-    Ok(Snapshot { rows, next, counts: queue::counts(conn, query, cond.as_ref())? })
+    let (synced, pinned) = sync::deep_progress(conn)?;
+    Ok(Snapshot { rows, next, counts: queue::counts(conn, query, cond.as_ref())?, syncing: synced < pinned })
 }
 
 pub struct Queue {
@@ -133,6 +144,15 @@ pub struct Queue {
     filter_applied: bool,
     /// Saved views of every queue kind.
     views: Vec<SavedView>,
+    /// Groups whose rows are hidden (Home folds its last two).
+    collapsed: HashSet<QueueGroup>,
+    /// A pinned repo has not finished its first deep sync: an empty list
+    /// says so.
+    syncing: bool,
+    /// Inbox "Done all": thread ids hidden now and sent when the timer ends,
+    /// unless Undo drops the task first.
+    pending_done: Vec<String>,
+    _done_timer: Option<Task<()>>,
     _store: Subscription,
     _input: Subscription,
     /// Rows mark PRs with unsent inline drafts.
@@ -160,7 +180,7 @@ impl Queue {
                 cx.notify();
             }
         });
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter: is:open author:me label:bug text"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter: is:open author:@me label:bug text"));
         let input_subscription = cx.subscribe_in(&input, window, |this, input, ev: &InputEvent, window, cx| match ev {
             InputEvent::Change => {
                 let text = input.read(cx).value().to_string();
@@ -190,6 +210,14 @@ impl Queue {
             filter_ms: None,
             filter_applied: false,
             views: saved,
+            collapsed: if query.kind == QueueKind::Home {
+                QueueGroup::ALL.into_iter().filter(|g| g.starts_collapsed()).collect()
+            } else {
+                HashSet::new()
+            },
+            syncing: false,
+            pending_done: Vec::new(),
+            _done_timer: None,
             _store: subscription,
             _input: input_subscription,
             _drafts: cx.observe(&Drafts::global(cx), |_, _, cx| cx.notify()),
@@ -199,14 +227,103 @@ impl Queue {
             this.next = snap.next;
             this.counts = snap.counts;
             this.counts_ready = true;
+            this.syncing = snap.syncing;
             this.rebuild();
         }
         this
     }
 
     fn rebuild(&mut self) {
-        self.items = flatten(&self.rows, self.query.flat);
+        if !self.pending_done.is_empty() {
+            let selected = self.selected.map(|ix| self.rows[ix].key.clone());
+            self.rows.retain(|r| !self.pending_done.contains(&r.key));
+            self.selected = selected.and_then(|key| self.rows.iter().position(|r| r.key == key));
+        }
+        self.items = flatten(&self.rows, self.query.flat, &self.collapsed);
         self.measure();
+    }
+
+    /// Click on a group header: fold or unfold its rows.
+    fn toggle_group(&mut self, group: QueueGroup, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(&group) {
+            self.collapsed.insert(group);
+            if self.selected.is_some_and(|ix| self.rows[ix].group == group) {
+                self.select(None, cx);
+            }
+        }
+        self.rebuild();
+        cx.notify();
+    }
+
+    /// Inbox: mark done every notification of `group` (all groups when
+    /// `None`) under the current repo and filter; `closed_only` keeps those
+    /// whose item is merged or closed. The rows hide at once; the actions go
+    /// out after `UNDO_DONE` unless Undo comes first.
+    pub(super) fn done_all(&mut self, group: Option<QueueGroup>, closed_only: bool, cx: &mut Context<Self>) {
+        self.flush_done(cx);
+        let query = self.query;
+        let filter = self.filter.clone();
+        let keys = Store::global(cx).read(cx).db().read(|c| {
+            let cond = fl_search::queue_filter(c, &filter, query.kind)?;
+            queue::inbox_keys(c, &query, cond.as_ref(), group, closed_only)
+        });
+        let Ok(keys) = keys else { return };
+        if keys.is_empty() {
+            return;
+        }
+        let had_selection = self.selected.is_some();
+        self.pending_done = keys;
+        self.rebuild();
+        if had_selection && self.selected.is_none() {
+            cx.emit(QueueEvent::Selected(None));
+        }
+        self._done_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UNDO_DONE).await;
+            let _ = this.update(cx, |this, cx| this.flush_done(cx));
+        }));
+        cx.notify();
+    }
+
+    /// What an empty list says.
+    pub(super) fn empty_text(&self) -> &'static str {
+        if self.syncing {
+            "Still syncing\u{2026}"
+        } else if self.query.kind == QueueKind::Reviews && self.filter.trim().is_empty() {
+            "No review requests. PRs on your repos are on Home."
+        } else {
+            "Nothing here"
+        }
+    }
+
+    /// Send the pending "Done all" now.
+    fn flush_done(&mut self, cx: &mut Context<Self>) {
+        self._done_timer = None;
+        let ids = std::mem::take(&mut self.pending_done);
+        if ids.is_empty() {
+            return;
+        }
+        let store = Store::global(cx).read(cx);
+        if store.read_only() {
+            return;
+        }
+        let engine = store.sync().clone();
+        store
+            .run(cx, async move {
+                for id in ids {
+                    engine.enqueue(Action::NotificationDone { id }).await?;
+                }
+                Ok::<_, fl_sync::Error>(())
+            })
+            .detach();
+        cx.notify();
+    }
+
+    /// Undo a pending "Done all": nothing was sent; read the rows again.
+    fn undo_done(&mut self, cx: &mut Context<Self>) {
+        self._done_timer = None;
+        self.pending_done.clear();
+        self.reload(cx);
+        cx.notify();
     }
 
     /// The rows' heights at `sizes_rem` (they hold text: see `theme::scaled`).
@@ -228,16 +345,26 @@ impl Queue {
         cx.notify();
     }
 
+    /// j / k: the next shown row (rows of folded groups are skipped).
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
-        let Some(last) = self.rows.len().checked_sub(1) else { return };
-        let ix = match self.selected {
+        let shown: Vec<(usize, usize)> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(item_ix, item)| match item {
+                Item::Row(ix) => Some((item_ix, *ix)),
+                Item::Header(_) => None,
+            })
+            .collect();
+        let Some(last) = shown.len().checked_sub(1) else { return };
+        let at = self.selected.and_then(|sel| shown.iter().position(|(_, ix)| *ix == sel));
+        let pos = match at {
             None => 0,
-            Some(ix) => ix.saturating_add_signed(step).min(last),
+            Some(pos) => pos.saturating_add_signed(step).min(last),
         };
+        let (item_ix, ix) = shown[pos];
         self.select(Some(ix), cx);
-        if let Some(item_ix) = self.items.iter().position(|item| *item == Item::Row(ix)) {
-            self.scroll.scroll_to_item(item_ix, ScrollStrategy::Nearest);
-        }
+        self.scroll.scroll_to_item(item_ix, ScrollStrategy::Nearest);
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -266,7 +393,7 @@ impl Queue {
         let view_ref = match self.query.kind {
             QueueKind::Pulls => ViewRef::Pulls { repo_id },
             QueueKind::Issues => ViewRef::Issues { repo_id },
-            QueueKind::Inbox | QueueKind::Reviews => return,
+            QueueKind::Inbox | QueueKind::Reviews | QueueKind::Home => return,
         };
         window.dispatch_action(Box::new(SetViewRef(view_ref)), cx);
     }
@@ -288,6 +415,7 @@ impl Queue {
             self.next = snap.next;
             self.counts = snap.counts;
             self.counts_ready = true;
+            self.syncing = snap.syncing;
         }
         self.rebuild();
         cx.emit(QueueEvent::Selected(None));
@@ -477,6 +605,7 @@ impl Queue {
         self.next = snap.next;
         self.counts = snap.counts;
         self.counts_ready = true;
+        self.syncing = snap.syncing;
         // A selected row that left (Done, Snooze, sync) passes the selection
         // to the row that took its place, so triage goes on with the next one.
         self.selected = before.as_ref().and_then(|b| {
@@ -493,9 +622,17 @@ impl Queue {
         cx.notify();
     }
 
-    fn header_element(&self, group: QueueGroup, p: &Palette) -> AnyElement {
+    fn header_element(&self, group: QueueGroup, cx: &Context<Self>) -> AnyElement {
+        let p = cx.palette();
         let count = self.counts.iter().find(|(g, _)| *g == group).map_or(0, |(_, n)| *n);
+        let collapsed = self.collapsed.contains(&group);
+        // Home folds its groups; the Inbox clears one at a time.
+        let foldable = self.query.kind == QueueKind::Home;
+        let inbox = self.query.kind == QueueKind::Inbox;
+        let ix = QueueGroup::ALL.iter().position(|g| *g == group).unwrap_or_default();
         h_flex()
+            .id(("queue-group", ix))
+            .test_support()
             .w_full()
             .h(scaled(GROUP_HEADER))
             .px(px(20.))
@@ -506,8 +643,27 @@ impl Queue {
             .text_label()
             .font_weight(FontWeight::MEDIUM)
             .text_color(p.text_muted)
+            .when(foldable, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.text_color(p.text_strong))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_group(group, cx)))
+                    .child(
+                        Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+                            .with_size(px(12.))
+                            .flex_none(),
+                    )
+            })
             .child(group.label())
             .when(self.counts_ready, |d| d.child(div().text_color(p.text_faint).child(count.to_string())))
+            .when(inbox, |d| {
+                d.child(div().flex_1()).child(
+                    Button::new(("queue-group-done", ix))
+                        .ghost()
+                        .xsmall()
+                        .label("Done all")
+                        .on_click(cx.listener(move |this, _, _, cx| this.done_all(Some(group), false, cx))),
+                )
+            })
             .into_any_element()
     }
 
@@ -535,6 +691,26 @@ impl Queue {
                 .min_w_0()
                 .child(crate::rail::avatar(login, 14., p))
                 .child(div().truncate().child(login.clone()))
+                .when(row.bot, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .px(px(4.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(p.border_strong)
+                            .text_label()
+                            .child("bot"),
+                    )
+                })
+        });
+        let reason = row.reason.map(|reason| {
+            let color = match reason {
+                RowReason::ChecksFailed | RowReason::ChangesRequested => p.closed.fg,
+                RowReason::Approved => p.open.fg,
+                RowReason::NewComments(_) | RowReason::NewCommits => p.accent,
+            };
+            div().id(("queue-reason", row_ix)).test_support().text_color(color).child(reason.label())
         });
 
         div()
@@ -619,7 +795,10 @@ impl Queue {
                                     })
                                     .child(age(fl_sync::now(), row.updated_at)),
                             )
-                            .child(div().size(px(7.)).rounded_full().when(row.unread, |d| d.bg(p.accent))),
+                            .map(|d| match reason {
+                                Some(reason) => d.child(reason),
+                                None => d.child(div().size(px(7.)).rounded_full().when(row.unread, |d| d.bg(p.accent))),
+                            }),
                     ),
             )
             .into_any_element()
@@ -779,6 +958,23 @@ impl Queue {
         self.rows.iter().map(|r| r.key.as_str()).collect()
     }
 
+    /// Keys of the rows on screen: folded groups hide theirs.
+    #[cfg(test)]
+    pub(super) fn shown_keys(&self) -> Vec<&str> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Row(ix) => Some(self.rows[*ix].key.as_str()),
+                Item::Header(_) => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn rows_for_test(&self) -> &[QueueRow] {
+        &self.rows
+    }
+
     #[cfg(test)]
     pub(super) fn selected_key(&self) -> Option<&str> {
         self.selected.map(|ix| self.rows[ix].key.as_str())
@@ -812,6 +1008,7 @@ impl Render for Queue {
                     QueueKind::Pulls => "pulls",
                     QueueKind::Issues => "issues",
                     QueueKind::Reviews => "reviews",
+                    QueueKind::Home => "home",
                 },
                 window,
                 cx,
@@ -837,26 +1034,60 @@ impl Render for Queue {
                 d.child(div().text_secondary().text_color(p.text_muted).child(total.to_string()))
             })
             .child(div().flex_1())
-            .child(self.filter_button(cx));
+            .when(self.query.kind == QueueKind::Inbox, |d| {
+                d.child(
+                    Button::new("queue-done-closed")
+                        .ghost()
+                        .small()
+                        .label("Done: merged / closed")
+                        .tooltip("Mark done every notification whose issue or PR is merged or closed")
+                        .on_click(cx.listener(|this, _, _, cx| this.done_all(None, true, cx))),
+                )
+            })
+            .when(self.query.kind != QueueKind::Home, |d| d.child(self.filter_button(cx)));
+
+        let undo = (!self.pending_done.is_empty()).then(|| {
+            let n = self.pending_done.len();
+            h_flex()
+                .id("queue-undo")
+                .test_support()
+                .flex_none()
+                .h(scaled(30.))
+                .px(px(20.))
+                .gap(px(8.))
+                .items_center()
+                .bg(p.raised)
+                .text_secondary()
+                .child(format!("{n} marked done"))
+                .child(div().flex_1())
+                .child(
+                    Button::new("queue-undo-button")
+                        .ghost()
+                        .small()
+                        .label("Undo")
+                        .on_click(cx.listener(|this, _, _, cx| this.undo_done(cx))),
+                )
+        });
 
         let body = if self.rows.is_empty() {
             div()
+                .id("queue-empty")
+                .test_support()
                 .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_color(p.text_muted)
-                .child("Nothing here")
+                .child(self.empty_text())
                 .into_any_element()
         } else {
             let list = v_virtual_list(cx.entity(), "queue-list", self.sizes.clone(), |this, range, _, cx| {
                 if range.end + LOAD_AHEAD >= this.items.len() {
                     this.load_more(cx);
                 }
-                let p = *cx.palette();
                 range
                     .map(|ix| match this.items[ix] {
-                        Item::Header(group) => this.header_element(group, &p),
+                        Item::Header(group) => this.header_element(group, cx),
                         Item::Row(row_ix) => this.row_element(row_ix, cx),
                     })
                     .collect()
@@ -877,6 +1108,7 @@ impl Render for Queue {
             .size_full()
             .child(header)
             .child(self.query_bar(cx))
+            .children(undo)
             .child(body)
     }
 }

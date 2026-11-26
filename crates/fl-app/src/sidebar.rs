@@ -76,6 +76,7 @@ pub fn render(
         let ws = ws.clone();
         let repo_id = r.id;
         let counts = format!("{} · {}", r.open_prs, r.open_issues);
+        let tip = format!("{name}\n{} open PRs · {} open issues", r.open_prs, r.open_issues);
         let row = h_flex()
             .id(SharedString::from(format!("nav-pinned-{repo_id}")))
             .test_support()
@@ -90,7 +91,7 @@ pub fn render(
             // The owner is often the same on every row: show the name, the
             // full name on hover.
             .child(div().flex_1().min_w_0().truncate().child(r.name.clone()))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(name.clone()).build(window, cx))
+            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
             .child(div().text_small().text_color(p.text_faint).child(counts))
             .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx)));
         crate::motion::hover_bg(row, p.raised.opacity(0.), Some(p.raised))
@@ -132,6 +133,7 @@ pub fn render(
         .p(px(8.))
         .bg(p.surface)
         .text_body()
+        .child(nav("nav-home", ViewRef::Home, 0))
         .child(nav("nav-inbox", ViewRef::Inbox, inbox_unread))
         .child(nav("nav-pulls", ViewRef::Pulls { repo_id: None }, 0))
         .child(nav("nav-issues", ViewRef::Issues { repo_id: None }, 0))

@@ -1,15 +1,15 @@
 //! Tab content. Each G1 area adds its arm to [`build`] and its module here.
 
 mod explore;
-mod home;
+pub(crate) mod home;
 mod list_view;
-mod placeholder;
 pub(crate) mod queue;
 mod reading;
 mod rows;
 mod repo;
 mod repos;
 pub(crate) mod search;
+pub(crate) mod settings;
 
 pub use queue::{FocusFilter, SaveView, SelectNext, ToggleGrouped};
 pub use reading::{
@@ -17,7 +17,7 @@ pub use reading::{
 };
 
 use fl_types::{QueueKind, QueueQuery};
-use gpui_kit::{AnyView, App, AppContext as _, FocusHandle, KeyBinding, Window, actions};
+use gpui_kit::{AnyView, App, FocusHandle, KeyBinding, Window, actions};
 
 use crate::theme::ActivePalette as _;
 use crate::view_ref::ViewRef;
@@ -111,6 +111,7 @@ pub fn build(view_ref: &ViewRef, flat: bool, window: &mut Window, cx: &mut App) 
     };
     match view_ref {
         ViewRef::Inbox => list(QueueKind::Inbox, None),
+        ViewRef::Home => list(QueueKind::Home, None),
         ViewRef::Pulls { repo_id } => list(QueueKind::Pulls, *repo_id),
         ViewRef::Issues { repo_id } => list(QueueKind::Issues, *repo_id),
         ViewRef::Reviews => list(QueueKind::Reviews, None),
@@ -121,12 +122,7 @@ pub fn build(view_ref: &ViewRef, flat: bool, window: &mut Window, cx: &mut App) 
         ViewRef::Explore => explore::ExploreView::build(window, cx),
         ViewRef::Repo { repo_id } => repo::RepoView::build(*repo_id, window, cx),
         ViewRef::Search { q } => search::SearchView::build(q, window, cx),
-        ViewRef::Home => home::HomeView::build(window, cx),
-        ViewRef::Settings => {
-            let view = cx.new(|cx| placeholder::Placeholder::new(view_ref.clone(), cx));
-            let focus = view.read(cx).focus.clone();
-            Built { view: view.into(), focus }
-        }
+        ViewRef::Settings => settings::SettingsView::build(cx),
     }
 }
 

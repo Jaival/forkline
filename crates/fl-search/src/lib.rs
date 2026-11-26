@@ -53,6 +53,21 @@ pub fn index_issue(conn: &Connection, issue_id: IssueId) -> rusqlite::Result<()>
     Ok(())
 }
 
+/// `@me` or `me`: the signed-in user.
+fn is_me(login: &str) -> bool {
+    login.eq_ignore_ascii_case("@me") || login.eq_ignore_ascii_case("me")
+}
+
+/// A login as SQL: `@me` reads the viewer's login from the database, any
+/// other login is bound.
+fn login(v: &str, bind: &mut dyn FnMut(&str) -> String) -> String {
+    if is_me(v) {
+        "(SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer')".to_owned()
+    } else {
+        bind(v)
+    }
+}
+
 /// SQL condition (over aliases i, r, u) for one filter. `bind` stores a
 /// value and returns its placeholder.
 fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
@@ -60,7 +75,7 @@ fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
         Filter::IsPr => "i.is_pr = 1".into(),
         Filter::IsIssue => "i.is_pr = 0".into(),
         Filter::State(s) => format!("i.state = '{s}'"),
-        Filter::Author(a) => format!("u.login = {} COLLATE NOCASE", bind(a)),
+        Filter::Author(a) => format!("u.login = {} COLLATE NOCASE", login(a, bind)),
         Filter::Label(l) => format!(
             "EXISTS (SELECT 1 FROM issue_labels il JOIN labels l ON l.id = il.label_id
               WHERE il.issue_id = i.id AND l.name = {} COLLATE NOCASE)",
@@ -74,8 +89,22 @@ fn condition(f: &Filter, bind: &mut dyn FnMut(&str) -> String) -> String {
         Filter::Assignee(a) => format!(
             "EXISTS (SELECT 1 FROM issue_assignees ia JOIN users au ON au.id = ia.user_id
               WHERE ia.issue_id = i.id AND au.login = {} COLLATE NOCASE)",
-            bind(a)
+            login(a, bind)
         ),
+        // The viewer's own requests also come from search (`search_hits`),
+        // for repos that are not deep-synced.
+        Filter::ReviewRequested(a) => {
+            let me = is_me(a);
+            let hits = if me {
+                "i.id IN (SELECT issue_id FROM search_hits WHERE query = 'review_requested') OR "
+            } else {
+                ""
+            };
+            format!(
+                "({hits}EXISTS (SELECT 1 FROM pr_review_requests rr WHERE rr.pr_id = i.id AND rr.reviewer_login = {} COLLATE NOCASE))",
+                login(a, bind)
+            )
+        }
         Filter::Unread => "i.updated_at > COALESCE(i.last_viewed_at, 0)".into(),
     }
 }

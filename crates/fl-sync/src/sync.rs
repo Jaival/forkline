@@ -994,6 +994,10 @@ pub fn auto_pin(conn: &mut Connection, now: i64) -> rusqlite::Result<usize> {
         )?
     };
     fl_db::queries::layout::set_setting(&tx, "auto_pin", "1")?;
+    // Home tells the user once what was pinned (closing it deletes the row).
+    if pinned > 0 {
+        fl_db::queries::layout::set_setting(&tx, "auto_pin_note", &pinned.to_string())?;
+    }
     tx.commit()?;
     Ok(pinned)
 }

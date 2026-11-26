@@ -35,6 +35,8 @@ fn row(key: &str, group: QueueGroup) -> QueueRow {
         checks: None,
         updated_at: 0,
         unread: false,
+        reason: None,
+        bot: false,
     }
 }
 
@@ -74,12 +76,77 @@ fn tabs(cx: &mut TestAppContext, ws: &Entity<Workspace>) -> Vec<String> {
     cx.read(|cx| ws.read(cx).tab_groups(cx).into_iter().next().unwrap())
 }
 
+#[gpui_kit::test]
+fn done_all_hides_rows_and_undo_brings_them_back(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), SEED);
+    let queue = queue_of(cx, handle, &ws);
+    let ix = QueueGroup::ALL.iter().position(|g| *g == QueueGroup::Mentioned).unwrap();
+    cx.update_window(handle, |_, window, cx| window.click(("queue-group-done", ix), cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| queue.read(cx).keys().len()), 3, "both mentions hide");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("queue-undo-button", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(UNDO_DONE);
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| queue.read(cx).keys().len()), 5);
+    assert_eq!(crate::test_support::query_i64(cx, "SELECT count(*) FROM action_queue"), 0);
+}
+
+#[gpui_kit::test]
+fn done_merged_closed_sends_after_the_undo_time(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    // GitHub thread ids are numbers; the action queue needs one.
+    let seed = format!("{SEED} UPDATE issues SET state = 'merged' WHERE id = 3; UPDATE notifications SET id = '501' WHERE id = 'rev';");
+    let (handle, ws) = start(cx, dir.path(), &seed);
+    let queue = queue_of(cx, handle, &ws);
+    cx.update_window(handle, |_, window, cx| window.click("queue-done-closed", cx)).unwrap();
+    cx.run_until_parked();
+    // Only `501` belongs to the merged PR #3.
+    assert!(!cx.read(|cx| queue.read(cx).keys().contains(&"501")));
+    assert_eq!(cx.read(|cx| queue.read(cx).keys().len()), 4);
+    assert_eq!(crate::test_support::query_i64(cx, "SELECT count(*) FROM action_queue"), 0);
+    cx.executor().advance_clock(UNDO_DONE);
+    crate::test_support::wait_for(cx, "done sent", |cx| {
+        crate::test_support::query_i64(cx, "SELECT count(*) FROM action_queue WHERE kind = 'notification_done'") == 1
+    });
+}
+
+#[gpui_kit::test]
+fn empty_review_requests_point_to_home(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path(), "");
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Reviews, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let queue = queue_of(cx, handle, &ws);
+    assert_eq!(cx.read(|cx| queue.read(cx).empty_text()), "No review requests. PRs on your repos are on Home.");
+}
+
+#[gpui_kit::test]
+fn an_empty_list_says_when_the_first_sync_runs(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    // A pinned repo without its `repo:<id>` stamp: the first deep sync runs.
+    let (handle, ws) = start(cx, dir.path(), "INSERT INTO repos(id, node_id, owner, name, updated_at, pinned) VALUES (1,'R','o','a',0,1);");
+    let queue = queue_of(cx, handle, &ws);
+    assert_eq!(cx.read(|cx| queue.read(cx).empty_text()), "Still syncing\u{2026}");
+    crate::test_support::write(cx, "INSERT INTO sync_state(key, last_synced_at) VALUES ('repo:1', 1)", &["inbox"]);
+    assert_eq!(cx.read(|cx| queue.read(cx).empty_text()), "Nothing here");
+}
+
 #[test]
 fn flatten_puts_one_header_per_group() {
     use QueueGroup::*;
     let rows = [row("a", ReviewRequested), row("b", ReviewRequested), row("c", Mentioned), row("d", Other)];
     assert_eq!(
-        flatten(&rows, false),
+        flatten(&rows, false, &HashSet::new()),
         [
             Item::Header(ReviewRequested),
             Item::Row(0),
@@ -90,7 +157,7 @@ fn flatten_puts_one_header_per_group() {
             Item::Row(3),
         ]
     );
-    assert!(flatten(&[], false).is_empty());
+    assert!(flatten(&[], false, &HashSet::new()).is_empty());
 }
 
 #[test]
