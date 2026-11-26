@@ -1,6 +1,7 @@
-# G5 plan: code reuse (draft, 2026-11-27)
+# G5 plan: code reuse (2026-11-27)
 
-Status: draft for review. Starts after G4 ships. Nothing is built.
+Status: agreed with the user on 2026-11-27 (see Decisions). Starts after
+G4 ships. Nothing is built.
 
 Source: a read-only survey of the workspace on branch `g3-workflow` after
 the rebase on `main` (2026-11-27). Line numbers below are from that survey
@@ -35,8 +36,8 @@ the goal. The goals are:
 2. **Fewer bugs from stringly typed data**: `DataChanged` scopes are string
    literals in 12 subscribe sites; a typo fails silently.
 3. **Smaller big files**: `sync.rs`, `workspace.rs`, `queue.rs`.
-4. Optional: **a widget crate (`fl-ui`)** with no Forkline data in it, if
-   the user wants to reuse the widgets in another GPUI app.
+4. **A widget crate (`fl-ui`)** with no Forkline data in it, so the
+   widgets can be used in another GPUI app.
 
 Each step must keep clippy, `cargo test --workspace` and every budget in
 `bench/budgets.json` green. No visible change except where a step says so.
@@ -53,9 +54,12 @@ Ordered by risk (low first) and by dependency.
   `reading/files.rs` and `pickers.rs`.
 - One generic `Load<T>` enum (today `views/repo.rs` and
   `reading/files.rs` each define one).
-- One time-text function. Today `footer.rs` `ago()` gives "12 s", "2 min"
-  and `views/queue.rs` `age()` gives "5m", "2h". **Decision needed:** which
-  format. Tests in `footer.rs` and `queue/tests.rs` assert the strings.
+- One time-text function in the "2 min" style (decided): "12 s",
+  "2 min", "3 h", "4 d", "3 wk", "2 y". Today `footer.rs` `ago()` gives
+  this style up to days and `views/queue.rs` `age()` gives "5m", "2h",
+  "4w", "2y". Visible change: list rows get the longer text; check the
+  age column width in the queue. Tests in `footer.rs` and
+  `queue/tests.rs` assert the strings.
 - One `fmt_count(n)` for the "99+" badge (`rail.rs`, `sidebar.rs`).
 - `rows()` / `rows_mut()` accessors in `explore.rs`, `repos.rs`,
   `search.rs`: a default method or a small macro.
@@ -79,11 +83,10 @@ Saves ~75 lines. Covered by fl-db tests; bench search + open item.
 ### Step 3: typed data-change scopes and store subscriptions (medium)
 
 - Replace string scopes (`issues`, `repos`, `inbox`, `pr`, `sync`,
-  `search`, ...) with an enum (bit set) in fl-app or fl-types.
+  `search`, ...) with an enum (bit set) in fl-types (decided), shared
+  with fl-sync, which emits `sync`.
 - One helper for the 12 `cx.subscribe(&Store::global(cx), ...)` sites,
   for example `store::on_change(cx, Scope::Issues | Scope::Inbox, |this, cx| ...)`.
-- **Decision needed:** does the enum live in fl-types (shared with
-  fl-sync, which emits `sync`) or in fl-app only?
 
 Saves ~40 lines; removes the typo risk. Must land before step 4.
 
@@ -111,9 +114,9 @@ Saves ~100 lines. Splits `queue.rs` below 1,000 lines.
 
 Saves ~40 lines.
 
-### Step 6 (optional): `fl-ui` widget crate
+### Step 6: `fl-ui` widget crate
 
-Only if the user wants the widgets outside Forkline. Generic today:
+In scope (decided): the widgets must work outside Forkline. Generic today:
 `motion.rs` (enter, fade_in, presence, ease_to, hover_bg; not the menu
 bits), `smooth_scroll.rs`, `toast.rs`, the palette / scale part of
 `theme.rs`, `rail::avatar` and initials. Stays in fl-app: `views/rows.rs`,
@@ -129,11 +132,14 @@ improve a little (fl-app rebuilds less), not measured.
 - fl-sync test seed vs fl-fake seeds: overlap unverified.
 - fl-app test fixtures (`test_support.rs`): not fully audited.
 
-## Open decisions
+## Decisions (2026-11-27)
 
-1. Scope: in-app clean-up only (steps 1-5), or also `fl-ui` (step 6)?
-2. Time text format: "2 min" (footer) or "2m" (lists), everywhere?
-3. Scope enum in fl-types or fl-app?
-4. One branch and PR per step (proposed), or steps 1-2 together?
-5. Model: steps 1, 2 are scoped work (Sonnet); steps 3-6 are refactors
-   (Opus at high).
+1. Scope: steps 1-6, including the `fl-ui` crate.
+2. Time text: the "2 min" style everywhere.
+3. Scope enum: in fl-types.
+4. One branch and PR per step.
+5. Model: steps 1 and 2 are scoped work (Sonnet); steps 3-6 are
+   refactors (Opus at high).
+
+Multi-account is not in G4 or G5: it gets its own phase (schema change;
+plan it before code).

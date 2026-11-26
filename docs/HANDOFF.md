@@ -2108,16 +2108,20 @@ Candidates, from G3 open items (order to agree with the user):
 3. "Done all" failure feedback: today it sends one action per notification,
    the first failure stops the rest and shows nothing.
 4. Engine test for the once-per-launch Explore note (`SyncStatus::note`).
-5. Multi-account ("Add account" in the account menu and the palette).
-6. Optional: why frame rates after the step 5 rebase sit 10-40 fps below
+5. Optional: why frame rates after the step 5 rebase sit 10-40 fps below
    the step 6 build (palette, dialog, diff scroll). Every budget passes.
 
 Open decisions:
 
-- G4 order, and whether multi-account (storage, token per account, which
-  DB) is in G4 or its own phase. It touches the schema: decide before code.
+- G4 order.
+- Multi-account ("Add account" in the account menu and the palette) is
+  its own phase, not G4 or G5 (decided 2026-11-27). It changes the schema
+  (storage, token per account, which DB): plan it before code. Its order
+  relative to G5 is not decided.
 
 ### After G4: code reuse (G5)
 
-Plan: `docs/design/g5-reuse-plan.md` (draft, 2026-11-27). Start only after
+Plan: `docs/design/g5-reuse-plan.md` (agreed 2026-11-27: steps 1-6 incl.
+the `fl-ui` crate, "2 min" time text, scope enum in fl-types, one PR per
+step). Start only after
 G4 ships, so the refactor does not fight open feature branches.
