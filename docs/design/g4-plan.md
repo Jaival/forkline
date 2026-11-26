@@ -236,3 +236,39 @@ Open:
 - Order: 1 -> 2 -> 3 -> 4 -> 5? Steps 1 and 2 in one PR?
 - Q1-Q2 (Done all), Q3-Q5 (new since last view), Q6-Q12 (batch merge),
   Q13 (frame rates).
+
+## Decisions (2026-11-27, agreed with the user)
+
+- D1. Order 1 -> 2 -> 3 -> 4 -> 5. Steps 1 and 2 ship in one PR.
+- D2 (Q1). A partial "Done all" failure shows in the footer toast:
+  "Marked X of N done. M failed: <first error>".
+- D3 (Q2). Send failures stay one failed-list row per action. The failed
+  list gets "Retry all" / "Discard all"; they act on every failed action
+  (no batch id, no schema change).
+- D4 (Q3, Q4). The item opens scrolled to the "New since your last view"
+  divider. Commits / Checks tab labels get a dot when they hold something
+  newer than the last view.
+- D5 (Q5). The viewer's own comments, reviews and commits never count as
+  new, in the divider and in `RowReason` ("N new comments").
+- D6. The divider counts comments, reviews and commits only; label,
+  assign and other timeline events do not move it.
+- D7 (Q6). Batch = any GitHub App author (avatar `/in/`), on a repo the
+  viewer owns or is a member of; open, not draft; every check run passes
+  (success / skipped / neutral); `MERGEABLE`; not `CHANGES_REQUESTED`; no
+  pending field.
+- D8 (Q7). "Merge all green (N)" only on Home's "Waiting on me" header;
+  hidden when N is 0.
+- D9 (Q8). One method picker in the confirm dialog for the whole batch;
+  default = the most common last-used method of the repos, else Merge
+  commit.
+- D10 (Q9). The dialog refreshes the listed PRs from GitHub when it opens.
+  A PR that is no longer green stays in the list greyed out with its
+  reason and is left out; the confirm count follows.
+- D11 (Q10, Q12). No `@dependabot rebase` comments, no approve before
+  merge. A rejected merge (conflict after an earlier merge, branch
+  protection) rolls back and shows in the toast and the failed list.
+- D12. A failed merge does not stop the rest of the batch, in that repo or
+  others. One result toast when every action of the batch has finished.
+- D13 (Q11). All check runs must pass (we do not sync the required set).
+- D14 (Q13). Step 5 is done, time-boxed to half a day; fix only if one
+  cause explains the gap, else record the result in HANDOFF.
