@@ -20,6 +20,7 @@ mod smooth_scroll;
 mod store;
 mod theme;
 mod titlebar;
+mod toast;
 #[cfg(test)]
 mod test_support;
 mod view_ref;

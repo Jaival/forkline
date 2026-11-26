@@ -2003,5 +2003,13 @@ Next: step 5 (workflow review), then step 6 (animations).
   code; not looked into.
 - Not checked by hand (needs real mouse input): how the hover and menu
   motion feel. PrintWindow captures show the end states only.
+- Footer errors (asked for during step 6): the sync error and a failed
+  Retry / Discard / Sign out no longer show as text in the footer line.
+  The alert icon reads "N errors" and opens a toast (`toast.rs`, a
+  reusable `Toast` with a danger stripe, Copy and Close) above the footer.
+  A failed action opens it by itself; a sync error waits behind the icon.
+  Close clears a failed action's error; the sync error stays until a sync
+  succeeds. The toast and the failed-actions list share the spot, so one
+  closes the other. Test: `footer::tests::the_alert_opens_an_error_toast`.
 
 Next: agree on step 5's workflow changes.
