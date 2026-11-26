@@ -33,11 +33,18 @@ gpui_kit::assets::icon_assets!(
     [GitPullRequest, CircleDot, Compass, House, BookMarked, Columns2, GitFork, GitCommitHorizontal, Pin, GitMerge, GitPullRequestClosed, Clock, X, PanelLeftClose, PanelLeftOpen]
 );
 
+/// The logo as two one-colour layers (`titlebar.rs`), from
+/// `docs/design/logo/a-branch-f.svg`.
+static LOGO: &[(&str, &[u8])] = &[
+    ("logo/stem.svg", include_bytes!("../assets/logo/stem.svg")),
+    ("logo/branch.svg", include_bytes!("../assets/logo/branch.svg")),
+];
+
 pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        if let Some((_, bytes)) = TABLER.iter().find(|(p, _)| *p == path) {
+        if let Some((_, bytes)) = TABLER.iter().chain(LOGO).find(|(p, _)| *p == path) {
             return Ok(Some(Cow::Borrowed(bytes)));
         }
         if let Some(bytes) = ExtraIcons.load(path)? {

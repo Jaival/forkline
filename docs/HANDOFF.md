@@ -1144,7 +1144,8 @@ Done (step 1, look refresh, 2026-11-19):
   `hsl(228,92%,69%)` is 3.3:1, below the plan's 4.5:1, so primary buttons
   use `accent_fill` `hsl(228,72%,57%)`. Accent text, dots and the tab
   underline keep the board's value.
-- Title bar: **native**, not the board's custom bar. A custom bar needs the
+- Title bar: **native**, not the board's custom bar. (Superseded in G3
+  step 4: the drop below was battery power; the bar is custom now.) A custom bar needs the
   kit's `TitleBar::window_options` (a transparent, client-drawn title bar),
   and on Windows that slowed every present: `diff_scroll_fps` 240 -> 102.6
   (the same in every run), `switch_tab_ms` 4.1 -> 9.6, `open_cached_item_ms`
@@ -1903,3 +1904,39 @@ Next: step 3 (font size), then steps 4 and 5 in parallel.
 
 Next: steps 4 (custom title bar + fps) and 5 (workflow review), in
 parallel.
+
+### G3 step 4 state: custom title bar (2026-11-26, branch `g3-title-bar` on `g3-font-size`)
+
+- The fps drop was power state, not the title bar. On AC (`Win32_Battery`
+  BatteryStatus 2), interleaved fake-data runs of one build with only the
+  window options switched, then of the native build vs the custom-bar
+  build: `diff_scroll_fps` 233-240 native, 236-240 custom; `switch_tab_ms`
+  3.8-4.2 both; `open_cached_item_ms` 5.2-9.0 both; launch 236-301 ms both (clean runs).
+  No run showed the 102.6 cap. GPUI uses the same premultiplied
+  DirectComposition swap chain with or without the native bar;
+  `appears_transparent` only changes `WM_NCCALCSIZE` and the hit test. So the
+  plan's suspect is ruled out and no renderer change was made.
+- The slow run is still there and more often than one in five: 6 of 18
+  runs gave 30 fps scroll and search p95 about 65 ms (3 native, 3 custom),
+  and one native run 142 fps. Not the title bar; not looked into.
+- `titlebar.rs`: the kit's `TitleBar` (40 px, `scaled`), the logo as two
+  one-colour SVG layers (`assets/logo/stem.svg` in `text_strong`,
+  `branch.svg` in `accent`, from `docs/design/logo/a-branch-f.svg`), the
+  name, a centred "Search or run a command  Ctrl K" field that opens the
+  palette (it `occlude`s, so it takes clicks, not the caption), and the
+  kit's window buttons (34 px wide, close hover = the theme's closed red).
+  `main.rs` `window_options` takes `TitleBar::window_options()`.
+- The sidebar's "Commands" box moved to the title bar (it was the same
+  action twice). The rail is unchanged.
+- Tests: `main::tests::the_main_window_draws_its_own_title_bar` (replaces
+  `the_main_window_keeps_the_native_title_bar`),
+  `titlebar::tests::the_command_field_opens_the_palette`.
+- Captures (PrintWindow): 1400x900 dark, 800x500 at 100 % and 140 %, light
+  theme at the minimum: the bar fits; the field shrinks to its 160 px
+  minimum before anything clips. Not checked by hand (needs real mouse
+  input): drag, double-click to maximise, Snap layouts on the maximise
+  button, resize from the top edge.
+- `theme::sync_title_bar` still runs; with no native caption it only sets
+  the frame's dark mode.
+
+Next: step 5 (workflow review), then step 6 (animations).

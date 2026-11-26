@@ -806,6 +806,7 @@ impl Render for Workspace {
             .bg(cx.palette().bg)
             .text_color(cx.palette().text)
             .text_body()
+            .child(crate::titlebar::render(cx))
             .child(
                 h_flex()
                     .flex_1()

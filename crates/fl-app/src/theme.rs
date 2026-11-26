@@ -90,6 +90,7 @@ pub const PANE_HEADER: f32 = 48.;
 pub const GROUP_HEADER: f32 = 30.;
 pub const ROW_HEIGHT: f32 = 54.;
 pub const FOOTER_HEIGHT: f32 = 28.;
+pub const TITLE_BAR_HEIGHT: f32 = 40.;
 pub const RADIUS: Pixels = px(6.);
 pub const RADIUS_LG: Pixels = px(10.);
 
