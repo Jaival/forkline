@@ -2050,6 +2050,20 @@ since last view" line inside the item view (D13).
   p95 14.1-14.2 ms (base 14.3-14.4), launch 256-295 ms, switch tab 4.1 ms,
   open cached item 8.9-9.3 ms. Every budget passes. `open_home_ms` (no
   budget) is 11-15 ms, base 5-6 ms: Home now ranks its groups in SQL.
+- Rebased on `main` (steps 4 and 6) on 2026-11-27. Conflicts: the footer
+  keeps step 6's error toast (sync error and failed-action notice go there,
+  not inline); step 5's muted `footer-note` stays inline after the sync
+  text. The sidebar drops the command box (now in the title bar), keeps
+  step 5's Home entry and pinned-row tooltip, and keeps step 6's hover
+  fade on pinned rows.
+- Bench after the rebase, on AC, alternated with the `g3-animations`
+  release build (step 6), no other bench process; 5 branch runs, 3 base
+  runs. Every budget passes. Branch / base: `animation_fps` 163-221 / 205-236 (lowest
+  is palette or dialog), diff scroll 210-240 / 236-240 fps, search p95
+  13.6-14.5 / 14.1-14.6 ms, launch 261-285 / 302-366 ms, switch tab
+  3.9-4.2 / 4.0-4.3 ms, open cached item 6.4-9.3 / 8.7-9.5 ms,
+  `open_home_ms` 12-14 / 5-6 ms. The first run after the build missed
+  launch (672 ms, 458 ms before `main`: a cold, new exe); reruns pass.
 - Bench noise: any run that overlapped another thread's bench
   (`g3-animations`) dropped to 30 fps diff scroll and 64 ms search, base
   and branch alike. Check `Get-Process forkline*, fl-bench` before a run.
@@ -2060,4 +2074,5 @@ Open:
 - "Done all" sends one action per notification; a failure stops the rest
   and shows nothing (rows come back on the next reload).
 - No engine test for the once-per-launch Explore note.
-- The step 4 title bar thread was not touched.
+- Frame rates sit 10-40 fps below the step 6 build (palette, dialog,
+  diff scroll); still far over budget. Not looked into.
