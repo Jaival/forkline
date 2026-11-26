@@ -44,17 +44,16 @@ pub fn render(cx: &App) -> impl IntoElement + use<> {
         .gap(px(8.))
         .items_center()
         .rounded(px(6.))
-        .bg(p.control)
         .border_1()
         .border_color(p.border)
         .text_small()
         .text_color(p.text_muted)
         .cursor_pointer()
-        .hover(move |s| s.bg(p.raised))
         .child(Icon::new(IconName::Search).with_size(px(14.)))
         .child(div().flex_1().min_w_0().truncate().child("Search or run a command"))
         .child(div().text_color(p.text_faint).child("Ctrl K"))
         .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenPalette), cx));
+    let command = crate::motion::hover_bg(command, p.control, Some(p.raised));
     TitleBar::new()
         .h(scaled(TITLE_BAR_HEIGHT))
         .pl(px(14.))

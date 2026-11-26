@@ -13,11 +13,12 @@ use gpui_kit::component::dock::{
 };
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding,
     FocusHandle, MouseButton, ParentElement as _, PromptLevel, Render, Styled as _,
     Subscription, Task, Window, actions,
-    deferred, div, px,
+    TestSupportExt as _, deferred, div, px,
 };
 
 use crate::appearance::{Appearance, AppearanceEvent};
@@ -25,10 +26,10 @@ use crate::drafts::{self, Drafts};
 use crate::footer::{Footer, FooterEvent};
 use crate::palette::{Palette, PaletteEvent, Run};
 use crate::panel::ViewPanel;
-use crate::{rail, sidebar};
+use crate::{motion, rail, sidebar};
 use crate::signin::{SignIn, SignInEvent};
 use crate::store::Store;
-use crate::theme::ActivePalette as _;
+use crate::theme::{ActivePalette as _, RAIL_WIDTH, SIDEBAR_WIDTH};
 use crate::view_ref::ViewRef;
 use crate::theme::TextScale as _;
 
@@ -111,6 +112,10 @@ pub struct Workspace {
     _appearance_subscription: Option<Subscription>,
     /// `--open-menu`: menus shown at launch for screenshots.
     menu_preview: Vec<Entity<PopupMenu>>,
+    /// The palette and dialogs as drawn, kept while they animate out.
+    palette_exit: motion::Exiting<Palette>,
+    sign_in_exit: motion::Exiting<SignIn>,
+    appearance_exit: motion::Exiting<Appearance>,
     _save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -191,6 +196,9 @@ impl Workspace {
             appearance_return: None,
             _appearance_subscription: None,
             menu_preview: Vec::new(),
+            palette_exit: Default::default(),
+            sign_in_exit: Default::default(),
+            appearance_exit: Default::default(),
             _save_task: None,
             _subscriptions: subscriptions,
         };
@@ -377,6 +385,12 @@ impl Workspace {
     pub(crate) fn preview_menus(&mut self, menus: Vec<Entity<PopupMenu>>, cx: &mut Context<Self>) {
         self.menu_preview = menus;
         cx.notify();
+    }
+
+    /// Stop showing the `--open-menu` preview and hand back its menus.
+    pub(crate) fn take_preview_menus(&mut self, cx: &mut Context<Self>) -> Vec<Entity<PopupMenu>> {
+        cx.notify();
+        std::mem::take(&mut self.menu_preview)
     }
 
     /// Show the "Appearance…" dialog (from the rail's theme menu or Ctrl+K).
@@ -781,6 +795,25 @@ impl Render for Workspace {
         } else {
             rail::render(&ws, active.as_ref(), self.inbox_unread, pinned, login, cx).into_any_element()
         };
+        // The new nav shows at once in a box whose width eases to its own:
+        // the sidebar is clipped while the box grows, the rail sits at the
+        // left of a shrinking box.
+        let nav_width = if self.sidebar_open { crate::theme::scaled(SIDEBAR_WIDTH).to_pixels(window.rem_size()) } else { px(RAIL_WIDTH) };
+        let nav_width = crate::motion::ease_to("nav-width", f32::from(nav_width), crate::motion::SIDEBAR, window, cx);
+        let nav = div()
+            .id("nav")
+            .test_support()
+            .w(px(nav_width))
+            .h_full()
+            .flex_none()
+            .overflow_hidden()
+            .bg(cx.palette().surface)
+            .child(nav);
+        // Overlays draw while they enter and, after closing, while they
+        // exit (as an inert copy).
+        let palette = self.palette_exit.sample("palette", self.palette.as_ref(), motion::MENU, window, cx);
+        let sign_in = self.sign_in_exit.sample("sign-in", self.sign_in.as_ref(), motion::DIALOG, window, cx);
+        let appearance = self.appearance_exit.sample("appearance", self.appearance.as_ref(), motion::DIALOG, window, cx);
         v_flex()
             .id("workspace")
             .key_context("Workspace")
@@ -816,7 +849,7 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
             )
             .child(self.footer.clone())
-            .children(self.palette.clone().map(|palette| {
+            .children(palette.map(|(palette, t, live)| {
                 // Over the dock; a click outside the box closes it.
                 deferred(
                     div()
@@ -825,22 +858,29 @@ impl Render for Workspace {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx)))
+                        .when(live, |d| {
+                            d.occlude()
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_palette(window, cx)))
+                        })
                         .child(
-                            div().w_full().flex().justify_center().pt(px(80.)).child(
+                            div().w_full().flex().justify_center().pt(px(80.)).child(motion::surface(
                                 div()
                                     .id("palette-box")
+                                    .relative()
                                     .occlude()
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                    .child(palette),
-                            ),
+                                    .child(palette)
+                                    .when(!live, |d| d.child(motion::shield())),
+                                t,
+                                6.,
+                            )),
                         ),
                 )
                 .with_priority(1)
             }))
-            .children(self.sign_in.clone().map(|dialog| {
+            .children(sign_in.map(|(dialog, t, live)| {
                 // Modal: the backdrop takes clicks but does not close it.
+                let backdrop = cx.palette().backdrop;
                 deferred(
                     div()
                         .id("signin-backdrop")
@@ -848,16 +888,20 @@ impl Render for Workspace {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .occlude()
-                        .bg(cx.palette().backdrop)
+                        .when(live, |d| d.occlude())
+                        .bg(backdrop.opacity(backdrop.a * t))
                         .flex()
                         .justify_center()
                         .pt(px(120.))
-                        .child(div().child(dialog)),
+                        .child(motion::surface(
+                            div().relative().child(dialog).when(!live, |d| d.child(motion::shield())),
+                            t,
+                            12.,
+                        )),
                 )
                 .with_priority(2)
             }))
-            .children(self.appearance.clone().map(|dialog| {
+            .children(appearance.map(|(dialog, t, live)| {
                 // Modal, but without a dimmed backdrop: the app behind it
                 // shows each change live.
                 deferred(
@@ -867,7 +911,7 @@ impl Render for Workspace {
                         .top_0()
                         .left_0()
                         .size_full()
-                        .occlude()
+                        .when(live, |d| d.occlude())
                         .flex()
                         .justify_center()
                         .pt(px(48.))
@@ -875,10 +919,21 @@ impl Render for Workspace {
                         .items_start()
                         // A column with a height limit: the dialog shrinks and
                         // its body scrolls in a low window.
-                        .child(div().flex().flex_col().max_h_full().child(dialog)),
+                        .child(motion::surface(
+                            div()
+                                .relative()
+                                .flex()
+                                .flex_col()
+                                .max_h_full()
+                                .child(dialog)
+                                .when(!live, |d| d.child(motion::shield())),
+                            t,
+                            12.,
+                        )),
                 )
                 .with_priority(2)
             }))
+            .children(motion::closing_menu(cx))
             .children((!self.menu_preview.is_empty()).then(|| {
                 deferred(
                     h_flex()
@@ -887,7 +942,11 @@ impl Render for Workspace {
                         .left(px(64.))
                         .gap(px(12.))
                         .items_start()
-                        .children(self.menu_preview.clone()),
+                        // The same enter motion as a menu opened by its button.
+                        .children(self.menu_preview.iter().map(|menu| {
+                            let id = gpui_kit::ElementId::NamedInteger("menu-enter".into(), menu.entity_id().as_u64());
+                            crate::motion::enter(id, div().child(menu.clone()), crate::motion::MENU, 6.)
+                        })),
                 )
                 .with_priority(3)
             }))

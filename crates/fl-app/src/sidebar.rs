@@ -5,7 +5,7 @@
 use fl_types::RepoSummary;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_kit::component::menu::DropdownMenu as _;
+use crate::motion::DropdownMenu as _;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -39,7 +39,7 @@ pub fn render(
             let text = if count > 99 { "99+".to_owned() } else { count.to_string() };
             div().text_small().text_color(if selected { p.accent_text } else { p.text_muted }).child(text)
         });
-        h_flex()
+        let row = h_flex()
             .id(id)
             .test_support()
             .h(scaled(30.))
@@ -47,14 +47,13 @@ pub fn render(
             .gap(px(10.))
             .items_center()
             .rounded(px(6.))
-            .bg(bg)
             .text_color(fg)
             .cursor_pointer()
-            .hover(move |s| s.bg(p.raised))
             .child(Icon::new(view_ref.icon()).with_size(px(16.)).text_color(icon_fg))
             .child(div().flex_1().min_w_0().truncate().child(view_ref.title()))
             .children(count)
-            .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(view_ref.clone(), window, cx)))
+            .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.go_to(view_ref.clone(), window, cx)));
+        crate::motion::hover_bg(row, bg, (!selected).then_some(p.raised))
     };
     let heading = |text: &'static str| {
         h_flex()
@@ -77,7 +76,7 @@ pub fn render(
         let ws = ws.clone();
         let repo_id = r.id;
         let counts = format!("{} · {}", r.open_prs, r.open_issues);
-        h_flex()
+        let row = h_flex()
             .id(SharedString::from(format!("nav-pinned-{repo_id}")))
             .test_support()
             .h(scaled(28.))
@@ -87,14 +86,14 @@ pub fn render(
             .rounded(px(6.))
             .text_color(p.text_muted)
             .cursor_pointer()
-            .hover(move |s| s.bg(p.raised))
             .child(crate::repo_color::dot(&name, cx))
             // The owner is often the same on every row: show the name, the
             // full name on hover.
             .child(div().flex_1().min_w_0().truncate().child(r.name.clone()))
             .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(name.clone()).build(window, cx))
             .child(div().text_small().text_color(p.text_faint).child(counts))
-            .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx)))
+            .on_click(move |_, window, cx| ws.update(cx, |ws, cx| ws.open(ViewRef::Repo { repo_id }, window, cx)));
+        crate::motion::hover_bg(row, p.raised.opacity(0.), Some(p.raised))
     });
     let colours: Vec<(String, i64)> = pinned.iter().map(|r| (format!("{}/{}", r.owner, r.name), r.id)).collect();
     let pinned_heading = heading("Pinned").when(!colours.is_empty(), |h| {

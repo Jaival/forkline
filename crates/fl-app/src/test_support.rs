@@ -39,6 +39,8 @@ pub fn open_with(
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        // End states at once; tests in `motion.rs` turn motion back on.
+        cx.set_reduce_motion(true);
         crate::theme::apply(Some(gpui_kit::component::ThemeMode::Dark), None, cx);
         panel::init(cx);
         workspace::init(cx);

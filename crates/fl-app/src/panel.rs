@@ -237,7 +237,8 @@ impl Focusable for ViewPanel {
 
 impl Render for ViewPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        // The dock draws only the shown tab, so this plays on each switch.
+        let root = div()
             .size_full()
             .on_action(cx.listener(|this, _: &ClosePanel, window, cx| {
                 if this.unsent_drafts(cx) > 0 {
@@ -253,6 +254,7 @@ impl Render for ViewPanel {
                 // The workspace saves the layout and redraws the tab bar.
                 cx.propagate();
             }))
-            .child(self.content.clone())
+            .child(self.content.clone());
+        crate::motion::fade_in("tab-enter", root, crate::motion::TAB)
     }
 }
