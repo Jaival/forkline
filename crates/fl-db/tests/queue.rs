@@ -1,5 +1,5 @@
 use fl_db::{Db, queries};
-use fl_types::{CheckState, IssueState, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow};
+use fl_types::{CheckState, IssueState, PageReq, QueueGroup, QueueKind, QueueQuery, QueueRow, RowReason};
 
 fn fresh() -> (tempfile::TempDir, Db) {
     let dir = tempfile::tempdir().unwrap();
@@ -277,4 +277,36 @@ fn snooze_hides_until_time_passes() {
         .read(|c| c.query_row("SELECT snoozed_until FROM notifications WHERE id = 'asg'", [], |r| r.get(0)))
         .unwrap();
     assert_eq!(until, None);
+}
+
+#[test]
+fn the_viewers_own_comments_and_commits_are_not_new() {
+    let (_d, db) = fresh();
+    seed(&db);
+    // p6 was last viewed at 0 and updated at 60.
+    let reason = |db: &Db| {
+        rows(db, q(QueueKind::Pulls, None)).into_iter().find(|r| r.issue_id == Some(6)).unwrap().reason
+    };
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO comments(id, issue_id, author_id, created_at, updated_at) VALUES (1, 6, 1, 50, 50);
+             INSERT INTO commits(repo_id, oid, headline, author_login, authored_at) VALUES (2, 'a', 'mine', 'me', 50);
+             INSERT INTO pr_commits(pr_id, oid, position) VALUES (6, 'a', 0);",
+        )
+    })
+    .unwrap();
+    assert_eq!(reason(&db), None);
+
+    db.write(|c| {
+        c.execute_batch(
+            "INSERT INTO commits(repo_id, oid, headline, author_login, authored_at) VALUES (2, 'b', 'theirs', 'bob', 55);
+             INSERT INTO pr_commits(pr_id, oid, position) VALUES (6, 'b', 1);",
+        )
+    })
+    .unwrap();
+    assert_eq!(reason(&db), Some(RowReason::NewCommits));
+
+    // A comment without a cached author still counts.
+    db.write(|c| c.execute_batch("INSERT INTO comments(id, issue_id, author_id, created_at, updated_at) VALUES (2, 6, 2, 55, 55), (3, 6, NULL, 56, 56);")).unwrap();
+    assert_eq!(reason(&db), Some(RowReason::NewComments(2)));
 }

@@ -63,15 +63,20 @@ fn home_rank() -> String {
     )
 }
 
-/// Columns 13-16 of a list row: what changed since the item was last opened,
-/// and whether the author is a GitHub App. Over `i`, `u`, `d`.
+/// Columns 13-16 of a list row: what changed since the item was last opened
+/// (the viewer's own comments and commits do not count), and whether the
+/// author is a GitHub App. Over `i`, `u`, `d`.
 const CHANGE_COLS: &str = "d.review_decision, \
      CASE WHEN i.last_viewed_at IS NOT NULL AND i.updated_at > i.last_viewed_at THEN \
-       (SELECT count(*) FROM comments c WHERE c.issue_id = i.id AND c.created_at > i.last_viewed_at) \
+       (SELECT count(*) FROM comments c LEFT JOIN users cu ON cu.id = c.author_id \
+       WHERE c.issue_id = i.id AND c.created_at > i.last_viewed_at \
+       AND cu.login IS NOT (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer')) \
        ELSE 0 END, \
      CASE WHEN i.is_pr = 1 AND i.last_viewed_at IS NOT NULL AND i.updated_at > i.last_viewed_at THEN \
        EXISTS (SELECT 1 FROM pr_commits pc JOIN commits cm ON cm.repo_id = i.repo_id AND cm.oid = pc.oid \
-       WHERE pc.pr_id = i.id AND cm.authored_at > i.last_viewed_at) ELSE 0 END, \
+       WHERE pc.pr_id = i.id AND cm.authored_at > i.last_viewed_at \
+       AND cm.author_login IS NOT (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer')) \
+       ELSE 0 END, \
      COALESCE(u.avatar_url LIKE '%/in/%', 0)";
 
 /// An extra SQL condition on a queue (the `/` filter), built by

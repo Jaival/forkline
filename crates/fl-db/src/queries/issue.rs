@@ -1,7 +1,7 @@
 //! Issue detail queries. Owner: agent 3 (basic `get` added in Phase 0).
 
 use fl_types::{
-    CommentRow, EditOptions, IssueDetail, IssueId, IssueThread, Label, RepoId, TimelineEvent, User,
+    CommentRow, EditOptions, IssueDetail, IssueId, IssueThread, Label, RepoId, TimelineEvent, Timestamp, User,
 };
 use rusqlite::{Connection, OptionalExtension};
 
@@ -61,6 +61,18 @@ pub fn mark_viewed(conn: &Connection, id: IssueId, now: i64) -> rusqlite::Result
     conn.prepare_cached("UPDATE issues SET last_viewed_at = ?2 WHERE id = ?1")?
         .execute((id, now))?;
     Ok(())
+}
+
+/// When the viewer last opened the item (`None`: never), and the viewer's
+/// login. Read before `mark_viewed` overwrites it.
+pub fn last_view(conn: &Connection, id: IssueId) -> rusqlite::Result<(Option<Timestamp>, Option<String>)> {
+    conn.prepare_cached(
+        "SELECT i.last_viewed_at, (SELECT json_extract(value_json, '$.login') FROM settings WHERE key = 'viewer')
+         FROM issues i WHERE i.id = ?1",
+    )?
+    .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
+    .optional()
+    .map(Option::unwrap_or_default)
 }
 
 /// Assignees of an issue or pull request, by login.

@@ -136,7 +136,7 @@ pub fn get(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<PrDetail>>
         .collect::<rusqlite::Result<_>>()?;
     d.checks = conn
         .prepare_cached(
-            "SELECT id, name, status, conclusion, url FROM checks
+            "SELECT id, name, status, conclusion, url, COALESCE(completed_at, started_at) FROM checks
              WHERE repo_id = ?1 AND commit_oid = ?2 ORDER BY name LIMIT ?3",
         )?
         .query_map((repo_id, &d.head_oid, PAGE_MAX), |r| {
@@ -146,6 +146,7 @@ pub fn get(conn: &Connection, id: IssueId) -> rusqlite::Result<Option<PrDetail>>
                 status: r.get(2)?,
                 conclusion: r.get(3)?,
                 url: r.get(4)?,
+                at: r.get(5)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

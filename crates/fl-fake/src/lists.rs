@@ -131,6 +131,9 @@ pub fn seed(tx: &Transaction<'_>) -> Result<()> {
                             WHEN 3 THEN 'assign' ELSE 'subscribed' END,
                 id % 3 <> 0, id % 50 = 0, updated_at
          FROM issues WHERE id % 25 = 0;
+         -- Notified items were last opened halfway through their comments,
+         -- so the reading pane shows its \"New since your last view\" divider.
+         UPDATE issues SET last_viewed_at = (created_at + updated_at) / 2 WHERE id % 25 = 0;
          -- A release notification without a linked issue.
          INSERT INTO notifications(id, repo_id, subject_type, issue_id, title, reason, unread, done, updated_at)
            SELECT 'rel' || id, id, 'Release', NULL, 'v1.' || id || '.0 released', 'subscribed', 1, 0, 1798000000 - id
