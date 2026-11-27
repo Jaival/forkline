@@ -171,6 +171,41 @@ impl Engine {
         Ok(())
     }
 
+    /// Queue many actions in one write (one `emit`). An action that fails
+    /// validation is counted in the result; the others still go in.
+    pub async fn enqueue_all(&self, actions: Vec<Action>) -> Result<queue::Batch> {
+        let done = write(&self.db, move |c| queue::enqueue_all(c, &actions, now())).await?;
+        if !done.ids.is_empty() {
+            self.emit(&done.scopes);
+            self.wake_actions.notify_one();
+        }
+        Ok(done)
+    }
+
+    /// Retry every failed action. Those that cannot be queued again stay
+    /// failed; the error says how many.
+    pub async fn retry_all(&self) -> Result<()> {
+        let done = write(&self.db, |c| queue::retry_all(c, now())).await?;
+        if !done.ids.is_empty() {
+            self.emit(&done.scopes);
+            self.wake_actions.notify_one();
+        }
+        match done.first_error {
+            Some(e) => {
+                let total = done.failed + done.ids.len();
+                Err(Error::Invalid(format!("{} of {total} could not be retried: {e}", done.failed)))
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Drop every failed action.
+    pub async fn discard_all(&self) -> Result<()> {
+        write(&self.db, |c| Ok(queue::discard_all(c)?)).await?;
+        self.emit(&["sync"]);
+        Ok(())
+    }
+
     pub async fn run_actions(self: Arc<Self>) {
         // Nothing is in flight after a restart.
         let _ = write(&self.db, |c| Ok(queue::reset_in_flight(c)?)).await;

@@ -266,6 +266,60 @@ async fn invalid_actions_are_rejected_without_changes() {
     assert_eq!(env.q::<i64>("SELECT count(*) FROM pending_fields"), 0);
 }
 
+fn done(id: &str) -> Action {
+    Action::NotificationDone { id: id.into() }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn enqueue_all_skips_a_bad_action_and_retry_all_discard_all_cover_the_failed_list() {
+    let env = common::env().await;
+    env.db
+        .write(|c| {
+            c.execute_batch(
+                "INSERT INTO notifications (id, repo_id, subject_type, issue_id, title, reason, unread, updated_at)
+                 VALUES ('9001', 1, 'Issue', 1, 'Another', 'mention', 1, 100);",
+            )
+        })
+        .unwrap();
+    Mock::given(method("DELETE"))
+        .and(path("/notifications/threads/9000"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&env.server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/notifications/threads/9001"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({ "message": "Validation Failed" })))
+        .expect(2)
+        .mount(&env.server)
+        .await;
+
+    // 9999 is gone (sync dropped it): left out, the others go in.
+    let batch = env.engine.enqueue_all(vec![done("9000"), done("9999"), done("9001")]).await.unwrap();
+    assert_eq!(batch.ids.len(), 2);
+    assert_eq!(batch.failed, 1);
+    assert!(batch.first_error.as_deref().unwrap().contains("not found"), "{batch:?}");
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM action_queue"), 2);
+    assert_eq!(env.q::<i64>("SELECT sum(done) FROM notifications"), 2);
+    // One write, one change event.
+    assert_eq!(env.emitted.lock().unwrap().iter().filter(|s| *s == "inbox").count(), 1);
+
+    assert_eq!(env.engine.process_actions().await.unwrap(), 2);
+    assert_eq!(env.engine.status().await.unwrap().failed_actions, 1);
+    assert_eq!(env.q::<i64>("SELECT done FROM notifications WHERE id = '9001'"), 0);
+
+    // Retry all re-applies the change and queues it again.
+    env.engine.retry_all().await.unwrap();
+    assert_eq!(env.q::<i64>("SELECT done FROM notifications WHERE id = '9001'"), 1);
+    assert_eq!(env.q::<String>("SELECT state FROM action_queue"), "pending");
+    env.engine.process_actions().await.unwrap();
+    assert_eq!(env.engine.status().await.unwrap().failed_actions, 1);
+
+    env.engine.discard_all().await.unwrap();
+    assert_eq!(env.q::<i64>("SELECT count(*) FROM action_queue"), 0);
+    assert_eq!(env.q::<i64>("SELECT done FROM notifications WHERE id = '9001'"), 0);
+}
+
 /// Bench `optimistic_action_network_wait_ms`: enqueue + reading the
 /// optimistic row must not wait on the network, even while the worker is
 /// blocked on a slow GitHub answer.

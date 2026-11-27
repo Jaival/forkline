@@ -34,6 +34,13 @@ pub struct Store {
 
 impl EventEmitter<DataChanged> for Store {}
 
+/// A message for the user about work that ended after its view moved on
+/// (e.g. "Done all" sent after the Inbox tab closed). The footer shows it
+/// in its toast.
+pub struct Notice(pub gpui_kit::SharedString);
+
+impl EventEmitter<Notice> for Store {}
+
 struct GlobalStore(Entity<Store>);
 
 impl Global for GlobalStore {}
@@ -109,6 +116,12 @@ impl Store {
     pub fn emit_changed(scopes: &[&str], cx: &mut App) {
         let scopes = scopes.iter().map(|s| (*s).to_owned()).collect();
         Self::global(cx).update(cx, |_, cx| cx.emit(DataChanged { scopes }));
+    }
+
+    /// Show `text` in the footer toast.
+    pub fn notice(text: impl Into<gpui_kit::SharedString>, cx: &mut App) {
+        let notice = Notice(text.into());
+        Self::global(cx).update(cx, |_, cx| cx.emit(notice));
     }
 
     /// Changed files and the whole unified patch of a PR (input of
