@@ -3,7 +3,8 @@
 //!
 //! The header shows at once from the queue row; the details are read from
 //! SQLite on a background thread. Opening an unread item sets
-//! `last_viewed_at`.
+//! `last_viewed_at`; the value from before is kept while the item is on show
+//! and marks what is new (the conversation divider, the tab dots).
 
 mod action_bar;
 mod conversation;
@@ -15,14 +16,14 @@ mod tabs;
 mod tests;
 
 use fl_db::queries::{issue, pr, repo};
-use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, MergeMethod, PrDetail, QueueRow, User};
+use fl_types::{DataChanged, IssueDetail, IssueId, IssueRow, IssueThread, MergeMethod, PrDetail, QueueRow, Timestamp, User};
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::input::TextareaState;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, actions, div, px,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, TestSupportExt as _, Window, actions, div, px,
 };
 use rusqlite::Connection;
 
@@ -59,9 +60,25 @@ impl Detail {
     }
 }
 
-/// The item, its assignees, and for a PR the merge method last sent in its
-/// repository.
-type Read = (Detail, Vec<User>, Option<MergeMethod>);
+/// The item, its assignees, for a PR the merge method last sent in its
+/// repository, and the last view.
+type Read = (Detail, Vec<User>, Option<MergeMethod>, Seen);
+
+/// When the viewer last opened the item, and who the viewer is.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Seen {
+    /// `None`: never opened, so nothing counts as new.
+    pub at: Option<Timestamp>,
+    pub viewer: Option<String>,
+}
+
+impl Seen {
+    /// Made after the last view by someone other than the viewer.
+    pub(super) fn is_new(&self, author: Option<&str>, at: Option<Timestamp>) -> bool {
+        matches!((self.at, at), (Some(seen), Some(at)) if at > seen)
+            && (author.is_none() || author != self.viewer.as_deref())
+    }
+}
 
 fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<Option<Read>> {
     // A pull request without `pr_details` (not synced in depth yet) shows as
@@ -78,7 +95,8 @@ fn read_detail(conn: &Connection, id: IssueId, is_pr: bool) -> rusqlite::Result<
         Detail::Pr(pr) => repo::merge_method(conn, pr.row.repo_id)?,
         Detail::Issue { .. } => None,
     };
-    Ok(Some((detail, issue::assignees(conn, id)?, merge_method)))
+    let (at, viewer) = issue::last_view(conn, id)?;
+    Ok(Some((detail, issue::assignees(conn, id)?, merge_method, Seen { at, viewer })))
 }
 
 /// Tabs of a pull request. An issue shows the conversation only.
@@ -109,6 +127,9 @@ pub struct ReadingPane {
     picker: Option<pickers::Picker>,
     /// The target is not in the local database.
     missing: bool,
+    /// The last view before this one: read once per item, so marking the
+    /// item viewed does not move what counts as new.
+    seen: Option<Seen>,
     pub(super) tab: PaneTab,
     conversation: Conversation,
     /// The Files tab of the PR on show; built when the tab first opens.
@@ -151,6 +172,7 @@ impl ReadingPane {
             assignees: Vec::new(),
             picker: None,
             missing: false,
+            seen: None,
             tab: PaneTab::Conversation,
             conversation: Conversation::new(),
             files: None,
@@ -203,6 +225,7 @@ impl ReadingPane {
         self.detail = None;
         self.assignees.clear();
         self.missing = false;
+        self.seen = None;
         self.tab = PaneTab::Conversation;
         self.files = None;
         self.conversation.clear();
@@ -224,14 +247,17 @@ impl ReadingPane {
                 }
                 let Ok(detail) = detail else { return };
                 let (detail, assignees, merge_method) = match detail {
-                    Some((detail, assignees, method)) => (Some(detail), assignees, method),
+                    Some((detail, assignees, method, seen)) => {
+                        this.seen.get_or_insert(seen);
+                        (Some(detail), assignees, method)
+                    }
                     None => (None, Vec::new(), None),
                 };
                 this.assignees = assignees;
                 this.merge_method = merge_method.unwrap_or(MergeMethod::Merge);
                 this.missing = detail.is_none();
                 if let Some(detail) = &detail {
-                    this.conversation.set(detail, cx);
+                    this.conversation.set(detail, this.seen.as_ref().unwrap_or(&Seen::default()), cx);
                     if let (Some(files), Some(pr)) = (&this.files, detail.pr()) {
                         let checks = pr.checks.clone();
                         files.update(cx, |files, cx| files.set_checks(checks, cx));
@@ -336,11 +362,15 @@ impl ReadingPane {
         };
         let checks_count =
             if checks_tone.is_some() { format!("{passed}/{}", pr.checks.len()) } else { pr.checks.len().to_string() };
+        // A dot: the tab holds something newer than the last view.
+        let seen = self.seen.clone().unwrap_or_default();
+        let new_commits = pr.commits.iter().any(|c| seen.is_new(c.author.as_deref(), c.authored_at));
+        let new_checks = pr.checks.iter().any(|c| seen.is_new(None, c.at));
         let tabs = [
-            ("Conversation", None, None),
-            ("Files", Some(files_count), None),
-            ("Commits", Some(pr.commits.len().to_string()), None),
-            ("Checks", Some(checks_count), checks_tone),
+            ("Conversation", None, None, false),
+            ("Files", Some(files_count), None, false),
+            ("Commits", Some(pr.commits.len().to_string()), None, new_commits),
+            ("Checks", Some(checks_count), checks_tone, new_checks),
         ];
         let selected = PaneTab::ALL.iter().position(|t| *t == self.tab).unwrap_or(0);
         TabBar::new("reading-tabs")
@@ -349,18 +379,17 @@ impl ReadingPane {
             .border_b_1()
             .border_color(p.border)
             .selected_index(selected)
-            .children(tabs.into_iter().map(|(label, count, tone)| {
+            .children(tabs.into_iter().map(|(label, count, tone, new)| {
                 Tab::new().label(label).when_some(count, |tab, count| {
                     let (bg, fg) = tone.map_or((p.raised, p.text_muted), |t| (t.fill, t.on_fill));
                     tab.suffix(
-                        div()
+                        h_flex()
                             .ml(px(6.))
-                            .px(px(5.))
-                            .rounded(px(8.))
-                            .bg(bg)
-                            .text_color(fg)
-                            .text_label()
-                            .child(count),
+                            .gap(px(5.))
+                            .child(div().px(px(5.)).rounded(px(8.)).bg(bg).text_color(fg).text_label().child(count))
+                            .when(new, |d| {
+                                d.child(div().id(SharedString::from(format!("new-{label}"))).test_support().size(px(6.)).rounded_full().bg(p.accent))
+                            }),
                     )
                 })
             }))

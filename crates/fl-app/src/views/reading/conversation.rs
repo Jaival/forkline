@@ -1,5 +1,6 @@
 //! Conversation tab: the description, comments, reviews and timeline events
-//! of one item, oldest first, with markdown bodies.
+//! of one item, oldest first, with markdown bodies. A divider marks what is
+//! new since the last view; the tab opens scrolled to it.
 
 use std::rc::Rc;
 
@@ -9,11 +10,11 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ListAlignment, ListState,
+    AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ListAlignment, ListOffset, ListState,
     ParentElement as _, SharedString, Styled as _, TestSupportExt as _, div, list, px,
 };
 
-use super::Detail;
+use super::{Detail, Seen};
 use crate::smooth_scroll::SmoothWheel;
 use crate::theme::{ActivePalette as _, RADIUS_LG, TextScale as _};
 use crate::views::queue::age;
@@ -47,6 +48,8 @@ enum Kind {
     Event(String),
     /// Comments on GitHub beyond those cached.
     More(u32),
+    /// "New since your last view", with what is new.
+    Divider(String),
 }
 
 struct Entry {
@@ -68,9 +71,25 @@ fn review_verb(state: &str) -> (&'static str, Tone) {
     }
 }
 
+/// "3 comments, 1 review, 2 commits": the parts that are not zero.
+fn new_text(comments: usize, reviews: usize, commits: usize) -> String {
+    let part = |n: usize, one: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {one}s")),
+    };
+    [part(comments, "comment"), part(reviews, "review"), part(commits, "commit")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Description first, then comments, reviews and events by time (entries
-/// without a time last), then the count of comments not cached.
-fn entries(detail: &Detail) -> Vec<Entry> {
+/// without a time last), then the count of comments not cached. The divider
+/// goes before the first new comment or review (events do not move it), or
+/// last when only commits are new; there is none when nothing is new.
+fn entries(detail: &Detail, seen: &Seen) -> Vec<Entry> {
     let row = detail.row();
     let (body, created_at) = match detail {
         Detail::Issue { detail, .. } => (Body::new(detail.body_md.as_ref(), detail.body_html.as_ref()), detail.created_at),
@@ -122,6 +141,18 @@ fn entries(detail: &Detail) -> Vec<Entry> {
     };
     rest.sort_by_key(|e| e.at.unwrap_or(Timestamp::MAX));
 
+    let is_new = |e: &Entry| matches!(e.kind, Kind::Comment | Kind::Review(..)) && seen.is_new(Some(&e.author), e.at);
+    let comments = rest.iter().filter(|e| e.kind == Kind::Comment && is_new(e)).count();
+    let reviews = rest.iter().filter(|e| matches!(e.kind, Kind::Review(..)) && is_new(e)).count();
+    let commits = detail.pr().map_or(0, |pr| {
+        pr.commits.iter().filter(|c| seen.is_new(c.author.as_deref(), c.authored_at)).count()
+    });
+    if comments + reviews + commits > 0 {
+        let at = rest.iter().position(is_new).unwrap_or(rest.len());
+        let text = format!("New since your last view \u{b7} {}", new_text(comments, reviews, commits));
+        rest.insert(at, Entry { key: "new".into(), kind: Kind::Divider(text), author: String::new(), at: None, body: None });
+    }
+
     let mut out = Vec::with_capacity(rest.len() + 2);
     out.push(description);
     out.extend(rest);
@@ -154,6 +185,17 @@ impl Conversation {
         self.wheel.stop();
     }
 
+    /// Index of the "New since your last view" entry.
+    pub(super) fn divider(&self) -> Option<usize> {
+        self.entries.iter().position(|e| matches!(e.kind, Kind::Divider(_)))
+    }
+
+    /// The first entry on show.
+    #[cfg(test)]
+    pub(super) fn top_entry(&self) -> usize {
+        self.state.logical_scroll_top().item_ix
+    }
+
     /// How far the list is scrolled down.
     #[cfg(test)]
     pub(super) fn scroll_top(&self) -> f32 {
@@ -161,14 +203,17 @@ impl Conversation {
     }
 
     /// Show `detail`. Called again with fresh data for the same item (keep
-    /// the scroll position), and after `clear` for a new item (start at the top).
-    pub(super) fn set(&mut self, detail: &Detail, cx: &mut App) {
+    /// the scroll position), and after `clear` for a new item (start at the
+    /// divider, else at the top).
+    pub(super) fn set(&mut self, detail: &Detail, seen: &Seen, cx: &mut App) {
         let refresh = !self.entries.is_empty();
-        self.entries = Rc::new(entries(detail));
+        self.entries = Rc::new(entries(detail, seen));
         let top = self.state.logical_scroll_top();
         self.state.reset(self.entries.len());
         if refresh {
             self.state.scroll_to(top);
+        } else if let Some(ix) = self.divider() {
+            self.state.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) });
         }
         crate::bench::conversation_shown(&self.state, cx);
     }
@@ -194,6 +239,20 @@ impl Conversation {
             };
             let content = match &entry.kind {
                 Kind::More(n) => aside(format!("{n} more comments on GitHub")),
+                Kind::Divider(text) => {
+                    let rule = || div().flex_1().h(px(1.)).bg(p.accent);
+                    h_flex()
+                        .id("new-since")
+                        .test_support()
+                        .gap(px(10.))
+                        .text_small()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.accent_text)
+                        .child(rule())
+                        .child(text.clone())
+                        .child(rule())
+                        .into_any_element()
+                }
                 Kind::Event(kind) => aside(format!("{} {kind} {}", entry.author, when.unwrap_or_default())),
                 kind => {
                     let verb = match kind {
@@ -326,14 +385,29 @@ mod tests {
     }
 
     fn keys(detail: &Detail) -> Vec<String> {
-        entries(detail).iter().map(|e| e.key.to_string()).collect()
+        keys_seen(detail, &Seen::default())
+    }
+
+    fn keys_seen(detail: &Detail, seen: &Seen) -> Vec<String> {
+        entries(detail, seen).iter().map(|e| e.key.to_string()).collect()
+    }
+
+    fn seen(at: i64) -> Seen {
+        Seen { at: Some(at), viewer: Some("me".into()) }
+    }
+
+    fn divider_text(detail: &Detail, seen: &Seen) -> Option<String> {
+        entries(detail, seen).into_iter().find_map(|e| match e.kind {
+            Kind::Divider(text) => Some(text),
+            _ => None,
+        })
     }
 
     #[test]
     fn description_first_then_by_time_untimed_reviews_last() {
         let detail = pr(vec![comment(1, 30), comment(2, 10)], vec![review(7, "PENDING", None), review(8, "APPROVED", Some(20))], 2);
         assert_eq!(keys(&detail), ["desc", "c2", "r8", "c1", "r7"]);
-        let approved = entries(&detail).into_iter().find(|e| e.key == "r8").unwrap();
+        let approved = entries(&detail, &Seen::default()).into_iter().find(|e| e.key == "r8").unwrap();
         assert_eq!(approved.kind, Kind::Review("approved", Tone::Success));
         assert!(approved.body.is_none());
     }
@@ -341,7 +415,7 @@ mod tests {
     #[test]
     fn counts_comments_not_cached() {
         assert_eq!(keys(&pr(vec![comment(1, 1)], Vec::new(), 1)), ["desc", "c1"]);
-        let all = entries(&pr(vec![comment(1, 1)], Vec::new(), 5));
+        let all = entries(&pr(vec![comment(1, 1)], Vec::new(), 5), &Seen::default());
         assert_eq!(all.last().unwrap().kind, Kind::More(4));
     }
 
@@ -357,8 +431,62 @@ mod tests {
                 pending_fields: Vec::new(),
             },
         };
-        let all = entries(&detail);
+        let all = entries(&detail, &seen(0));
         assert_eq!(all.len(), 1);
         assert!(all[0].body.is_none());
+    }
+
+    #[test]
+    fn the_divider_goes_before_the_first_new_comment_or_review() {
+        let detail = pr(vec![comment(1, 10), comment(2, 30), comment(3, 50)], vec![review(8, "APPROVED", Some(40))], 3);
+        // Never opened: nothing is new.
+        assert_eq!(keys(&detail), ["desc", "c1", "c2", "r8", "c3"]);
+        // Opened after everything: nothing is new.
+        assert_eq!(keys_seen(&detail, &seen(60)), ["desc", "c1", "c2", "r8", "c3"]);
+        // Opened between the comments.
+        assert_eq!(keys_seen(&detail, &seen(20)), ["desc", "c1", "new", "c2", "r8", "c3"]);
+        assert_eq!(divider_text(&detail, &seen(20)).unwrap(), "New since your last view \u{b7} 2 comments, 1 review");
+    }
+
+    #[test]
+    fn untimed_reviews_own_comments_and_events_are_not_new() {
+        let mut mine = comment(2, 30);
+        mine.author = "me".into();
+        let detail = pr(vec![comment(1, 10), mine], vec![review(7, "PENDING", None)], 2);
+        assert_eq!(keys_seen(&detail, &seen(20)), ["desc", "c1", "c2", "r7"]);
+
+        let event = |id, at| fl_types::TimelineEvent {
+            id,
+            kind: "labeled".into(),
+            actor: "bob".into(),
+            created_at: at,
+            payload_json: None,
+        };
+        let issue = Detail::Issue {
+            detail: IssueDetail { row: row(0), body_html: None, body_md: None, labels: Vec::new(), created_at: 0 },
+            thread: IssueThread {
+                assignees: Vec::new(),
+                comments: Vec::new(),
+                timeline: vec![event(5, 30)],
+                linked: Vec::new(),
+                pending_fields: Vec::new(),
+            },
+        };
+        assert_eq!(keys_seen(&issue, &seen(20)), ["desc", "e5"]);
+    }
+
+    #[test]
+    fn new_commits_alone_put_the_divider_last() {
+        let mut detail = pr(vec![comment(1, 10)], Vec::new(), 1);
+        let Detail::Pr(d) = &mut detail else { unreachable!() };
+        let commit = |oid: &str, author: &str, at| fl_types::PrCommit {
+            oid: oid.into(),
+            headline: String::new(),
+            author: Some(author.into()),
+            authored_at: Some(at),
+        };
+        d.commits = vec![commit("a", "bob", 30), commit("b", "me", 40), commit("c", "bob", 50)];
+        assert_eq!(keys_seen(&detail, &seen(20)), ["desc", "c1", "new"]);
+        assert_eq!(divider_text(&detail, &seen(20)).unwrap(), "New since your last view \u{b7} 2 commits");
     }
 }

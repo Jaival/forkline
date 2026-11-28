@@ -134,7 +134,7 @@ mod tests {
     use super::*;
 
     fn check(name: &str, conclusion: Option<&str>) -> PrCheck {
-        PrCheck { id: 0, name: name.into(), status: "COMPLETED".into(), conclusion: conclusion.map(Into::into), url: None }
+        PrCheck { id: 0, name: name.into(), status: "COMPLETED".into(), conclusion: conclusion.map(Into::into), url: None, at: None }
     }
 
     #[test]

@@ -70,6 +70,8 @@ pub struct PrCheck {
     /// SUCCESS | FAILURE | NEUTRAL | CANCELLED | SKIPPED | TIMED_OUT
     pub conclusion: Option<String>,
     pub url: Option<String>,
+    /// When the run finished, else when it started.
+    pub at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -817,3 +817,55 @@ fn a_wheel_notch_scrolls_the_conversation_smoothly(cx: &mut TestAppContext) {
     }
     assert!((top(cx) - 60.).abs() < 0.5, "ended at {}", top(cx));
 }
+
+// ---- new since the last view (G4 step 3) -------------------------------------
+
+#[gpui_kit::test]
+fn an_item_opens_at_the_new_since_divider_until_it_is_reopened(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, ws) = start(cx, dir.path());
+    // PR 3 was last opened at 5: bob's comment at 10 and commit at 20 are
+    // new; my comments at 1 and 2 are old, enough to need a scroll.
+    crate::test_support::write(
+        cx,
+        "INSERT INTO settings(key, value_json) VALUES ('viewer', '{\"login\":\"me\"}');
+         UPDATE issues SET last_viewed_at = 5 WHERE id = 3;
+         INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at) VALUES (3,3,2,'new from bob',10,10);
+         INSERT INTO commits(repo_id,oid,headline,author_login,authored_at) VALUES (2,'h2','another','bob',20);
+         INSERT INTO pr_commits(pr_id,oid,position) VALUES (3,'h2',1);
+         WITH RECURSIVE n(x) AS (SELECT 100 UNION ALL SELECT x + 1 FROM n WHERE x < 130)
+           INSERT INTO comments(id,issue_id,author_id,body_md,created_at,updated_at) SELECT x,3,1,'old',2,2 FROM n;",
+        &["issues"],
+    );
+    cx.update_window(handle, |_, window, cx| {
+        ws.update(cx, |ws, cx| ws.open(ViewRef::Pr { id: 3 }, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let reading = active_pane(cx, handle, &ws);
+    wait_for(cx, "detail", |cx| detail_id(cx, &reading) == Some(3));
+
+    // desc, my 32 comments, the divider, bob's comment.
+    assert_eq!(cx.read(|cx| reading.read(cx).conversation.divider()), Some(33));
+    // Scrolled to the divider; the end of the list stops it a little short.
+    let top = cx.read(|cx| reading.read(cx).conversation.top_entry());
+    assert!((20..=33).contains(&top), "top entry {top}");
+    assert_eq!(count(cx, handle, "new-since"), 1);
+    assert_eq!(count(cx, handle, "new-Commits"), 1);
+    assert_eq!(count(cx, handle, "new-Checks"), 0);
+
+    // Opening it marks it viewed; the reload keeps the divider.
+    wait_for(cx, "last_viewed_at", |cx| viewed(cx, 3).is_some_and(|at| at > 5));
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| reading.read(cx).conversation.divider()), Some(33));
+
+    // Shown again later: nothing is new.
+    reading.update(cx, |r, cx| {
+        r.show(None, cx);
+        r.show(Some((3, true)), cx);
+    });
+    wait_for(cx, "detail", |cx| detail_id(cx, &reading) == Some(3));
+    assert_eq!(cx.read(|cx| reading.read(cx).conversation.divider()), None);
+    assert_eq!(count(cx, handle, "new-since"), 0);
+    assert_eq!(count(cx, handle, "new-Commits"), 0);
+}
