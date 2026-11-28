@@ -806,6 +806,52 @@ async fn explore_sends_the_star_etag_and_a_listed_repo_clears_explore_only() {
     assert_eq!(env.q::<i64>("SELECT explore_only FROM repos WHERE id = 6000"), 0);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_explore_error_is_a_muted_note_shown_once_per_launch() {
+    let env = common::env().await;
+    only_repos(&env).await;
+    mount_repo_lists(&env).await;
+    Mock::given(method("GET"))
+        .and(path("/user/following"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": 11, "login": "alice" }])))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    // Passes 1-2: the org blocks OAuth Apps. Pass 3: another error. Then 200.
+    let forbidden = |message: &str| ResponseTemplate::new(403).set_body_json(json!({ "message": message }));
+    let blocked = "Although you appear to have the correct authorization credentials, the `buttercup` organization has enabled OAuth App access restrictions";
+    for (response, times) in [(forbidden(blocked), 2), (forbidden("Resource not accessible"), 1)] {
+        Mock::given(method("GET"))
+            .and(path("/users/alice/starred"))
+            .respond_with(response)
+            .up_to_n_times(times)
+            .mount(&env.server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/users/alice/starred"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&env.server)
+        .await;
+
+    let mut notes = Vec::new();
+    for _ in 0..4 {
+        env.db.write(|c| c.execute("UPDATE sync_state SET last_synced_at = 0 WHERE key = 'repos'", [])).unwrap();
+        env.engine.sync_once().await;
+        let s = env.engine.status().await.unwrap();
+        // Explore is optional: never a sync error.
+        assert_eq!(s.error, None);
+        notes.push(s.note);
+    }
+    let [first, second, third, fourth] = notes.try_into().unwrap();
+    let first = first.expect("the first Explore error shows");
+    assert!(first.starts_with("Explore: ") && first.contains("buttercup"), "{first}");
+    assert_eq!(second, None, "the same error shows once per launch");
+    let third = third.expect("a new error text shows");
+    assert!(third.contains("Resource not accessible"), "{third}");
+    assert_eq!(fourth, None, "a good Explore pass clears the note");
+}
+
 /// RFC 3339 for a unix time (UTC), as GitHub sends it.
 fn rfc3339(t: i64) -> String {
     let (days, secs) = (t.div_euclid(86_400), t.rem_euclid(86_400));

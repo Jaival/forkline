@@ -12,7 +12,7 @@
 //!   their GitHub id) until deep sync replaces it.
 
 use fl_types::{Action, ActionId, FailedAction, IssueState, MergeMethod, ReviewEvent};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use crate::{Error, Result};
@@ -29,6 +29,53 @@ pub struct Enqueued {
     pub scopes: &'static [&'static str],
 }
 
+/// What `enqueue_all` / `retry_all` did. One action that fails does not
+/// stop the others.
+#[derive(Debug, Default)]
+pub struct Batch {
+    /// The actions that went in (queued, or queued again).
+    pub ids: Vec<ActionId>,
+    /// How many did not, and the first error.
+    pub failed: usize,
+    pub first_error: Option<String>,
+    /// The union of the scopes of `ids`.
+    pub scopes: Vec<&'static str>,
+}
+
+impl Batch {
+    /// Run `f` for each item in one transaction, each in its own savepoint:
+    /// an item that fails leaves no trace and the rest go on.
+    fn run<T>(
+        conn: &mut Connection,
+        items: impl IntoIterator<Item = T>,
+        mut f: impl FnMut(&Connection, T) -> Result<(ActionId, &'static [&'static str])>,
+    ) -> Result<Self> {
+        let mut tx = conn.transaction()?;
+        let mut out = Self::default();
+        for item in items {
+            let sp = tx.savepoint()?;
+            match f(&sp, item) {
+                Ok((id, scopes)) => {
+                    sp.commit()?;
+                    out.ids.push(id);
+                    for s in scopes {
+                        if !out.scopes.contains(s) {
+                            out.scopes.push(s);
+                        }
+                    }
+                }
+                // Dropping the savepoint rolls it back.
+                Err(e) => {
+                    out.failed += 1;
+                    out.first_error.get_or_insert_with(|| e.to_string());
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(out)
+    }
+}
+
 pub fn scopes(action: &Action) -> &'static [&'static str] {
     match action {
         Action::NotificationRead { .. } | Action::NotificationDone { .. } => &["inbox", "sync"],
@@ -39,31 +86,59 @@ pub fn scopes(action: &Action) -> &'static [&'static str] {
 /// Validate, apply optimistically and queue. One transaction.
 pub fn enqueue(conn: &mut Connection, action: &Action, now: i64) -> Result<Enqueued> {
     let tx = conn.transaction()?;
-    let (table, target, summary) = describe(&tx, action)?;
-    tx.execute(
+    let id = insert(&tx, action, now)?;
+    tx.commit()?;
+    Ok(Enqueued { id, scopes: scopes(action) })
+}
+
+/// `enqueue` for many actions in one transaction; one that fails validation
+/// is left out and counted, the rest go in.
+pub fn enqueue_all(conn: &mut Connection, actions: &[Action], now: i64) -> Result<Batch> {
+    Batch::run(conn, actions, |c, action| Ok((insert(c, action, now)?, scopes(action))))
+}
+
+fn insert(conn: &Connection, action: &Action, now: i64) -> Result<ActionId> {
+    let (table, target, summary) = describe(conn, action)?;
+    conn.execute(
         "INSERT INTO action_queue (kind, payload_json, target_table, target_id, next_attempt_at, created_at, summary)
          VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
         params![kind(action), json_of(action), table, target, now, summary],
     )?;
-    let id = tx.last_insert_rowid();
-    apply(&tx, id, action, now)?;
-    tx.commit()?;
-    Ok(Enqueued { id, scopes: scopes(action) })
+    let id = conn.last_insert_rowid();
+    apply(conn, id, action, now)?;
+    Ok(id)
 }
 
 /// Re-apply a failed action and queue it again with fresh attempts.
 pub fn retry(conn: &mut Connection, id: ActionId, now: i64) -> Result<&'static [&'static str]> {
     let tx = conn.transaction()?;
-    let action = load(&tx, id, "failed")?;
-    describe(&tx, &action)?;
-    apply(&tx, id, &action, now)?;
-    tx.execute(
+    let scopes = requeue(&tx, id, now)?;
+    tx.commit()?;
+    Ok(scopes)
+}
+
+/// `retry` for every failed action.
+pub fn retry_all(conn: &mut Connection, now: i64) -> Result<Batch> {
+    let ids = failed_ids(conn)?;
+    Batch::run(conn, ids, |c, id| Ok((id, requeue(c, id, now)?)))
+}
+
+fn requeue(conn: &Connection, id: ActionId, now: i64) -> Result<&'static [&'static str]> {
+    let action = load(conn, id, "failed")?;
+    describe(conn, &action)?;
+    apply(conn, id, &action, now)?;
+    conn.execute(
         "UPDATE action_queue SET state = 'pending', attempts = 0, next_attempt_at = ?2, last_error = NULL
          WHERE id = ?1",
         params![id, now],
     )?;
-    tx.commit()?;
     Ok(scopes(&action))
+}
+
+fn failed_ids(conn: &Connection) -> rusqlite::Result<Vec<ActionId>> {
+    conn.prepare_cached("SELECT id FROM action_queue WHERE state = 'failed' ORDER BY next_attempt_at, id")?
+        .query_map([], |r| r.get(0))?
+        .collect()
 }
 
 /// Drop a failed action (its change was already rolled back).
@@ -73,6 +148,11 @@ pub fn discard(conn: &Connection, id: ActionId) -> Result<()> {
         return Err(Error::Invalid("no failed action with that id".into()));
     }
     Ok(())
+}
+
+/// Drop every failed action. Returns how many.
+pub fn discard_all(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM action_queue WHERE state = 'failed'", [])
 }
 
 pub fn failed(conn: &Connection) -> rusqlite::Result<Vec<FailedAction>> {
@@ -278,7 +358,7 @@ pub fn fail(conn: &mut Connection, id: ActionId, err: &Error, now: i64) -> Resul
 }
 
 /// Restore every field this action still owns and delete its local rows.
-fn rollback(tx: &Transaction<'_>, id: ActionId) -> Result<()> {
+fn rollback(tx: &Connection, id: ActionId) -> Result<()> {
     let rows: Vec<(String, i64, String, Option<String>)> = tx
         .prepare("SELECT table_name, row_id, field, old_value_json FROM pending_fields WHERE action_id = ?1")?
         .query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
@@ -487,7 +567,7 @@ fn describe(conn: &Connection, action: &Action) -> Result<(&'static str, i64, St
 /// confirmed) and drop that action when it is not in flight and owns no
 /// other field (all field actions replace the whole value, so the older
 /// one is redundant).
-fn own(tx: &Transaction<'_>, action_id: i64, table: &str, row: i64, field: &str, old: Option<Value>) -> Result<()> {
+fn own(tx: &Connection, action_id: i64, table: &str, row: i64, field: &str, old: Option<Value>) -> Result<()> {
     let prev: Option<i64> = tx
         .query_row(
             "SELECT action_id FROM pending_fields WHERE table_name = ?1 AND row_id = ?2 AND field = ?3",
@@ -518,11 +598,11 @@ fn own(tx: &Transaction<'_>, action_id: i64, table: &str, row: i64, field: &str,
     Ok(())
 }
 
-fn local_id(tx: &Transaction<'_>, table: &str) -> rusqlite::Result<i64> {
+fn local_id(tx: &Connection, table: &str) -> rusqlite::Result<i64> {
     tx.query_row(&format!("SELECT min(COALESCE(min(id), 0), 0) - 1 FROM {table}"), [], |r| r.get(0))
 }
 
-fn viewer_id(tx: &Transaction<'_>) -> rusqlite::Result<Option<i64>> {
+fn viewer_id(tx: &Connection) -> rusqlite::Result<Option<i64>> {
     let v: Option<String> = tx
         .query_row("SELECT value_json FROM settings WHERE key = 'viewer'", [], |r| r.get(0))
         .optional()?;
@@ -534,13 +614,13 @@ fn viewer_id(tx: &Transaction<'_>) -> rusqlite::Result<Option<i64>> {
     }
 }
 
-fn link_ids(tx: &Transaction<'_>, table: &str, col: &str, issue: i64) -> rusqlite::Result<Vec<i64>> {
+fn link_ids(tx: &Connection, table: &str, col: &str, issue: i64) -> rusqlite::Result<Vec<i64>> {
     tx.prepare(&format!("SELECT {col} FROM {table} WHERE issue_id = ?1 ORDER BY {col}"))?
         .query_map([issue], |r| r.get(0))?
         .collect()
 }
 
-fn set_links(tx: &Transaction<'_>, table: &str, col: &str, issue: i64, ids: &[i64]) -> rusqlite::Result<()> {
+fn set_links(tx: &Connection, table: &str, col: &str, issue: i64, ids: &[i64]) -> rusqlite::Result<()> {
     tx.execute(&format!("DELETE FROM {table} WHERE issue_id = ?1"), [issue])?;
     let mut stmt = tx.prepare(&format!("INSERT OR IGNORE INTO {table} (issue_id, {col}) VALUES (?1, ?2)"))?;
     for id in ids {
@@ -554,7 +634,7 @@ fn ids_of(v: &Value) -> Vec<i64> {
 }
 
 /// Apply the action to local tables and record ownership in `pending_fields`.
-fn apply(tx: &Transaction<'_>, id: ActionId, action: &Action, now: i64) -> Result<()> {
+fn apply(tx: &Connection, id: ActionId, action: &Action, now: i64) -> Result<()> {
     match action {
         Action::Comment { issue_id, body_md } => {
             let local = local_id(tx, "comments")?;
@@ -633,7 +713,7 @@ fn apply(tx: &Transaction<'_>, id: ActionId, action: &Action, now: i64) -> Resul
     Ok(())
 }
 
-fn set_state(tx: &Transaction<'_>, id: ActionId, issue: i64, state: &str) -> Result<()> {
+fn set_state(tx: &Connection, id: ActionId, issue: i64, state: &str) -> Result<()> {
     let old: String = tx.query_row("SELECT state FROM issues WHERE id = ?1", [issue], |r| r.get(0))?;
     tx.execute("UPDATE issues SET state = ?1 WHERE id = ?2", params![state, issue])?;
     own(tx, id, "issues", issue, "state", Some(json!(old)))

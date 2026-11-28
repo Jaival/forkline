@@ -97,6 +97,29 @@ fn done_all_hides_rows_and_undo_brings_them_back(cx: &mut TestAppContext) {
     assert_eq!(crate::test_support::query_i64(cx, "SELECT count(*) FROM action_queue"), 0);
 }
 
+/// "Done all" where one action cannot go in (`men2` is not a GitHub thread
+/// id, like a notification sync dropped meanwhile): the other is sent, the
+/// footer says so, and the row comes back.
+#[gpui_kit::test]
+fn done_all_reports_actions_that_did_not_go_in(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let seed = format!("{SEED} UPDATE notifications SET id = '601' WHERE id = 'men1';");
+    let (handle, ws) = start(cx, dir.path(), &seed);
+    let queue = queue_of(cx, handle, &ws);
+    let ix = QueueGroup::ALL.iter().position(|g| *g == QueueGroup::Mentioned).unwrap();
+    cx.update_window(handle, |_, window, cx| window.click(("queue-group-done", ix), cx)).unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(UNDO_DONE);
+    let footer = cx.read(|cx| ws.read(cx).footer().clone());
+    crate::test_support::wait_for(cx, "the footer notice", |cx| cx.read(|cx| footer.read(cx).notice().is_some()));
+    let notice = cx.read(|cx| footer.read(cx).notice().unwrap().to_string());
+    assert!(notice.starts_with("Marked 1 of 2 done. 1 failed: "), "{notice}");
+    assert_eq!(crate::test_support::query_i64(cx, "SELECT count(*) FROM action_queue WHERE kind = 'notification_done'"), 1);
+    crate::test_support::wait_for(cx, "men2 is back", |cx| {
+        cx.read(|cx| queue.read(cx).keys().contains(&"men2") && !queue.read(cx).keys().contains(&"601"))
+    });
+}
+
 #[gpui_kit::test]
 fn done_merged_closed_sends_after_the_undo_time(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();

@@ -71,6 +71,12 @@ fn flatten(rows: &[QueueRow], flat: bool, collapsed: &HashSet<QueueGroup>) -> Ve
     items
 }
 
+/// The footer text when only `sent` of `total` "Done all" actions went in.
+fn done_failed_text(sent: usize, total: usize, error: &str) -> String {
+    let failed = total - sent;
+    format!("Marked {sent} of {total} done. {failed} failed: {error}")
+}
+
 /// How long "Done all" waits before it sends, so Undo can take it back:
 /// GitHub has no way to restore a done notification.
 const UNDO_DONE: Duration = Duration::from_secs(6);
@@ -295,7 +301,9 @@ impl Queue {
         }
     }
 
-    /// Send the pending "Done all" now.
+    /// Send the pending "Done all" now. If some do not go in (e.g. sync
+    /// dropped the notification meanwhile), the footer says so and the rows
+    /// come back.
     fn flush_done(&mut self, cx: &mut Context<Self>) {
         self._done_timer = None;
         let ids = std::mem::take(&mut self.pending_done);
@@ -307,14 +315,20 @@ impl Queue {
             return;
         }
         let engine = store.sync().clone();
-        store
-            .run(cx, async move {
-                for id in ids {
-                    engine.enqueue(Action::NotificationDone { id }).await?;
-                }
-                Ok::<_, fl_sync::Error>(())
-            })
-            .detach();
+        let total = ids.len();
+        let actions = ids.into_iter().map(|id| Action::NotificationDone { id }).collect();
+        let task = store.run(cx, async move { engine.enqueue_all(actions).await });
+        cx.spawn(async move |this, cx| {
+            let text = match task.await {
+                Ok(Ok(done)) if done.failed == 0 => return,
+                Ok(Ok(done)) => done_failed_text(done.ids.len(), total, done.first_error.as_deref().unwrap_or("")),
+                Ok(Err(e)) => done_failed_text(0, total, &e.to_string()),
+                Err(e) => done_failed_text(0, total, &e.to_string()),
+            };
+            cx.update(|cx| Store::notice(text, cx));
+            let _ = this.update(cx, |this, cx| this.reload(cx));
+        })
+        .detach();
         cx.notify();
     }
 

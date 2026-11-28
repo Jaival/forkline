@@ -2125,3 +2125,20 @@ Plan: `docs/design/g5-reuse-plan.md` (agreed 2026-11-27: steps 1-6 incl.
 the `fl-ui` crate, "2 min" time text, scope enum in fl-types, one PR per
 step). Start only after
 G4 ships, so the refactor does not fight open feature branches.
+
+## G4 progress (2026-11-27)
+
+Plan and decisions: `docs/design/g4-plan.md` (D1-D14, agreed; this settles
+"G4 order" above). One branch and PR per step.
+
+- Steps 1+2 (`g4-done-all`, PR #20): Done all failure feedback
+  (`Engine::enqueue_all`, savepoint per action, footer toast via
+  `Store::notice`), Retry all / Discard all in the footer failed list,
+  engine test for the Explore note. Bench: clean runs pass all budgets.
+  Two of five branch runs hit the known slow mode (30 fps flat); base did
+  too in G3.
+- Bench setup that works: `fl-fake --data-dir <seed>`, copy the seed per
+  run, `fl-bench gpui --app <exe> --data-dir <copy>`, run from the repo
+  root (budgets path is relative). An empty data dir hangs the bench.
+- Next: step 3 (new since last view, D4-D6), step 4 (batch merge,
+  D7-D13), step 5 (frame-rate gap, half a day, D14).

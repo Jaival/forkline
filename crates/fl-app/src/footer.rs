@@ -20,7 +20,7 @@ use gpui_kit::{
     deferred, div, px,
 };
 
-use crate::store::Store;
+use crate::store::{Notice, Store};
 use crate::theme::{ActivePalette as _, FOOTER_HEIGHT, TextScale as _, scaled};
 
 /// The relative time ticks once a second; the status itself is refetched on
@@ -47,14 +47,14 @@ pub struct Footer {
     /// Read while the failed list is open.
     failed: Vec<FailedAction>,
     popover: Option<Popover>,
-    /// A Retry, Discard or Sign out that failed.
+    /// A Retry, Discard or Sign out that failed, or a [`Notice`].
     notice: Option<SharedString>,
     /// The error toast is open (the alert icon toggles it).
     toast: bool,
     /// The errors last shown in the toast, kept while it fades out.
     toast_shown: Vec<SharedString>,
     _tick: Task<()>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 impl Footer {
@@ -64,6 +64,12 @@ impl Footer {
             if ev.scopes.iter().any(|s| s == "sync") {
                 this.refetch(cx);
             }
+        });
+        let notices = cx.subscribe(&store, |this, _, ev: &Notice, cx| {
+            this.notice = Some(ev.0.clone());
+            this.toast = true;
+            this.popover = None;
+            cx.notify();
         });
         let tick = cx.spawn(async move |this, cx| {
             let mut n = 0u32;
@@ -90,7 +96,7 @@ impl Footer {
             toast: false,
             toast_shown: Vec::new(),
             _tick: tick,
-            _subscription: subscription,
+            _subscriptions: [subscription, notices],
         };
         this.refetch(cx);
         this
@@ -164,6 +170,8 @@ impl Footer {
             match op {
                 Op::Retry(id) => engine.retry(id).await,
                 Op::Discard(id) => engine.discard(id).await,
+                Op::RetryAll => engine.retry_all().await,
+                Op::DiscardAll => engine.discard_all().await,
                 Op::SignOut => engine.sign_out().await,
             }
         });
@@ -206,6 +214,11 @@ impl Footer {
     }
 
     #[cfg(test)]
+    pub(crate) fn notice(&self) -> Option<&SharedString> {
+        self.notice.as_ref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn failed_ids(&self) -> Vec<ActionId> {
         self.failed.iter().map(|f| f.id).collect()
     }
@@ -244,7 +257,29 @@ impl Footer {
         popover_box("footer-failed-list", cx)
             .left(px(8.))
             .w(px(440.))
-            .child(div().pb_1().text_color(p.text_muted).child("These changes did not reach GitHub and were undone."))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .pb_1()
+                    .items_start()
+                    .child(div().flex_1().text_color(p.text_muted).child("These changes did not reach GitHub and were undone."))
+                    .when(self.failed.len() > 1, |d| {
+                        d.child(
+                            Button::new("failed-retry-all")
+                                .xsmall()
+                                .ghost()
+                                .label("Retry all")
+                                .on_click(cx.listener(|this, _, _, cx| this.run(Op::RetryAll, cx))),
+                        )
+                        .child(
+                            Button::new("failed-discard-all")
+                                .xsmall()
+                                .ghost()
+                                .label("Discard all")
+                                .on_click(cx.listener(|this, _, _, cx| this.run(Op::DiscardAll, cx))),
+                        )
+                    }),
+            )
             .child(div().id("footer-failed-rows").max_h(px(260.)).overflow_y_scroll().children(rows))
             .into_any_element()
     }
@@ -254,6 +289,8 @@ impl Footer {
 enum Op {
     Retry(ActionId),
     Discard(ActionId),
+    RetryAll,
+    DiscardAll,
     SignOut,
 }
 
@@ -473,6 +510,39 @@ mod tests {
         click(cx, ("failed-discard", 0usize).into());
         wait_for(cx, "8 discarded", |cx| cx.read(|cx| footer.read(cx).popover.is_none()));
         assert_eq!(query_i64(cx, "SELECT COUNT(*) FROM action_queue WHERE id = 8"), 0);
+        assert!(cx.read(|cx| footer.read(cx).notice.is_none()));
+    }
+
+    #[gpui_kit::test]
+    fn retry_all_and_discard_all(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, ws) = open_seeded(cx, dir.path(), SEED);
+        let footer = cx.read(|cx| ws.read(cx).footer().clone());
+        let click = |cx: &mut TestAppContext, id: &'static str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(id, cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+        };
+        let open_list = |cx: &mut TestAppContext| {
+            wait_for(cx, "2 failed", |cx| cx.read(|cx| footer.read(cx).status.as_ref().is_some_and(|s| s.failed_actions == 2)));
+            click(cx, "footer-failed");
+            wait_for(cx, "the list loads", |cx| cx.read(|cx| footer.read(cx).failed_ids() == [7, 8]));
+        };
+
+        open_list(cx);
+        click(cx, "failed-retry-all");
+        wait_for(cx, "both retried", |cx| cx.read(|cx| footer.read(cx).popover.is_none()));
+        assert_eq!(query_i64(cx, "SELECT COUNT(*) FROM action_queue WHERE state = 'pending'"), 2);
+        assert_eq!(query_i64(cx, "SELECT COUNT(*) FROM comments WHERE issue_id = 1"), 2);
+
+        crate::test_support::write(cx, "UPDATE action_queue SET state = 'failed'", &["sync"]);
+        open_list(cx);
+        click(cx, "failed-discard-all");
+        wait_for(cx, "both discarded", |cx| cx.read(|cx| footer.read(cx).popover.is_none()));
+        assert_eq!(query_i64(cx, "SELECT COUNT(*) FROM action_queue"), 0);
         assert!(cx.read(|cx| footer.read(cx).notice.is_none()));
     }
 
